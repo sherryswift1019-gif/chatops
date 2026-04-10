@@ -17,7 +17,7 @@ services:
 
   migrate:
     build: .
-    command: ["node", "--loader", "tsx/esm", "src/db/migrate.ts"]
+    command: ["node", "--import", "tsx/esm", "src/db/migrate.ts"]
     environment:
       DATABASE_URL: postgres://chatops:chatops@postgres:5432/chatops
     depends_on:

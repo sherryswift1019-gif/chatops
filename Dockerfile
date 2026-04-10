@@ -19,4 +19,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
   CMD node -e "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)throw 1})" || exit 1
 
-CMD ["node", "--loader", "tsx/esm", "src/server.ts"]
+CMD ["node", "--import", "tsx/esm", "src/server.ts"]
