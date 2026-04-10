@@ -2,12 +2,14 @@
   "name": "chatops",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node --loader tsx/esm src/server.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate": "tsx src/db/migrate.ts"
   },
   "keywords": [],
   "author": "",
