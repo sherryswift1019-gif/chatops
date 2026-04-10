@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chatops
+      POSTGRES_PASSWORD: chatops
+      POSTGRES_DB: chatops
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatops"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  migrate:
+    build: .
+    command: ["node", "--loader", "tsx/esm", "src/db/migrate.ts"]
+    environment:
+      DATABASE_URL: postgres://chatops:chatops@postgres:5432/chatops
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  chatops:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://chatops:chatops@postgres:5432/chatops
+      PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:
