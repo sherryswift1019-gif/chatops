@@ -15,7 +15,7 @@ describe('DingTalkAdapter', () => {
 
   it('normalizes @bot message from webhook payload', async () => {
     const messages: unknown[] = []
-    adapter.onMessage(m => messages.push(m))
+    adapter.onMessage(m => { messages.push(m) })
 
     const ts = String(Date.now())
     const payload = {

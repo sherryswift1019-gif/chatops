@@ -8,7 +8,7 @@ describe('FeishuAdapter', () => {
 
   it('handles URL verification challenge', async () => {
     const messages: unknown[] = []
-    adapter.onMessage(m => messages.push(m))
+    adapter.onMessage(m => { messages.push(m) })
 
     await adapter.handleWebhook(
       { type: 'url_verification', challenge: 'abc123', token: 'vtok' },
@@ -19,7 +19,7 @@ describe('FeishuAdapter', () => {
 
   it('normalizes @bot message', async () => {
     const messages: unknown[] = []
-    adapter.onMessage(m => messages.push(m))
+    adapter.onMessage(m => { messages.push(m) })
 
     await adapter.handleWebhook({
       schema: '2.0',
