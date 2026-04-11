@@ -38,7 +38,7 @@ export class ClaudeRunner {
         claude: {
           model: 'sonnet',
           interactive: false,
-          cliPath: join(__dirname, '..', 'node_modules', '.bin', 'claude'),
+          cliPath: join(__dirname, '..', '..', 'node_modules', '.bin', 'claude'),
         },
       },
       defaults: {
