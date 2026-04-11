@@ -129,22 +129,6 @@ async function main(): Promise<void> {
     return reply.send({ ok: true })
   })
 
-  app.get('/', async () => ({
-    name: 'ChatOps Platform',
-    version: '1.0.0',
-    status: 'running',
-    endpoints: {
-      health: '/health',
-      webhooks: {
-        feishu: '/webhook/feishu',
-        gitlab: '/webhook/gitlab',
-      },
-      stream: {
-        dingtalk: 'connected via WebSocket (Stream mode)',
-      },
-    },
-  }))
-
   app.get('/health', async () => ({ status: 'ok' }))
 
   // Serve frontend SPA static files (production build)
@@ -165,6 +149,14 @@ async function main(): Promise<void> {
       return reply.status(404).send({ error: 'not found' })
     })
     app.log.info('Frontend SPA enabled from web/dist/')
+  } else {
+    // No SPA build — show API info at root
+    app.get('/', async () => ({
+      name: 'ChatOps Platform',
+      version: '1.0.0',
+      status: 'running',
+      endpoints: { health: '/health', admin: '/admin/*' },
+    }))
   }
 
   // Start adapters with long connections (e.g. DingTalk Stream)
