@@ -48,7 +48,15 @@ const listImagesTool: AgentTool = {
       p.name === project || p.displayName === project || p.harborProject === project
     )
     const harborProject = projectRecord?.harborProject || project
-    console.log(`[list_images] project="${project}" → matched="${projectRecord?.name ?? 'none'}" → harborProject="${harborProject}"`)
+
+    // Debug: include matching info in output if no Harbor project configured
+    if (!projectRecord) {
+      const projectNames = allProjects.map(p => `${p.name}(harbor=${p.harborProject})`).join(', ')
+      return { success: false, output: `项目 "${project}" 在数据库中未找到。已注册项目: [${projectNames}]。请使用项目名称或 Harbor 镜像地址进行查询。` }
+    }
+    if (!harborProject) {
+      return { success: false, output: `项目 "${project}" 未配置 Harbor 镜像地址。请在管理后台的项目配置中设置 Harbor 项目路径。` }
+    }
 
     // Try cache first
     const cached = await getFreshImages(harborProject, limit)
