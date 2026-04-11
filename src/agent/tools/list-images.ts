@@ -56,6 +56,12 @@ const listImagesTool: AgentTool = {
       return formatImages(project, cached)
     }
 
+    // harborProject format: "project_name/repo_name" or just "repo_name"
+    const parts = harborProject.split('/')
+    const harborProjectName = parts.length > 1 ? parts[0] : harborProject
+    const repoName = parts.length > 1 ? parts.slice(1).join('/') : harborProject
+    let apiUrl = ''
+
     // Fetch from Harbor
     try {
       const harbor = await getHarborConfig()
@@ -71,13 +77,7 @@ const listImagesTool: AgentTool = {
         ...(harbor.caCert ? { ca: harbor.caCert } : {}),
       })
 
-      // harborProject format: "project_name/repo_name" or just "repo_name"
-      const parts = harborProject.split('/')
-      const harborProjectName = parts.length > 1 ? parts[0] : harborProject
-      const repoName = parts.length > 1 ? parts.slice(1).join('/') : harborProject
-
-      const apiUrl = `${harbor.url}/api/v2.0/projects/${harborProjectName}/repositories/${encodeURIComponent(repoName)}/artifacts`
-      console.log(`[list_images] Requesting Harbor API: ${apiUrl}`)
+      apiUrl = `${harbor.url}/api/v2.0/projects/${harborProjectName}/repositories/${encodeURIComponent(repoName)}/artifacts`
       const res = await axios.get(apiUrl,
         {
           headers: { Authorization: `Basic ${auth}` },
@@ -110,8 +110,7 @@ const listImagesTool: AgentTool = {
       const errMsg = (err as Record<string, unknown>)?.response
         ? `HTTP ${((err as Record<string, unknown>).response as Record<string, unknown>).status}: ${JSON.stringify(((err as Record<string, unknown>).response as Record<string, unknown>).data)}`
         : String(err)
-      console.error(`[list_images] Harbor error:`, errMsg)
-      return { success: false, output: `Harbor 访问失败: ${errMsg}` }
+      return { success: false, output: `Harbor 访问失败:\n请求: ${apiUrl}\n项目匹配: project="${project}" → harborProject="${harborProject}" (项目名=${harborProjectName}, 仓库名=${repoName})\n错误: ${errMsg}` }
     }
   },
 }
