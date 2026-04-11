@@ -36,15 +36,12 @@ CREATE TABLE IF NOT EXISTS projects (
 
 -- environments
 CREATE TABLE IF NOT EXISTS environments (
-  id              SERIAL PRIMARY KEY,
-  name            TEXT NOT NULL UNIQUE,
-  display_name    TEXT NOT NULL,
-  default_runtime TEXT NOT NULL DEFAULT 'docker' CHECK (default_runtime IN ('kubernetes','docker')),
-  sort_order      INT NOT NULL DEFAULT 0,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  id            SERIAL PRIMARY KEY,
+  name          TEXT NOT NULL UNIQUE,
+  display_name  TEXT NOT NULL,
+  sort_order    INT NOT NULL DEFAULT 0,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-
-ALTER TABLE environments ADD COLUMN IF NOT EXISTS default_runtime TEXT NOT NULL DEFAULT 'docker';
 
 -- product_line_envs
 CREATE TABLE IF NOT EXISTS product_line_envs (
