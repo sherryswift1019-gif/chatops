@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { Card, Tabs, Form, Input, Button, Space, Upload, message, Spin } from 'antd'
 import { DownloadOutlined, UploadOutlined } from '@ant-design/icons'
-import { getSystemConfig, updateSystemConfig, exportSystemConfig, importSystemConfig } from '../api/system-config'
+import { getSystemConfig, updateSystemConfig, exportAllData, importAllData } from '../api/system-config'
 import type { SystemConfigEntry } from '../types'
 
 const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; label: string; secret?: boolean }[] }> = {
@@ -112,15 +112,15 @@ export default function SystemConfigPage() {
 
   async function handleExport() {
     try {
-      const data = await exportSystemConfig()
+      const data = await exportAllData()
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'chatops-config.json'
+      a.download = 'chatops-export.json'
       a.click()
       URL.revokeObjectURL(url)
-      message.success('配置已导出')
+      message.success('全量数据已导出')
     } catch { message.error('导出失败') }
   }
 
@@ -133,9 +133,11 @@ export default function SystemConfigPage() {
     if (!file) return
     try {
       const text = await file.text()
-      const data = JSON.parse(text) as Array<{ key: string; value: Record<string, unknown> }>
-      const result = await importSystemConfig(data)
-      message.success(`导入成功，共 ${result.imported} 项配置`)
+      const data = JSON.parse(text) as Record<string, unknown>
+      const result = await importAllData(data)
+      const stats = result.stats
+      const summary = Object.entries(stats).filter(([, v]) => v > 0).map(([k, v]) => `${k}: ${v}`).join(', ')
+      message.success(`导入成功: ${summary || '无新数据'}`)
       await loadConfigs()
     } catch { message.error('导入失败，请检查文件格式') }
     // Reset input
@@ -145,8 +147,8 @@ export default function SystemConfigPage() {
   return (
     <Card title="系统配置" extra={
       <Space>
-        <Button icon={<DownloadOutlined />} onClick={handleExport}>导出配置</Button>
-        <Button icon={<UploadOutlined />} onClick={handleImportClick}>导入配置</Button>
+        <Button icon={<DownloadOutlined />} onClick={handleExport}>导出全量数据</Button>
+        <Button icon={<UploadOutlined />} onClick={handleImportClick}>导入数据</Button>
         <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
       </Space>
     }>
