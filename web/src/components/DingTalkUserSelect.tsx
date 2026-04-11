@@ -7,12 +7,13 @@ import type { DingTalkUser } from '../types'
 interface Props {
   value?: string | string[]
   onChange?: (value: string | string[]) => void
+  onUserSelect?: (user: DingTalkUser) => void
   mode?: 'multiple'
   placeholder?: string
   style?: React.CSSProperties
 }
 
-export default function DingTalkUserSelect({ value, onChange, mode, placeholder = '搜索钉钉用户', style }: Props) {
+export default function DingTalkUserSelect({ value, onChange, onUserSelect, mode, placeholder = '搜索钉钉用户', style }: Props) {
   const [options, setOptions] = useState<DingTalkUser[]>([])
   const [fetching, setFetching] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
@@ -29,6 +30,14 @@ export default function DingTalkUserSelect({ value, onChange, mode, placeholder 
     }, 300)
   }
 
+  const handleChange = (val: string | string[]) => {
+    onChange?.(val)
+    // Find user object and notify
+    const selectedId = Array.isArray(val) ? val[val.length - 1] : val
+    const user = options.find(u => u.userId === selectedId)
+    if (user && onUserSelect) onUserSelect(user)
+  }
+
   return (
     <Select
       showSearch
@@ -38,7 +47,7 @@ export default function DingTalkUserSelect({ value, onChange, mode, placeholder 
       style={style ?? { width: '100%' }}
       filterOption={false}
       onSearch={handleSearch}
-      onChange={onChange as (value: string | string[]) => void}
+      onChange={handleChange as (value: string | string[]) => void}
       loading={fetching}
       notFoundContent={fetching ? '搜索中...' : '无结果'}
       options={options.map(u => ({

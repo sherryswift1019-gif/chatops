@@ -241,6 +241,8 @@ function MembersTab({ productLineId }: { productLineId: number }) {
     setModalOpen(true)
   }
 
+  const selectedUserRef = useRef<{ userId: string; name: string } | null>(null)
+
   async function handleSubmit() {
     const values = await form.validateFields()
     if (editingMember) {
@@ -248,8 +250,7 @@ function MembersTab({ productLineId }: { productLineId: number }) {
       message.success('角色更新成功')
     } else {
       if (!selectedUserId) { message.error('请选择用户'); return }
-      // Get user name from the form value; we store it separately
-      const userName = values.userName || selectedUserId
+      const userName = selectedUserRef.current?.name || selectedUserId
       await addMember(productLineId, { userId: selectedUserId, userName, role: values.role })
       message.success('添加成员成功')
     }
@@ -314,6 +315,9 @@ function MembersTab({ productLineId }: { productLineId: number }) {
                   const userId = v as string
                   setSelectedUserId(userId)
                   form.setFieldValue('userId', userId)
+                }}
+                onUserSelect={(user) => {
+                  selectedUserRef.current = { userId: user.userId, name: user.name }
                 }}
                 placeholder="搜索钉钉用户"
               />
