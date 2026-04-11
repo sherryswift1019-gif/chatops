@@ -1,4 +1,8 @@
 import Fastify from 'fastify'
+import fastifyStatic from '@fastify/static'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+import { existsSync } from 'fs'
 import { config } from './config.js'
 import { DingTalkAdapter } from './adapters/im/dingtalk.js'
 import { FeishuAdapter } from './adapters/im/feishu.js'
@@ -142,6 +146,26 @@ async function main(): Promise<void> {
   }))
 
   app.get('/health', async () => ({ status: 'ok' }))
+
+  // Serve frontend SPA static files (production build)
+  const __dirname = dirname(fileURLToPath(import.meta.url))
+  const webDistPath = join(__dirname, '..', 'web', 'dist')
+  if (existsSync(webDistPath)) {
+    await app.register(fastifyStatic, {
+      root: webDistPath,
+      prefix: '/',
+      wildcard: false,
+    })
+
+    // SPA fallback: non-API GET requests return index.html
+    app.setNotFoundHandler(async (req, reply) => {
+      if (req.method === 'GET' && !req.url.startsWith('/admin') && !req.url.startsWith('/webhook') && !req.url.startsWith('/health')) {
+        return reply.sendFile('index.html')
+      }
+      return reply.status(404).send({ error: 'not found' })
+    })
+    app.log.info('Frontend SPA enabled from web/dist/')
+  }
 
   // Start adapters with long connections (e.g. DingTalk Stream)
   for (const adapter of adapters) {

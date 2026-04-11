@@ -1,17 +1,27 @@
 FROM node:20-slim AS base
-
 RUN corepack enable && corepack prepare pnpm@10 --activate
+
+# Stage 1: Build frontend
+FROM base AS web-build
+WORKDIR /app/web
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/ .
+RUN pnpm build
+
+# Stage 2: Backend + serve frontend
+FROM base AS final
 WORKDIR /app
 
-# Install dependencies
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false
 
-# Copy source
 COPY tsconfig.json ./
 COPY src/ src/
 
-# Verify TypeScript compiles
+# Copy frontend build output
+COPY --from=web-build /app/web/dist web/dist
+
 RUN npx tsc --noEmit
 
 EXPOSE 3000
