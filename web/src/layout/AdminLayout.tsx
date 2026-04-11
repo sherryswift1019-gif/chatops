@@ -3,7 +3,6 @@ import { Outlet, useNavigate, useLocation } from 'react-router-dom'
 import { Layout, Menu } from 'antd'
 import {
   AppstoreOutlined,
-  ProjectOutlined,
   CloudServerOutlined,
   TeamOutlined,
   ThunderboltOutlined,
@@ -14,7 +13,6 @@ const { Sider, Content, Header } = Layout
 
 const menuItems = [
   { key: '/product-lines', icon: <AppstoreOutlined />, label: '产线管理' },
-  { key: '/projects', icon: <ProjectOutlined />, label: '项目管理' },
   { key: '/environments', icon: <CloudServerOutlined />, label: '环境管理' },
   { key: '/dingtalk-users', icon: <TeamOutlined />, label: '钉钉用户' },
   { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
