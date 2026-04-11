@@ -13,6 +13,7 @@ import {
 import { getProjects, createProject, updateProject, deleteProject } from '../api/projects'
 import { getEnvironments } from '../api/environments'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
+import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getCapabilities, getProductLineCapabilities, setProductLineCapabilities } from '../api/capabilities'
 import type { Capability, ProductLineCapability } from '../api/capabilities'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
@@ -215,6 +216,7 @@ const ROLE_COLORS: Record<string, string> = {
 
 function MembersTab({ productLineId }: { productLineId: number }) {
   const [data, setData] = useState<ProductLineMember[]>([])
+  const [avatarMap, setAvatarMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingMember, setEditingMember] = useState<ProductLineMember | null>(null)
@@ -225,7 +227,17 @@ function MembersTab({ productLineId }: { productLineId: number }) {
 
   async function load() {
     setLoading(true)
-    try { setData(await getMembers(productLineId)) } finally { setLoading(false) }
+    try {
+      const members = await getMembers(productLineId)
+      setData(members)
+      // Load avatars from dingtalk_users
+      const res = await getDingTalkUsers()
+      const map = new Map<string, string>()
+      for (const u of res.users) {
+        if (u.avatar) map.set(u.userId, u.avatar)
+      }
+      setAvatarMap(map)
+    } finally { setLoading(false) }
   }
 
   function openAdd() {
@@ -269,7 +281,7 @@ function MembersTab({ productLineId }: { productLineId: number }) {
     { title: '成员', key: 'user',
       render: (_: unknown, record: ProductLineMember) => (
         <Space>
-          <Avatar size="small" icon={<UserOutlined />} />
+          <Avatar size="small" src={avatarMap.get(record.userId) || undefined} icon={!avatarMap.get(record.userId) ? <UserOutlined /> : undefined} />
           <span>{record.userName}</span>
           <span style={{ color: '#999', fontSize: 12 }}>{record.userId}</span>
         </Space>
