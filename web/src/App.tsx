@@ -8,6 +8,7 @@ import ProductLineListPage from './pages/ProductLineListPage'
 import ProductLineDetailPage from './pages/ProductLineDetailPage'
 import ProjectsPage from './pages/ProjectsPage'
 import DingTalkUsersPage from './pages/DingTalkUsersPage'
+import CapabilitiesPage from './pages/CapabilitiesPage'
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/environments" element={<EnvironmentListPage />} />
             <Route path="/dingtalk-users" element={<DingTalkUsersPage />} />
+            <Route path="/capabilities" element={<CapabilitiesPage />} />
             <Route path="/system-config" element={<SystemConfigPage />} />
           </Route>
         </Routes>

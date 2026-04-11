@@ -13,8 +13,8 @@ import {
 import { getProjects, createProject, updateProject, deleteProject } from '../api/projects'
 import { getEnvironments } from '../api/environments'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
-import { getTools, getToolPermissions, setToolPermissions } from '../api/tool-permissions'
-import type { ToolInfo, ToolPermission } from '../api/tool-permissions'
+import { getCapabilities, getProductLineCapabilities, setProductLineCapabilities } from '../api/capabilities'
+import type { Capability, ProductLineCapability } from '../api/capabilities'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
 import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule } from '../types'
 
@@ -529,15 +529,15 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
   )
 }
 
-// ─── Tool Permissions Tab ─────────────────────────────────────────────────────
+// ─── Capabilities Tab ─────────────────────────────────────────────────────────
 
-function ToolPermissionsTab({ productLineId }: { productLineId: number }) {
-  const [tools, setTools] = useState<ToolInfo[]>([])
+function CapabilitiesTab({ productLineId }: { productLineId: number }) {
+  const [capabilities, setCapabilities] = useState<Capability[]>([])
   const [envs, setEnvs] = useState<Environment[]>([])
-  const [permissions, setPermissions] = useState<ToolPermission[]>([])
+  const [plCaps, setPlCaps] = useState<ProductLineCapability[]>([])
   const [loading, setLoading] = useState(false)
-  const [editingTool, setEditingTool] = useState<ToolInfo | null>(null)
-  const [editPerms, setEditPerms] = useState<Record<string, string[]>>({}) // envName -> roles
+  const [editingCap, setEditingCap] = useState<Capability | null>(null)
+  const [editConfigs, setEditConfigs] = useState<Record<string, { enabled: boolean; allowedRoles: string[] }>>({})
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { loadData() }, [productLineId])
@@ -545,49 +545,56 @@ function ToolPermissionsTab({ productLineId }: { productLineId: number }) {
   async function loadData() {
     setLoading(true)
     try {
-      const [t, e, p] = await Promise.all([
-        getTools(), getEnvironments(), getToolPermissions(productLineId),
+      const [caps, environments, configs] = await Promise.all([
+        getCapabilities(), getEnvironments(), getProductLineCapabilities(productLineId),
       ])
-      setTools(t); setEnvs(e); setPermissions(p)
+      setCapabilities(caps); setEnvs(environments); setPlCaps(configs)
     } finally { setLoading(false) }
   }
 
-  function openEdit(tool: ToolInfo) {
-    setEditingTool(tool)
-    // Build current state from permissions
-    const perms: Record<string, string[]> = {}
-    const toolPerms = permissions.filter(p => p.toolName === tool.name)
-    for (const p of toolPerms) {
-      perms[p.envName] = [...p.allowedRoles]
+  function openEdit(cap: Capability) {
+    setEditingCap(cap)
+    const configs: Record<string, { enabled: boolean; allowedRoles: string[] }> = {}
+    const capConfigs = plCaps.filter(c => c.capabilityKey === cap.key)
+    for (const c of capConfigs) {
+      configs[c.envName] = { enabled: c.enabled, allowedRoles: [...c.allowedRoles] }
     }
-    setEditPerms(perms)
+    setEditConfigs(configs)
   }
 
-  function handleRoleChange(envName: string, roles: string[]) {
-    setEditPerms(prev => ({ ...prev, [envName]: roles }))
+  function handleConfigChange(envName: string, field: 'enabled' | 'allowedRoles', value: unknown) {
+    setEditConfigs(prev => ({
+      ...prev,
+      [envName]: {
+        ...(prev[envName] ?? { enabled: true, allowedRoles: ['developer', 'tester', 'ops', 'admin'] }),
+        [field]: value,
+      },
+    }))
   }
 
   async function handleSave() {
-    if (!editingTool) return
+    if (!editingCap) return
     setSaving(true)
     try {
-      // Collect all permissions for this product line (keep other tools' perms unchanged)
-      const otherPerms = permissions
-        .filter(p => p.toolName !== editingTool.name)
-        .map(p => ({ toolName: p.toolName, envName: p.envName, allowedRoles: p.allowedRoles }))
+      // Keep other capabilities' configs
+      const otherConfigs = plCaps
+        .filter(c => c.capabilityKey !== editingCap.key)
+        .map(c => ({ capabilityKey: c.capabilityKey, envName: c.envName, enabled: c.enabled, allowedRoles: c.allowedRoles }))
 
-      const thisToolPerms = Object.entries(editPerms)
-        .filter(([_, roles]) => roles.length > 0)
-        .map(([envName, allowedRoles]) => ({ toolName: editingTool.name, envName, allowedRoles }))
+      const thisConfigs = Object.entries(editConfigs)
+        .filter(([_, v]) => v.enabled || v.allowedRoles.length > 0)
+        .map(([envName, v]) => ({ capabilityKey: editingCap.key, envName, enabled: v.enabled, allowedRoles: v.allowedRoles }))
 
-      await setToolPermissions(productLineId, [...otherPerms, ...thisToolPerms])
-      message.success('权限已保存')
-      setEditingTool(null)
+      await setProductLineCapabilities(productLineId, [...otherConfigs, ...thisConfigs])
+      message.success('能力配置已保存')
+      setEditingCap(null)
       await loadData()
     } catch { message.error('保存失败') }
     finally { setSaving(false) }
   }
 
+  const categoryColors: Record<string, string> = { query: 'blue', action: 'orange', admin: 'red' }
+  const categoryLabels: Record<string, string> = { query: '查询', action: '操作', admin: '管理' }
   const roleOptions = [
     { label: '开发', value: 'developer' },
     { label: '测试', value: 'tester' },
@@ -595,75 +602,83 @@ function ToolPermissionsTab({ productLineId }: { productLineId: number }) {
     { label: '管理员', value: 'admin' },
   ]
 
-  const riskColors: Record<string, string> = { low: 'green', medium: 'orange', high: 'red' }
-  const roleLabels: Record<string, string> = { developer: '开发', tester: '测试', ops: '运维', admin: '管理员' }
-
-  function getEffectiveRoles(toolName: string): string {
-    const toolPerms = permissions.filter(p => p.toolName === toolName)
-    if (toolPerms.length === 0) return '默认'
-    const envCount = toolPerms.length
-    return `已配置 ${envCount} 个环境`
+  function getConfigSummary(capKey: string): string {
+    const configs = plCaps.filter(c => c.capabilityKey === capKey)
+    if (configs.length === 0) return '未配置'
+    const enabledCount = configs.filter(c => c.enabled).length
+    return `已配置 ${configs.length} 条规则，${enabledCount} 条启用`
   }
 
   const columns = [
-    { title: '工具名称', dataIndex: 'name', width: 180 },
+    { title: '能力名称', dataIndex: 'displayName', width: 140 },
+    { title: '标识', dataIndex: 'key', width: 140 },
     { title: '描述', dataIndex: 'description', ellipsis: true },
-    { title: '风险等级', dataIndex: 'riskLevel', width: 90,
-      render: (v: string) => <Tag color={riskColors[v] ?? 'default'}>{v}</Tag> },
-    { title: '默认权限', key: 'defaults', width: 200,
-      render: (_: unknown, record: ToolInfo) => (
-        <Space size={[0, 4]} wrap>
-          {record.defaultAllowedRoles.map(r => <Tag key={r}>{roleLabels[r] ?? r}</Tag>)}
-        </Space>
-      ) },
-    { title: '当前配置', key: 'current', width: 140,
-      render: (_: unknown, record: ToolInfo) => (
-        <span style={{ color: '#999' }}>{getEffectiveRoles(record.name)}</span>
+    { title: '分类', dataIndex: 'category', width: 80,
+      render: (v: string) => <Tag color={categoryColors[v]}>{categoryLabels[v] ?? v}</Tag> },
+    { title: '需审批', dataIndex: 'needsApproval', width: 80,
+      render: (v: boolean) => v ? <Tag color="red">是</Tag> : <Tag>否</Tag> },
+    { title: '当前配置', key: 'config', width: 200,
+      render: (_: unknown, record: Capability) => (
+        <span style={{ color: '#999' }}>{getConfigSummary(record.key)}</span>
       ) },
     { title: '操作', key: 'action', width: 100,
-      render: (_: unknown, record: ToolInfo) => (
-        <a onClick={() => openEdit(record)}>编辑权限</a>
-      ) },
+      render: (_: unknown, record: Capability) => <a onClick={() => openEdit(record)}>编辑配置</a> },
   ]
 
   return (
     <>
-      <Table rowKey="name" columns={columns} dataSource={tools} loading={loading} pagination={false} size="middle" />
+      <Table rowKey="id" columns={columns} dataSource={capabilities} loading={loading} pagination={false} size="middle" />
 
       <Modal
-        title={editingTool ? `编辑权限：${editingTool.name}` : ''}
-        open={!!editingTool}
+        title={editingCap ? `配置能力：${editingCap.displayName}` : ''}
+        open={!!editingCap}
         onOk={handleSave}
-        onCancel={() => setEditingTool(null)}
+        onCancel={() => setEditingCap(null)}
         confirmLoading={saving}
-        width={600}
+        width={650}
         destroyOnClose
       >
-        {editingTool && (
+        {editingCap && (
           <div>
             <p style={{ color: '#666', marginBottom: 16 }}>
-              为每个环境选择允许使用此工具的角色。未配置的环境将使用默认权限。
+              关联工具: {editingCap.toolNames.join(', ')}。为每个环境配置是否开放及允许角色。
             </p>
 
-            {/* Global wildcard */}
             <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-              <div style={{ fontWeight: 500, marginBottom: 4 }}>* 全局（所有环境）</div>
-              <Checkbox.Group
-                options={roleOptions}
-                value={editPerms['*'] ?? []}
-                onChange={(vals) => handleRoleChange('*', vals as string[])}
-              />
-            </div>
-
-            {/* Per environment */}
-            {envs.map(env => (
-              <div key={env.id} style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-                <div style={{ fontWeight: 500, marginBottom: 4 }}>{env.displayName}（{env.name}）</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                <span style={{ fontWeight: 500, width: 120 }}>* 全局</span>
+                <Switch
+                  checked={editConfigs['*']?.enabled ?? false}
+                  onChange={(v) => handleConfigChange('*', 'enabled', v)}
+                  checkedChildren="开" unCheckedChildren="关"
+                />
+              </div>
+              {editConfigs['*']?.enabled && (
                 <Checkbox.Group
                   options={roleOptions}
-                  value={editPerms[env.name] ?? []}
-                  onChange={(vals) => handleRoleChange(env.name, vals as string[])}
+                  value={editConfigs['*']?.allowedRoles ?? []}
+                  onChange={(v) => handleConfigChange('*', 'allowedRoles', v)}
                 />
+              )}
+            </div>
+
+            {envs.map(env => (
+              <div key={env.id} style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                  <span style={{ fontWeight: 500, width: 120 }}>{env.displayName}（{env.name}）</span>
+                  <Switch
+                    checked={editConfigs[env.name]?.enabled ?? false}
+                    onChange={(v) => handleConfigChange(env.name, 'enabled', v)}
+                    checkedChildren="开" unCheckedChildren="关"
+                  />
+                </div>
+                {editConfigs[env.name]?.enabled && (
+                  <Checkbox.Group
+                    options={roleOptions}
+                    value={editConfigs[env.name]?.allowedRoles ?? []}
+                    onChange={(v) => handleConfigChange(env.name, 'allowedRoles', v)}
+                  />
+                )}
               </div>
             ))}
           </div>
@@ -738,9 +753,9 @@ export default function ProductLineDetailPage() {
       children: <ApprovalRulesTab productLineId={productLineId} />,
     },
     {
-      key: 'tools',
-      label: '工具权限',
-      children: <ToolPermissionsTab productLineId={productLineId} />,
+      key: 'capabilities',
+      label: '能力配置',
+      children: <CapabilitiesTab productLineId={productLineId} />,
     },
   ]
 
