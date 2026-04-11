@@ -2,6 +2,7 @@ import { getPool } from '../client.js'
 
 export interface ApprovalRule {
   id: number
+  productLineId: number | null
   action: string
   env: string
   primaryApprovers: string[]
@@ -10,37 +11,80 @@ export interface ApprovalRule {
   totalTimeoutMin: number
 }
 
-export async function getApprovalRules(): Promise<ApprovalRule[]> {
-  const pool = getPool()
-  const { rows } = await pool.query('SELECT * FROM approval_rules ORDER BY id')
-  return rows.map(r => ({
-    id: r.id,
-    action: r.action,
-    env: r.env,
-    primaryApprovers: r.primary_approvers,
-    backupApprovers: r.backup_approvers,
-    primaryTimeoutMin: r.primary_timeout_min,
-    totalTimeoutMin: r.total_timeout_min,
-  }))
+function mapRow(r: Record<string, unknown>): ApprovalRule {
+  return {
+    id: r.id as number,
+    productLineId: r.product_line_id as number | null,
+    action: r.action as string,
+    env: r.env as string,
+    primaryApprovers: r.primary_approvers as string[],
+    backupApprovers: r.backup_approvers as string[],
+    primaryTimeoutMin: r.primary_timeout_min as number,
+    totalTimeoutMin: r.total_timeout_min as number,
+  }
 }
 
-export async function insertApprovalRule(rule: Omit<ApprovalRule, 'id'>): Promise<ApprovalRule> {
+export async function getApprovalRules(productLineId?: number): Promise<ApprovalRule[]> {
+  const pool = getPool()
+  if (productLineId !== undefined) {
+    const { rows } = await pool.query(
+      'SELECT * FROM approval_rules WHERE product_line_id = $1 ORDER BY id',
+      [productLineId]
+    )
+    return rows.map(mapRow)
+  }
+  const { rows } = await pool.query('SELECT * FROM approval_rules ORDER BY id')
+  return rows.map(mapRow)
+}
+
+export async function insertApprovalRule(
+  rule: Omit<ApprovalRule, 'id'>
+): Promise<ApprovalRule> {
   const pool = getPool()
   const { rows } = await pool.query(
     `INSERT INTO approval_rules
-       (action, env, primary_approvers, backup_approvers, primary_timeout_min, total_timeout_min)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-    [rule.action, rule.env,
-     JSON.stringify(rule.primaryApprovers), JSON.stringify(rule.backupApprovers),
-     rule.primaryTimeoutMin, rule.totalTimeoutMin]
+       (product_line_id, action, env, primary_approvers, backup_approvers, primary_timeout_min, total_timeout_min)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [
+      rule.productLineId ?? null, rule.action, rule.env,
+      JSON.stringify(rule.primaryApprovers), JSON.stringify(rule.backupApprovers),
+      rule.primaryTimeoutMin, rule.totalTimeoutMin,
+    ]
   )
-  return {
-    id: rows[0].id,
-    action: rows[0].action,
-    env: rows[0].env,
-    primaryApprovers: rows[0].primary_approvers,
-    backupApprovers: rows[0].backup_approvers,
-    primaryTimeoutMin: rows[0].primary_timeout_min,
-    totalTimeoutMin: rows[0].total_timeout_min,
-  }
+  return mapRow(rows[0])
+}
+
+export async function updateApprovalRule(
+  id: number,
+  data: Partial<Omit<ApprovalRule, 'id'>>
+): Promise<ApprovalRule | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `UPDATE approval_rules SET
+       product_line_id = COALESCE($2, product_line_id),
+       action = COALESCE($3, action),
+       env = COALESCE($4, env),
+       primary_approvers = COALESCE($5, primary_approvers),
+       backup_approvers = COALESCE($6, backup_approvers),
+       primary_timeout_min = COALESCE($7, primary_timeout_min),
+       total_timeout_min = COALESCE($8, total_timeout_min)
+     WHERE id = $1 RETURNING *`,
+    [
+      id,
+      data.productLineId ?? null,
+      data.action ?? null,
+      data.env ?? null,
+      data.primaryApprovers ? JSON.stringify(data.primaryApprovers) : null,
+      data.backupApprovers ? JSON.stringify(data.backupApprovers) : null,
+      data.primaryTimeoutMin ?? null,
+      data.totalTimeoutMin ?? null,
+    ]
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+export async function deleteApprovalRule(id: number): Promise<boolean> {
+  const pool = getPool()
+  const { rowCount } = await pool.query('DELETE FROM approval_rules WHERE id = $1', [id])
+  return (rowCount ?? 0) > 0
 }
