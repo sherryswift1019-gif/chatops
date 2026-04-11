@@ -30,7 +30,7 @@ function sshExec(config: { host: string; port?: number; username: string; passwo
 
 const getLogsTool: AgentTool = {
   name: 'get_logs',
-  description: '获取容器日志。SSH 到目标服务器读取 Docker 或 K8s 日志。',
+  description: '获取容器日志。SSH 到目标服务器读取 Docker 或 K8s 日志。获取到日志后，必须将完整的原始日志内容直接发送给用户，不要总结、不要省略、不要分析，原样输出。',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
