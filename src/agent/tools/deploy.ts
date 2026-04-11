@@ -1,120 +1,249 @@
 import { registerTool } from './index.js'
-import { execSync } from 'child_process'
+import { Client } from 'ssh2'
 import { recordDeployment } from '../../db/repositories/deployments.js'
+import { listProjects } from '../../db/repositories/projects-repo.js'
+import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
+import { listEnvironments } from '../../db/repositories/environments-repo.js'
+import { getConfig } from '../../db/repositories/system-config.js'
+import { appendFileSync } from 'fs'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
+
+function deployLog(msg: string) {
+  try { appendFileSync('/tmp/mcp-server.log', `[${new Date().toISOString()}] [deploy] ${msg}\n`) } catch { /* */ }
+}
+
+// ── SSH remote command execution ──────────────────────────────────────────
+
+function sshExec(config: { host: string; port?: number; username: string; password: string }, command: string): Promise<{ stdout: string; stderr: string; code: number }> {
+  return new Promise((resolve, reject) => {
+    const conn = new Client()
+    let stdout = ''
+    let stderr = ''
+
+    conn.on('ready', () => {
+      conn.exec(command, (err, stream) => {
+        if (err) { conn.end(); return reject(err) }
+        stream.on('close', (code: number) => {
+          conn.end()
+          resolve({ stdout, stderr, code: code ?? 0 })
+        })
+        stream.on('data', (data: Buffer) => { stdout += data.toString() })
+        stream.stderr.on('data', (data: Buffer) => { stderr += data.toString() })
+      })
+    })
+    conn.on('error', reject)
+    conn.connect({
+      host: config.host,
+      port: config.port ?? 22,
+      username: config.username,
+      password: config.password,
+      readyTimeout: 10000,
+    })
+  })
+}
+
+// ── Lookup helpers ────────────────────────────────────────────────────────
+
+async function lookupProjectAndEnv(projectName: string, envName: string) {
+  const projects = await listProjects()
+  const project = projects.find(p => p.name === projectName || p.displayName === projectName)
+  if (!project) throw new Error(`项目 "${projectName}" 未在数据库中注册`)
+
+  const envs = await listEnvironments()
+  const env = envs.find(e => e.name === envName || e.displayName === envName)
+  if (!env) throw new Error(`环境 "${envName}" 未定义`)
+
+  const plEnvs = await listProductLineEnvs(project.productLineId)
+  const plEnv = plEnvs.find(e => e.envId === env.id)
+  if (!plEnv) throw new Error(`项目所属产线未配置 "${envName}" 环境`)
+
+  const harborCfg = await getConfig('harbor')
+  const harbor = harborCfg?.value as Record<string, string> | undefined
+
+  return { project, env, plEnv, harbor }
+}
+
+function buildImageFullPath(harborUrl: string, harborProject: string, imageTag: string): string {
+  const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  return `${registryHost}/${harborProject}:${imageTag}`
+}
+
+// ── Deploy Tool ──────────────────────────────────────────────────────────
 
 const deployTool: AgentTool = {
   name: 'execute_deploy',
-  description: 'Execute a deployment. Only call this tool after explicit human approval has been obtained via request_approval tool. The deployment has already been approved.',
+  description: '执行部署：SSH 到目标服务器，从 Harbor 拉取新镜像并更新容器。需要先通过审批。',
   riskLevel: 'high',
   requiredRole: 'ops',
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string' },
-      env: { type: 'string' },
-      imageTag: { type: 'string' },
-      runtime: { type: 'string', enum: ['kubernetes', 'docker'] },
-      approvedBy: { type: 'string' },
+      project: { type: 'string', description: '项目名称' },
+      env: { type: 'string', description: '目标环境 (dev/test/staging/prod)' },
+      imageTag: { type: 'string', description: '镜像标签' },
     },
-    required: ['project', 'env', 'imageTag', 'runtime', 'approvedBy'],
+    required: ['project', 'env', 'imageTag'],
   },
   async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
-    const { project, env, imageTag, runtime, approvedBy } = params as {
-      project: string; env: string; imageTag: string; runtime: 'kubernetes' | 'docker'; approvedBy: string
-    }
+    const { project: projectName, env: envName, imageTag } = params as { project: string; env: string; imageTag: string }
+    deployLog(`execute_deploy: project=${projectName} env=${envName} tag=${imageTag}`)
+
     try {
-      if (runtime === 'kubernetes') {
-        execSync(
-          `kubectl set image deployment/${project} ${project}=${project}:${imageTag} --namespace=${env}`,
-          { encoding: 'utf8', timeout: 60000 }
-        )
-        execSync(
-          `kubectl rollout status deployment/${project} --namespace=${env} --timeout=5m`,
-          { encoding: 'utf8', timeout: 320000 }
-        )
-      } else {
-        execSync(
-          `docker pull ${project}:${imageTag} && docker stop ${project}-${env} || true && docker run -d --name ${project}-${env} --rm ${project}:${imageTag}`,
-          { encoding: 'utf8', timeout: 120000 }
-        )
+      const { project, plEnv, harbor } = await lookupProjectAndEnv(projectName, envName)
+      const conn = plEnv.connectionConfig as { host?: string; username?: string; password?: string }
+
+      if (!conn.host || !conn.username || !conn.password) {
+        return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息（IP/用户名/密码）。请在管理后台 → 产线详情 → 环境配置中设置。` }
       }
-      await recordDeployment({
-        project, env, imageTag,
-        deployedBy: ctx.initiatorId,
-        approvedBy,
-        status: 'success',
-      })
-      return { success: true, output: `✅ Successfully deployed ${project}:${imageTag} to ${env}` }
+
+      if (plEnv.runtime === 'docker') {
+        const containerName = project.dockerContainerName || project.name
+        const harborUrl = harbor?.url ?? ''
+        const harborUser = harbor?.username ?? ''
+        const harborPass = harbor?.password ?? ''
+        const harborProject = project.harborProject || project.name
+
+        if (!harborUrl) return { success: false, output: 'Harbor URL 未配置。请在系统配置中设置。' }
+
+        const fullImage = buildImageFullPath(harborUrl, harborProject, imageTag)
+        const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
+        deployLog(`SSH to ${conn.host}, container=${containerName}, image=${fullImage}`)
+
+        const commands = [
+          `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
+          `docker pull ${fullImage}`,
+          `docker stop ${containerName} || true`,
+          `docker rm ${containerName} || true`,
+          `docker run -d --name ${containerName} --restart unless-stopped ${fullImage}`,
+        ].join(' && ')
+
+        const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, commands)
+        deployLog(`SSH result: code=${result.code} stdout=${result.stdout.slice(0, 200)}`)
+
+        if (result.code !== 0) {
+          await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'failed' })
+          return { success: false, output: `部署失败 (exit code ${result.code}):\n${result.stderr || result.stdout}` }
+        }
+
+        await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'success' })
+        return { success: true, output: `✅ 部署成功\n服务器: ${conn.host}\n容器: ${containerName}\n镜像: ${fullImage}` }
+
+      } else {
+        // Kubernetes
+        const deploymentName = project.k8sProjectName || project.name
+        const namespace = plEnv.namespace || envName
+        const harborProject = project.harborProject || project.name
+        const harborUrl = harbor?.url?.replace(/^https?:\/\//, '') ?? ''
+        const fullImage = `${harborUrl}/${harborProject}:${imageTag}`
+
+        const commands = [
+          `kubectl set image deployment/${deploymentName} ${deploymentName}=${fullImage} --namespace=${namespace}`,
+          `kubectl rollout status deployment/${deploymentName} --namespace=${namespace} --timeout=5m`,
+        ].join(' && ')
+
+        const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, commands)
+        if (result.code !== 0) {
+          await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'failed' })
+          return { success: false, output: `K8s 部署失败:\n${result.stderr || result.stdout}` }
+        }
+
+        await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'success' })
+        return { success: true, output: `✅ K8s 部署成功\nDeployment: ${deploymentName}\nNamespace: ${namespace}\n镜像: ${fullImage}` }
+      }
     } catch (err) {
-      await recordDeployment({
-        project, env, imageTag,
-        deployedBy: ctx.initiatorId,
-        approvedBy,
-        status: 'failed',
-      })
-      return { success: false, output: `❌ Deployment failed: ${String(err)}` }
+      deployLog(`execute_deploy error: ${String(err)}`)
+      return { success: false, output: `部署错误: ${String(err)}` }
     }
   },
 }
+
+// ── Rollback Tool ────────────────────────────────────────────────────────
 
 const rollbackTool: AgentTool = {
   name: 'execute_rollback',
-  description: 'Roll back a deployment to the previous version. Only call after explicit human approval.',
+  description: '回滚部署。Docker 需指定回滚目标镜像标签，K8s 自动回滚到上一版本。',
   riskLevel: 'high',
   requiredRole: 'ops',
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string' },
-      env: { type: 'string' },
-      runtime: { type: 'string', enum: ['kubernetes', 'docker'] },
-      approvedBy: { type: 'string' },
+      project: { type: 'string', description: '项目名称' },
+      env: { type: 'string', description: '目标环境' },
+      imageTag: { type: 'string', description: '回滚到的镜像标签（Docker 必填，K8s 可选）' },
     },
-    required: ['project', 'env', 'runtime', 'approvedBy'],
+    required: ['project', 'env'],
   },
-  async execute(params: unknown, _ctx: TaskContext): Promise<ToolResult> {
-    const { project, env, runtime } = params as {
-      project: string; env: string; runtime: 'kubernetes' | 'docker'
-    }
+  async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
+    const { project: projectName, env: envName, imageTag } = params as { project: string; env: string; imageTag?: string }
+    deployLog(`execute_rollback: project=${projectName} env=${envName} tag=${imageTag ?? 'auto'}`)
+
     try {
-      if (runtime === 'kubernetes') {
-        execSync(`kubectl rollout undo deployment/${project} --namespace=${env}`, { encoding: 'utf8', timeout: 60000 })
-        execSync(`kubectl rollout status deployment/${project} --namespace=${env} --timeout=5m`, { encoding: 'utf8', timeout: 320000 })
-      } else {
-        return { success: false, output: 'Docker rollback requires manual intervention — no previous container image tracked.' }
+      const { project, plEnv } = await lookupProjectAndEnv(projectName, envName)
+      const conn = plEnv.connectionConfig as { host?: string; username?: string; password?: string }
+      if (!conn.host || !conn.username || !conn.password) {
+        return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息` }
       }
-      return { success: true, output: `✅ Rolled back ${project} in ${env}` }
+
+      if (plEnv.runtime === 'kubernetes') {
+        const deploymentName = project.k8sProjectName || project.name
+        const namespace = plEnv.namespace || envName
+        const result = await sshExec(
+          { host: conn.host, username: conn.username, password: conn.password },
+          `kubectl rollout undo deployment/${deploymentName} --namespace=${namespace}`
+        )
+        if (result.code !== 0) return { success: false, output: `回滚失败:\n${result.stderr || result.stdout}` }
+        return { success: true, output: `✅ K8s 回滚成功: ${deploymentName} (${namespace})` }
+      }
+
+      // Docker: redeploy with old tag
+      if (!imageTag) return { success: false, output: 'Docker 回滚需要指定目标镜像标签。请先用 query_deployments 查看历史版本。' }
+      return deployTool.execute({ project: projectName, env: envName, imageTag }, ctx)
     } catch (err) {
-      return { success: false, output: `❌ Rollback failed: ${String(err)}` }
+      return { success: false, output: `回滚错误: ${String(err)}` }
     }
   },
 }
 
+// ── Restart Tool ─────────────────────────────────────────────────────────
+
 const restartTool: AgentTool = {
   name: 'execute_restart',
-  description: 'Restart a service. For staging/prod, approval is required first.',
+  description: '重启服务。SSH 到目标服务器执行 docker restart 或 kubectl rollout restart。',
   riskLevel: 'medium',
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string' },
-      env: { type: 'string' },
-      runtime: { type: 'string', enum: ['kubernetes', 'docker'] },
+      project: { type: 'string', description: '项目名称' },
+      env: { type: 'string', description: '目标环境' },
     },
-    required: ['project', 'env', 'runtime'],
+    required: ['project', 'env'],
   },
   async execute(params: unknown, _ctx: TaskContext): Promise<ToolResult> {
-    const { project, env, runtime } = params as { project: string; env: string; runtime: 'kubernetes' | 'docker' }
+    const { project: projectName, env: envName } = params as { project: string; env: string }
+    deployLog(`execute_restart: project=${projectName} env=${envName}`)
+
     try {
-      if (runtime === 'kubernetes') {
-        execSync(`kubectl rollout restart deployment/${project} --namespace=${env}`, { encoding: 'utf8', timeout: 30000 })
-      } else {
-        execSync(`docker restart ${project}-${env}`, { encoding: 'utf8', timeout: 30000 })
+      const { project, plEnv } = await lookupProjectAndEnv(projectName, envName)
+      const conn = plEnv.connectionConfig as { host?: string; username?: string; password?: string }
+      if (!conn.host || !conn.username || !conn.password) {
+        return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息` }
       }
-      return { success: true, output: `✅ Restarted ${project} in ${env}` }
+
+      let command: string
+      if (plEnv.runtime === 'docker') {
+        const containerName = project.dockerContainerName || project.name
+        command = `docker restart ${containerName}`
+      } else {
+        const deploymentName = project.k8sProjectName || project.name
+        const namespace = plEnv.namespace || envName
+        command = `kubectl rollout restart deployment/${deploymentName} --namespace=${namespace}`
+      }
+
+      const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, command)
+      if (result.code !== 0) return { success: false, output: `重启失败:\n${result.stderr || result.stdout}` }
+      return { success: true, output: `✅ 重启成功: ${projectName} (${envName})\n${result.stdout}` }
     } catch (err) {
-      return { success: false, output: `❌ Restart failed: ${String(err)}` }
+      return { success: false, output: `重启错误: ${String(err)}` }
     }
   },
 }
