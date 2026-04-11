@@ -187,56 +187,62 @@ ${capList}
 
     // Build MCP server config to expose our custom tools
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
+    console.log(`[Runner] executeWithPorygon: mcpServerPath=${mcpServerPath}, tools=[${toolNames.join(',')}]`)
 
     let textBuffer = ''
 
-    for await (const msg of this.porygon.query({
-      prompt: prompt + contextNote,
-      appendSystemPrompt: systemPrompt,
-      mcpServers: {
-        'chatops-tools': {
-          command: 'node',
-          args: ['--import', 'tsx/esm', mcpServerPath],
-          env: {
-            CHATOPS_TASK_CONTEXT: JSON.stringify(context),
-            DATABASE_URL: process.env.DATABASE_URL ?? '',
-            ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
+    try {
+      console.log('[Runner] Starting porygon.query()...')
+      for await (const msg of this.porygon.query({
+        prompt: prompt + contextNote,
+        appendSystemPrompt: systemPrompt,
+        mcpServers: {
+          'chatops-tools': {
+            command: 'node',
+            args: ['--import', 'tsx/esm', mcpServerPath],
+            env: {
+              CHATOPS_TASK_CONTEXT: JSON.stringify(context),
+              DATABASE_URL: process.env.DATABASE_URL ?? '',
+              ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
+            },
           },
         },
-      },
-      // Only allow our custom tools from MCP server (block built-in tools)
-      disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
-      envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
-    })) {
-      switch (msg.type) {
-        case 'assistant':
-          if (msg.text && !msg.turnComplete) {
-            textBuffer += msg.text
-          }
-          break
+        // Only allow our custom tools from MCP server (block built-in tools)
+        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
+        envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
+      })) {
+        console.log(`[Runner] Porygon msg: type=${msg.type}`, msg.type === 'error' ? msg.message : '')
+        switch (msg.type) {
+          case 'assistant':
+            if (msg.text) textBuffer += msg.text
+            break
 
-        case 'tool_use':
-          // Tool execution happens inside CLI via MCP server
-          // We can log it for observability
-          if (msg.output && !toolNames.includes(msg.toolName ?? '')) {
-            // Unknown tool output — skip
-          }
-          break
+          case 'tool_use':
+            console.log(`[Runner] Tool called: ${msg.toolName}`)
+            break
 
-        case 'result':
-          // Final result — flush any remaining text
-          if (msg.text) {
-            textBuffer += msg.text
-          }
-          break
+          case 'result':
+            if (msg.text) textBuffer += msg.text
+            console.log(`[Runner] Porygon result received`)
+            break
 
-        case 'error':
-          await adapter.sendMessage(
-            { type: 'group', id: opts.groupId },
-            { text: `⚠️ Agent 错误: ${msg.message}` }
-          )
-          return
+          case 'error':
+            console.error(`[Runner] Porygon error: ${msg.message}`)
+            await adapter.sendMessage(
+              { type: 'group', id: opts.groupId },
+              { text: `⚠️ Agent 错误: ${msg.message}` }
+            )
+            return
+        }
       }
+      console.log(`[Runner] Porygon query completed, textBuffer length=${textBuffer.length}`)
+    } catch (err) {
+      console.error('[Runner] executeWithPorygon error:', err)
+      await adapter.sendMessage(
+        { type: 'group', id: opts.groupId },
+        { text: `❌ 执行错误: ${String(err)}` }
+      ).catch(e => console.error('[Runner] Failed to send error:', e))
+      return
     }
 
     // Send accumulated text to IM
