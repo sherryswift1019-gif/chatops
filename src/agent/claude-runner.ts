@@ -28,8 +28,17 @@ interface DetectedIntent {
   summary: string
 }
 
+// Session per group with auto-expiry
+interface GroupSession {
+  sessionId: string
+  lastUsed: number
+}
+
+const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
+
 export class ClaudeRunner {
   private porygon: Porygon
+  private sessions = new Map<string, GroupSession>()
 
   constructor() {
     this.porygon = createPorygon({
@@ -48,6 +57,20 @@ export class ClaudeRunner {
     })
   }
 
+  private getSessionId(groupId: string): string | undefined {
+    const session = this.sessions.get(groupId)
+    if (!session) return undefined
+    if (Date.now() - session.lastUsed > SESSION_TTL_MS) {
+      this.sessions.delete(groupId)
+      return undefined
+    }
+    return session.sessionId
+  }
+
+  private saveSessionId(groupId: string, sessionId: string): void {
+    this.sessions.set(groupId, { sessionId, lastUsed: Date.now() })
+  }
+
   async run(opts: RunOptions): Promise<void> {
     const { prompt, context, adapter, executionMode = false, productLineId } = opts
 
@@ -63,7 +86,7 @@ export class ClaudeRunner {
       const intent = await this.detectIntent(prompt)
       console.log('[Runner] Intent result:', JSON.stringify(intent))
 
-      // Greeting or unknown → introduce capabilities
+      // Greeting or unknown
       if (!intent || intent.capability === 'greet') {
         const caps = await listCapabilities()
         const capsList = caps.map(c => `• ${c.displayName} — ${c.description}`).join('\n')
@@ -74,7 +97,7 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 2: Get capability definition
+      // Step 2: Get capability
       const capability = await getCapabilityByKey(intent.capability)
       if (!capability) {
         await adapter.sendMessage(
@@ -84,7 +107,7 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 3: Check capability access
+      // Step 3: Check access
       if (productLineId) {
         const envName = intent.env ?? '*'
         const userRole = context.initiatorRole ?? 'developer'
@@ -98,7 +121,7 @@ export class ClaudeRunner {
         }
       }
 
-      // Step 4: Get tools for this capability
+      // Step 4: Get tools
       const capabilityTools = capability.toolNames
         .map(name => getTool(name))
         .filter((t): t is AgentTool => t !== undefined)
@@ -111,7 +134,7 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 5: Execute via Porygon
+      // Step 5: Execute with session context
       await this.executeWithPorygon(opts, capabilityTools)
 
     } catch (err) {
@@ -151,8 +174,6 @@ ${capList}
       })
 
       console.log('[Runner] Porygon raw result:', result)
-
-      // Clean markdown code block wrapping if present
       const cleaned = result.replace(/```json?\n?/g, '').replace(/```\n?/g, '').trim()
       const parsed = JSON.parse(cleaned) as DetectedIntent
       return parsed.capability === 'unknown' ? null : parsed
@@ -163,11 +184,11 @@ ${capList}
   }
 
   private async executeWithPorygon(opts: RunOptions, tools: AgentTool[]): Promise<void> {
-    const { prompt, context, adapter, executionMode = false } = opts
+    const { prompt, context, adapter, executionMode = false, groupId } = opts
 
     const systemPrompt = executionMode
       ? '你是一个 DevOps 自动化 agent，正在执行已审批的操作。直接执行，无需再次确认。'
-      : `你是一个 DevOps 助手。用户通过群聊与你交互。
+      : `你是一个 DevOps 助手。用户通过群聊与你交互。你可以记住之前的对话内容。
 
 当前用户角色: ${context.initiatorRole ?? 'developer'}
 
@@ -176,7 +197,8 @@ ${capList}
 2. 调用 request_approval 后，告知用户已发起审批并结束回复
 3. 部署前确认镜像标签
 4. 分析日志时关注 ERROR/WARN 模式
-5. 只使用提供给你的 MCP 工具，不要使用 Bash 等内置工具`
+5. 只使用提供给你的 MCP 工具，不要使用 Bash 等内置工具
+6. 如果用户的请求引用了之前的对话内容，利用上下文理解用户意图`
 
     const recentTasks = await getRecentTasks(context.groupId, 5)
     const contextNote = recentTasks.length
@@ -184,10 +206,16 @@ ${capList}
       : ''
 
     const toolNames = tools.map(t => t.name)
-
-    // Build MCP server config to expose our custom tools
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
     console.log(`[Runner] executeWithPorygon: mcpServerPath=${mcpServerPath}, tools=[${toolNames.join(',')}]`)
+
+    // Resume existing session for this group if available
+    const existingSessionId = this.getSessionId(groupId)
+    if (existingSessionId) {
+      console.log(`[Runner] Resuming session: ${existingSessionId} for group: ${groupId}`)
+    } else {
+      console.log(`[Runner] New session for group: ${groupId}`)
+    }
 
     let textBuffer = ''
 
@@ -196,6 +224,7 @@ ${capList}
       for await (const msg of this.porygon.query({
         prompt: prompt + contextNote,
         appendSystemPrompt: systemPrompt,
+        ...(existingSessionId ? { resume: existingSessionId } : {}),
         mcpServers: {
           'chatops-tools': {
             command: 'node',
@@ -207,11 +236,16 @@ ${capList}
             },
           },
         },
-        // Only allow our custom tools from MCP server (block built-in tools)
         disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
         envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
       })) {
         console.log(`[Runner] Porygon msg: type=${msg.type}`, msg.type === 'error' ? msg.message : '')
+
+        // Capture sessionId from any message
+        if ('sessionId' in msg && msg.sessionId) {
+          this.saveSessionId(groupId, msg.sessionId as string)
+        }
+
         switch (msg.type) {
           case 'assistant':
             if (msg.text) textBuffer += msg.text
@@ -223,6 +257,10 @@ ${capList}
 
           case 'result':
             if (msg.text) textBuffer += msg.text
+            // Capture sessionId from result
+            if ('sessionId' in msg && msg.sessionId) {
+              this.saveSessionId(groupId, msg.sessionId as string)
+            }
             console.log(`[Runner] Porygon result received`)
             break
 
@@ -238,6 +276,8 @@ ${capList}
       console.log(`[Runner] Porygon query completed, textBuffer length=${textBuffer.length}`)
     } catch (err) {
       console.error('[Runner] executeWithPorygon error:', err)
+      // Session might be invalid, clear it
+      this.sessions.delete(groupId)
       await adapter.sendMessage(
         { type: 'group', id: opts.groupId },
         { text: `❌ 执行错误: ${String(err)}` }
@@ -245,7 +285,6 @@ ${capList}
       return
     }
 
-    // Send accumulated text to IM
     if (textBuffer.trim()) {
       await adapter.sendMessage(
         { type: 'group', id: opts.groupId },
