@@ -1,13 +1,36 @@
-import crypto from 'crypto'
 import axios from 'axios'
+import { DWClient, DWClientDownStream, TOPIC_ROBOT, TOPIC_CARD } from 'dingtalk-stream-sdk-nodejs'
 import type {
   IMAdapter, MessageHandler, CardActionHandler,
   MessageTarget, TextContent, InteractiveCard, UserInfo, NormalizedMessage
 } from './types.js'
 
-interface DingTalkConfig {
-  appSecret: string
-  accessToken: string
+interface DingTalkStreamConfig {
+  clientId: string
+  clientSecret: string
+}
+
+interface RobotMessage {
+  conversationId: string
+  chatbotUserId: string
+  msgId: string
+  senderNick: string
+  isAdmin: boolean
+  senderStaffId: string
+  sessionWebhookExpiredTime: number
+  createAt: number
+  senderCorpId: string
+  conversationType: string
+  senderId: string
+  sessionWebhook: string
+  robotCode: string
+  msgtype: string
+  text: { content: string }
+}
+
+interface AccessTokenCache {
+  token: string
+  expiresAt: number
 }
 
 export class DingTalkAdapter implements IMAdapter {
@@ -15,76 +38,160 @@ export class DingTalkAdapter implements IMAdapter {
   private messageHandler: MessageHandler | null = null
   private cardActionHandler: CardActionHandler | null = null
 
-  constructor(private readonly cfg: DingTalkConfig) {}
+  // WebSocket client
+  private readonly client: DWClient
+
+  // Cache sessionWebhook by conversationId for group replies
+  private readonly webhookCache = new Map<string, string>()
+
+  // Access token cache for OpenAPI (DMs)
+  private accessTokenCache: AccessTokenCache | null = null
+
+  constructor(private readonly cfg: DingTalkStreamConfig) {
+    this.client = new DWClient({
+      clientId: cfg.clientId,
+      clientSecret: cfg.clientSecret,
+      keepAlive: true,
+    })
+
+    this.client
+      .registerCallbackListener(TOPIC_ROBOT, (res: DWClientDownStream) => {
+        void this.handleRobotMessage(res)
+      })
+      .registerCallbackListener(TOPIC_CARD, (res: DWClientDownStream) => {
+        void this.handleCardCallback(res)
+      })
+  }
 
   onMessage(handler: MessageHandler): void { this.messageHandler = handler }
   onCardAction(handler: CardActionHandler): void { this.cardActionHandler = handler }
 
-  async handleWebhook(payload: unknown, headers: Record<string, string>): Promise<void> {
-    const ts = headers['x-dingtalk-timestamp'] ?? ''
-    const sign = headers['x-dingtalk-sign'] ?? ''
-    this.verifySignature(ts, sign)
-
-    const body = payload as Record<string, unknown>
-
-    // Card action callback
-    if (body.actionType === 'card_action') {
-      const data = body.callbackData as Record<string, string>
-      await this.cardActionHandler?.(data.taskId, data.action, body.userId as string)
-      return
-    }
-
-    // Text message
-    const rawText = (body.text as { content?: string })?.content ?? ''
-    const text = rawText.replace(/@\S+/g, '').trim()
-    if (!text) return
-
-    const msg: NormalizedMessage = {
-      platform: 'dingtalk',
-      groupId: body.conversationId as string,
-      userId: body.senderId as string,
-      userName: body.senderNick as string,
-      text,
-      timestamp: Date.now(),
-      rawPayload: payload,
-    }
-    await this.messageHandler?.(msg)
+  async start(): Promise<void> {
+    await this.client.connect()
   }
+
+  async stop(): Promise<void> {
+    this.client.disconnect()
+  }
+
+  // Stream mode does not use HTTP webhooks
+  async handleWebhook(_payload: unknown, _headers: Record<string, string>): Promise<void> {
+    throw new Error('DingTalk adapter is running in Stream mode — HTTP webhooks are not supported')
+  }
+
+  // ── Sending ──────────────────────────────────────────────────────────────
 
   async sendMessage(target: MessageTarget, content: TextContent): Promise<void> {
-    await this.post({ msgtype: 'text', text: { content: content.text } })
+    const webhook = this.getWebhook(target)
+    await axios.post(webhook, {
+      msgtype: 'text',
+      text: { content: content.text },
+    })
   }
 
-  async sendCard(_target: MessageTarget, card: InteractiveCard): Promise<void> {
+  async sendCard(target: MessageTarget, card: InteractiveCard): Promise<void> {
+    const webhook = this.getWebhook(target)
     const markdown = this.cardToMarkdown(card)
-    await this.post({ msgtype: 'markdown', markdown: { title: card.title, text: markdown } })
+    await axios.post(webhook, {
+      msgtype: 'markdown',
+      markdown: { title: card.title, text: markdown },
+    })
   }
 
   async sendDirectMessage(userId: string, content: TextContent | InteractiveCard): Promise<void> {
+    const token = await this.getAccessToken()
     const isCard = 'actions' in content
-    const body = isCard
-      ? { msgtype: 'markdown', markdown: { title: (content as InteractiveCard).title, text: this.cardToMarkdown(content as InteractiveCard) } }
+    const msgBody = isCard
+      ? {
+          msgtype: 'markdown',
+          markdown: {
+            title: (content as InteractiveCard).title,
+            text: this.cardToMarkdown(content as InteractiveCard),
+          },
+        }
       : { msgtype: 'text', text: { content: (content as TextContent).text } }
-    await this.post({ ...body, toUserIds: [userId] })
+
+    await axios.post(
+      'https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2',
+      {
+        agent_id: this.cfg.clientId,
+        userid_list: userId,
+        msg: msgBody,
+      },
+      { headers: { 'x-acs-dingtalk-access-token': token } }
+    )
   }
 
   async getUserInfo(userId: string): Promise<UserInfo> {
     return { userId, name: userId, platform: 'dingtalk' }
   }
 
-  private verifySignature(timestamp: string, sign: string): void {
-    const msg = `${timestamp}\n${this.cfg.appSecret}`
-    const expected = encodeURIComponent(
-      crypto.createHmac('sha256', this.cfg.appSecret).update(msg).digest('base64')
-    )
-    if (expected !== sign) throw new Error('Invalid signature')
+  // ── Internal handlers ────────────────────────────────────────────────────
+
+  private async handleRobotMessage(res: DWClientDownStream): Promise<void> {
+    let msg: RobotMessage
+    try {
+      msg = JSON.parse(res.data) as RobotMessage
+    } catch {
+      return
+    }
+
+    // Cache sessionWebhook so we can reply to this conversation later
+    if (msg.sessionWebhook) {
+      this.webhookCache.set(msg.conversationId, msg.sessionWebhook)
+    }
+
+    // Strip @mentions from text
+    const text = (msg.text?.content ?? '').replace(/@\S+/g, '').trim()
+
+    // ACK immediately
+    this.client.send(res.headers.messageId, { status: 'SUCCESS' })
+
+    if (!text) return
+
+    const normalized: NormalizedMessage = {
+      platform: 'dingtalk',
+      groupId: msg.conversationId,
+      userId: msg.senderId,
+      userName: msg.senderNick,
+      text,
+      timestamp: msg.createAt ?? Date.now(),
+      rawPayload: msg,
+    }
+
+    await this.messageHandler?.(normalized)
   }
 
-  private async post(body: unknown): Promise<void> {
-    await axios.post(
-      `https://oapi.dingtalk.com/robot/send?access_token=${this.cfg.accessToken}`,
-      body
-    )
+  private async handleCardCallback(res: DWClientDownStream): Promise<void> {
+    let data: Record<string, unknown>
+    try {
+      data = JSON.parse(res.data) as Record<string, unknown>
+    } catch {
+      this.client.send(res.headers.messageId, { status: 'SUCCESS' })
+      return
+    }
+
+    // ACK
+    this.client.send(res.headers.messageId, { status: 'SUCCESS' })
+
+    const callbackData = (data.callbackData ?? data) as Record<string, string>
+    const taskId = callbackData.taskId ?? (data.taskId as string)
+    const action = callbackData.action ?? (data.action as string)
+    const userId = (data.userId ?? data.operatorUserId) as string
+
+    if (taskId && action && userId) {
+      await this.cardActionHandler?.(taskId, action, userId)
+    }
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  private getWebhook(target: MessageTarget): string {
+    const hook = this.webhookCache.get(target.id)
+    if (!hook) {
+      throw new Error(`No sessionWebhook cached for conversation ${target.id}`)
+    }
+    return hook
   }
 
   private cardToMarkdown(card: InteractiveCard): string {
@@ -92,5 +199,24 @@ export class DingTalkAdapter implements IMAdapter {
       .map(a => `[${a.label}](callback://chatops?taskId=${card.callbackData.taskId}&action=${a.value})`)
       .join(' | ')
     return `${card.body}\n\n${buttons}`
+  }
+
+  private async getAccessToken(): Promise<string> {
+    const now = Date.now()
+    if (this.accessTokenCache && this.accessTokenCache.expiresAt > now + 60_000) {
+      return this.accessTokenCache.token
+    }
+
+    const response = await axios.post<{ accessToken: string; expireIn: number }>(
+      'https://api.dingtalk.com/v1.0/oauth2/accessToken',
+      { appKey: this.cfg.clientId, appSecret: this.cfg.clientSecret }
+    )
+
+    const { accessToken, expireIn } = response.data
+    this.accessTokenCache = {
+      token: accessToken,
+      expiresAt: now + expireIn * 1000,
+    }
+    return accessToken
   }
 }
