@@ -1,0 +1,49 @@
+import { getPool } from '../client.js'
+
+export interface DingTalkUser {
+  userId: string
+  name: string
+  avatar: string
+  department: string
+  syncedAt: Date
+}
+
+function mapRow(r: Record<string, unknown>): DingTalkUser {
+  return {
+    userId: r.user_id as string, name: r.name as string,
+    avatar: r.avatar as string, department: r.department as string,
+    syncedAt: r.synced_at as Date,
+  }
+}
+
+export async function listDingTalkUsers(keyword?: string): Promise<DingTalkUser[]> {
+  const pool = getPool()
+  if (keyword) {
+    const { rows } = await pool.query(
+      `SELECT * FROM dingtalk_users WHERE name ILIKE $1 OR user_id ILIKE $1 OR department ILIKE $1
+       ORDER BY name LIMIT 50`,
+      [`%${keyword}%`]
+    )
+    return rows.map(mapRow)
+  }
+  const { rows } = await pool.query('SELECT * FROM dingtalk_users ORDER BY name LIMIT 200')
+  return rows.map(mapRow)
+}
+
+export async function upsertDingTalkUser(
+  data: Pick<DingTalkUser, 'userId' | 'name'> & Partial<Pick<DingTalkUser, 'avatar' | 'department'>>
+): Promise<void> {
+  const pool = getPool()
+  await pool.query(
+    `INSERT INTO dingtalk_users (user_id, name, avatar, department, synced_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET name = $2, avatar = $3, department = $4, synced_at = NOW()`,
+    [data.userId, data.name, data.avatar ?? '', data.department ?? '']
+  )
+}
+
+export async function getDingTalkUserCount(): Promise<number> {
+  const pool = getPool()
+  const { rows } = await pool.query('SELECT COUNT(*) AS count FROM dingtalk_users')
+  return parseInt(rows[0].count, 10)
+}
