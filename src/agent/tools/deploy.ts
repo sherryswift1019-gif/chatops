@@ -107,24 +107,42 @@ const deployTool: AgentTool = {
 
         const fullImage = buildImageFullPath(harborUrl, harborProject, imageTag)
         const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
-        deployLog(`SSH to ${conn.host}, container=${containerName}, image=${fullImage}`)
+        const composePath = project.composePath
+        deployLog(`SSH to ${conn.host}, container=${containerName}, image=${fullImage}, composePath=${composePath}`)
 
         const latestImage = `${registryHost}/${harborProject}:latest`
-        const commands = [
-          // 1. 登录 Harbor
-          `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
-          // 2. 停止并删除旧容器
-          `docker stop ${containerName} || true`,
-          `docker rm ${containerName} || true`,
-          // 3. 删除旧的 latest tag
-          `docker rmi ${latestImage} || true`,
-          // 4. 拉取新镜像
-          `docker pull ${fullImage}`,
-          // 5. 打上 latest tag
-          `docker tag ${fullImage} ${latestImage}`,
-          // 6. 用 latest 启动新容器
-          `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
-        ].join(' && ')
+        let commands: string
+
+        if (composePath) {
+          // Docker Compose 部署模式
+          commands = [
+            // 1. 登录 Harbor
+            `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
+            // 2. 进入 compose 目录
+            `cd ${composePath}`,
+            // 3. 停止服务
+            `docker compose stop ${containerName} || docker-compose stop ${containerName} || true`,
+            // 4. 删除旧的 latest tag
+            `docker rmi ${latestImage} || true`,
+            // 5. 拉取新镜像
+            `docker pull ${fullImage}`,
+            // 6. 打上 latest tag
+            `docker tag ${fullImage} ${latestImage}`,
+            // 7. 启动服务
+            `docker compose up -d ${containerName} || docker-compose up -d ${containerName}`,
+          ].join(' && ')
+        } else {
+          // 裸 Docker 部署模式（兼容旧方式）
+          commands = [
+            `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
+            `docker stop ${containerName} || true`,
+            `docker rm ${containerName} || true`,
+            `docker rmi ${latestImage} || true`,
+            `docker pull ${fullImage}`,
+            `docker tag ${fullImage} ${latestImage}`,
+            `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
+          ].join(' && ')
+        }
 
         const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, commands)
         deployLog(`SSH result: code=${result.code} stdout=${result.stdout.slice(0, 200)}`)
@@ -241,7 +259,12 @@ const restartTool: AgentTool = {
       let command: string
       if (plEnv.runtime === 'docker') {
         const containerName = project.dockerContainerName || project.name
-        command = `docker restart ${containerName}`
+        const composePath = project.composePath
+        if (composePath) {
+          command = `cd ${composePath} && (docker compose restart ${containerName} || docker-compose restart ${containerName})`
+        } else {
+          command = `docker restart ${containerName}`
+        }
       } else {
         const deploymentName = project.k8sProjectName || project.name
         const namespace = plEnv.namespace || envName

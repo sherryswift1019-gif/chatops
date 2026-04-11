@@ -16,7 +16,7 @@ export interface ProductLineEnv {
 export interface Project {
   id: number; productLineId: number; name: string; displayName: string
   gitlabPath: string; harborProject: string; ownerId: string; ownerName: string
-  dockerContainerName: string; k8sProjectName: string
+  dockerContainerName: string; k8sProjectName: string; composePath: string
   description: string; createdAt: string; updatedAt: string
 }
 

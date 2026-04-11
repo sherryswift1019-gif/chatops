@@ -127,3 +127,4 @@ ON CONFLICT (key) DO NOTHING;
 -- Add project runtime fields
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_container_name TEXT DEFAULT '';
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS k8s_project_name TEXT DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS compose_path TEXT DEFAULT '';

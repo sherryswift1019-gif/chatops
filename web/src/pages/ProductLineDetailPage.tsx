@@ -187,6 +187,9 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
           <Form.Item name="k8sProjectName" label="K8s 项目名">
             <Input placeholder="如: pam-backend" />
           </Form.Item>
+          <Form.Item name="composePath" label="Docker Compose 路径">
+            <Input placeholder="如: /opt/pam/ssh-proxy" />
+          </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} />
           </Form.Item>
