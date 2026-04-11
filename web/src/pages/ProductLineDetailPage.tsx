@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card, Tabs, Button, Table, Form, Input, Select, Modal, Space, Tag,
@@ -72,6 +72,7 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Project | null>(null)
   const [form] = Form.useForm()
+  const ownerRef = useRef<{ userId: string; userName: string } | null>(null)
 
   useEffect(() => { load() }, [productLineId])
 
@@ -80,16 +81,29 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
     try { setData(await getProjects(productLineId)) } finally { setLoading(false) }
   }
 
-  function openCreate() { setEditing(null); form.resetFields(); setModalOpen(true) }
-  function openEdit(record: Project) { setEditing(record); form.setFieldsValue(record); setModalOpen(true) }
+  function openCreate() {
+    setEditing(null)
+    ownerRef.current = null
+    form.resetFields()
+    setModalOpen(true)
+  }
+
+  function openEdit(record: Project) {
+    setEditing(record)
+    ownerRef.current = { userId: record.ownerId, userName: record.ownerName }
+    form.setFieldsValue(record)
+    setModalOpen(true)
+  }
 
   async function handleSubmit() {
     const values = await form.validateFields()
+    const ownerName = ownerRef.current?.userName ?? ''
+    const payload = { ...values, ownerName }
     if (editing) {
-      await updateProject(editing.id, values)
+      await updateProject(editing.id, payload)
       message.success('更新成功')
     } else {
-      await createProject({ ...values, productLineId })
+      await createProject({ ...payload, productLineId })
       message.success('创建成功')
     }
     setModalOpen(false)
@@ -102,6 +116,13 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
     await load()
   }
 
+  function handleOwnerChange(userId: string | string[]) {
+    const uid = Array.isArray(userId) ? userId[0] : userId
+    // ownerRef is updated via DingTalkUserSelect's onChange;
+    // we also need to find the name from the component's internal options
+    ownerRef.current = { userId: uid, userName: ownerRef.current?.userName ?? uid }
+  }
+
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 60 },
     { title: '名称', dataIndex: 'name' },
@@ -109,7 +130,8 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
     { title: 'GitLab 路径', dataIndex: 'gitlabPath', ellipsis: true },
     { title: 'Harbor 项目', dataIndex: 'harborProject', ellipsis: true },
     { title: '负责人', dataIndex: 'ownerName' },
-    { title: '描述', dataIndex: 'description', ellipsis: true },
+    { title: 'Docker 容器名', dataIndex: 'dockerContainerName', ellipsis: true },
+    { title: 'K8s 项目名', dataIndex: 'k8sProjectName', ellipsis: true },
     {
       title: '操作', width: 150,
       render: (_: unknown, record: Project) => (
@@ -138,7 +160,7 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
         width={600}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入项目名称' }]}>
+          <Form.Item name="name" label="项目名称" rules={[{ required: true, message: '请输入项目名称' }]}>
             <Input placeholder="如: pam-backend" />
           </Form.Item>
           <Form.Item name="displayName" label="显示名" rules={[{ required: true, message: '请输入显示名' }]}>
@@ -151,7 +173,19 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
             <Input placeholder="如: pam" />
           </Form.Item>
           <Form.Item name="ownerId" label="负责人">
-            <DingTalkUserSelect placeholder="搜索负责人" />
+            <DingTalkUserSelect
+              placeholder={editing?.ownerName ? `当前: ${editing.ownerName}` : '搜索负责人'}
+              onChange={(val) => {
+                const uid = Array.isArray(val) ? val[0] : val
+                handleOwnerChange(uid)
+              }}
+            />
+          </Form.Item>
+          <Form.Item name="dockerContainerName" label="Docker 容器名">
+            <Input placeholder="如: pam-backend-dev" />
+          </Form.Item>
+          <Form.Item name="k8sProjectName" label="K8s 项目名">
+            <Input placeholder="如: pam-backend" />
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} />

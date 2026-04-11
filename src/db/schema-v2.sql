@@ -123,3 +123,7 @@ INSERT INTO capabilities (key, display_name, description, category, tool_names, 
   ('restart', '重启服务', '重启运行中的服务', 'action', '["request_approval","execute_restart"]', true),
   ('manage_role', '管理角色', '授予或撤销用户角色', 'admin', '["manage_role"]', true)
 ON CONFLICT (key) DO NOTHING;
+
+-- Add project runtime fields
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS docker_container_name TEXT DEFAULT '';
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS k8s_project_name TEXT DEFAULT '';

@@ -9,6 +9,8 @@ export interface Project {
   harborProject: string
   ownerId: string
   ownerName: string
+  dockerContainerName: string
+  k8sProjectName: string
   description: string
   createdAt: Date
   updatedAt: Date
@@ -20,6 +22,8 @@ function mapRow(r: Record<string, unknown>): Project {
     name: r.name as string, displayName: r.display_name as string,
     gitlabPath: r.gitlab_path as string, harborProject: r.harbor_project as string,
     ownerId: r.owner_id as string, ownerName: r.owner_name as string,
+    dockerContainerName: (r.docker_container_name as string) ?? '',
+    k8sProjectName: (r.k8s_project_name as string) ?? '',
     description: r.description as string,
     createdAt: r.created_at as Date, updatedAt: r.updated_at as Date,
   }
@@ -45,32 +49,38 @@ export async function getProjectById(id: number): Promise<Project | null> {
 
 export async function createProject(
   data: Pick<Project, 'productLineId' | 'name' | 'displayName'> &
-    Partial<Pick<Project, 'gitlabPath' | 'harborProject' | 'ownerId' | 'ownerName' | 'description'>>
+    Partial<Pick<Project, 'gitlabPath' | 'harborProject' | 'ownerId' | 'ownerName' | 'dockerContainerName' | 'k8sProjectName' | 'description'>>
 ): Promise<Project> {
   const pool = getPool()
   const { rows } = await pool.query(
-    `INSERT INTO projects (product_line_id, name, display_name, gitlab_path, harbor_project, owner_id, owner_name, description)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    `INSERT INTO projects (product_line_id, name, display_name, gitlab_path, harbor_project,
+       owner_id, owner_name, docker_container_name, k8s_project_name, description)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
     [data.productLineId, data.name, data.displayName,
      data.gitlabPath ?? '', data.harborProject ?? '',
-     data.ownerId ?? '', data.ownerName ?? '', data.description ?? '']
+     data.ownerId ?? '', data.ownerName ?? '',
+     data.dockerContainerName ?? '', data.k8sProjectName ?? '',
+     data.description ?? '']
   )
   return mapRow(rows[0])
 }
 
 export async function updateProject(
   id: number,
-  data: Partial<Pick<Project, 'name' | 'displayName' | 'gitlabPath' | 'harborProject' | 'ownerId' | 'ownerName' | 'description' | 'productLineId'>>
+  data: Partial<Pick<Project, 'name' | 'displayName' | 'gitlabPath' | 'harborProject' | 'ownerId' | 'ownerName' | 'dockerContainerName' | 'k8sProjectName' | 'description' | 'productLineId'>>
 ): Promise<Project | null> {
   const pool = getPool()
   const { rows } = await pool.query(
     `UPDATE projects SET name = COALESCE($2, name), display_name = COALESCE($3, display_name),
      gitlab_path = COALESCE($4, gitlab_path), harbor_project = COALESCE($5, harbor_project),
      owner_id = COALESCE($6, owner_id), owner_name = COALESCE($7, owner_name),
-     description = COALESCE($8, description), product_line_id = COALESCE($9, product_line_id),
+     docker_container_name = COALESCE($8, docker_container_name),
+     k8s_project_name = COALESCE($9, k8s_project_name),
+     description = COALESCE($10, description), product_line_id = COALESCE($11, product_line_id),
      updated_at = NOW() WHERE id = $1 RETURNING *`,
     [id, data.name ?? null, data.displayName ?? null, data.gitlabPath ?? null,
      data.harborProject ?? null, data.ownerId ?? null, data.ownerName ?? null,
+     data.dockerContainerName ?? null, data.k8sProjectName ?? null,
      data.description ?? null, data.productLineId ?? null]
   )
   return rows[0] ? mapRow(rows[0]) : null
