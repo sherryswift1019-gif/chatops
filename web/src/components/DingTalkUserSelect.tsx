@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Select, Avatar, Space } from 'antd'
 import { UserOutlined } from '@ant-design/icons'
 import { getDingTalkUsers } from '../api/dingtalk-users'
@@ -8,15 +8,30 @@ interface Props {
   value?: string | string[]
   onChange?: (value: string | string[]) => void
   onUserSelect?: (user: DingTalkUser) => void
+  /** Pre-populate options (e.g., current owner when editing) */
+  initialUsers?: Array<{ userId: string; name: string; avatar?: string }>
   mode?: 'multiple'
   placeholder?: string
   style?: React.CSSProperties
 }
 
-export default function DingTalkUserSelect({ value, onChange, onUserSelect, mode, placeholder = '搜索钉钉用户', style }: Props) {
+export default function DingTalkUserSelect({ value, onChange, onUserSelect, initialUsers, mode, placeholder = '搜索钉钉用户', style }: Props) {
   const [options, setOptions] = useState<DingTalkUser[]>([])
   const [fetching, setFetching] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
+
+  // Seed initial options so existing values display names instead of IDs
+  useEffect(() => {
+    if (initialUsers && initialUsers.length > 0) {
+      setOptions(initialUsers.map(u => ({
+        userId: u.userId,
+        name: u.name,
+        avatar: u.avatar ?? '',
+        department: '',
+        syncedAt: '',
+      })))
+    }
+  }, [initialUsers])
 
   const handleSearch = (keyword: string) => {
     clearTimeout(timerRef.current)
@@ -32,7 +47,6 @@ export default function DingTalkUserSelect({ value, onChange, onUserSelect, mode
 
   const handleChange = (val: string | string[]) => {
     onChange?.(val)
-    // Find user object and notify
     const selectedId = Array.isArray(val) ? val[val.length - 1] : val
     const user = options.find(u => u.userId === selectedId)
     if (user && onUserSelect) onUserSelect(user)
@@ -56,7 +70,7 @@ export default function DingTalkUserSelect({ value, onChange, onUserSelect, mode
           <Space>
             <Avatar size="small" src={u.avatar || undefined} icon={!u.avatar ? <UserOutlined /> : undefined} />
             <span>{u.name}</span>
-            <span style={{ color: '#999', fontSize: 12 }}>{u.department}</span>
+            {u.department && <span style={{ color: '#999', fontSize: 12 }}>{u.department}</span>}
           </Space>
         ),
       }))}

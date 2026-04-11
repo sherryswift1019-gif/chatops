@@ -189,7 +189,8 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
           </Form.Item>
           <Form.Item name="ownerId" label="负责人">
             <DingTalkUserSelect
-              placeholder={editing?.ownerName ? `当前: ${editing.ownerName}` : '搜索负责人'}
+              placeholder="搜索负责人"
+              initialUsers={editing?.ownerId ? [{ userId: editing.ownerId, name: editing.ownerName || editing.ownerId, avatar: avatarMap.get(editing.ownerId) }] : undefined}
               onChange={(val) => {
                 const uid = Array.isArray(val) ? val[0] : val
                 handleOwnerChange(uid)
