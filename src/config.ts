@@ -4,8 +4,8 @@ import 'dotenv/config'
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
-  DINGTALK_APP_SECRET: z.string().default(''),
-  DINGTALK_ACCESS_TOKEN: z.string().default(''),
+  DINGTALK_CLIENT_ID: z.string().default(''),
+  DINGTALK_CLIENT_SECRET: z.string().default(''),
   FEISHU_APP_ID: z.string().default(''),
   FEISHU_APP_SECRET: z.string().default(''),
   FEISHU_VERIFICATION_TOKEN: z.string().default(''),

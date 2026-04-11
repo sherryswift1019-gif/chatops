@@ -48,4 +48,6 @@ export interface IMAdapter {
   getUserInfo(userId: string): Promise<UserInfo>
   onCardAction(handler: CardActionHandler): void
   handleWebhook(payload: unknown, headers: Record<string, string>): Promise<void>
+  start?(): Promise<void>
+  stop?(): Promise<void>
 }
