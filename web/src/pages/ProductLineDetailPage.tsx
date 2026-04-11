@@ -69,6 +69,7 @@ function BasicInfoTab({ productLine, onUpdated }: { productLine: ProductLine; on
 
 function ProjectsTab({ productLineId }: { productLineId: number }) {
   const [data, setData] = useState<Project[]>([])
+  const [avatarMap, setAvatarMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Project | null>(null)
@@ -79,7 +80,13 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
 
   async function load() {
     setLoading(true)
-    try { setData(await getProjects(productLineId)) } finally { setLoading(false) }
+    try {
+      const [projects, dtUsers] = await Promise.all([getProjects(productLineId), getDingTalkUsers()])
+      setData(projects)
+      const map = new Map<string, string>()
+      for (const u of dtUsers.users) { if (u.avatar) map.set(u.userId, u.avatar) }
+      setAvatarMap(map)
+    } finally { setLoading(false) }
   }
 
   function openCreate() {
@@ -130,7 +137,14 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
     { title: '显示名', dataIndex: 'displayName' },
     { title: 'GitLab 路径', dataIndex: 'gitlabPath', ellipsis: true },
     { title: 'Harbor 项目', dataIndex: 'harborProject', ellipsis: true },
-    { title: '负责人', dataIndex: 'ownerName' },
+    { title: '负责人', key: 'owner',
+      render: (_: unknown, record: Project) => record.ownerId ? (
+        <Space>
+          <Avatar size="small" src={avatarMap.get(record.ownerId) || undefined} icon={!avatarMap.get(record.ownerId) ? <UserOutlined /> : undefined} />
+          <span>{record.ownerName || record.ownerId}</span>
+        </Space>
+      ) : '-',
+    },
     { title: 'Docker 容器名', dataIndex: 'dockerContainerName', ellipsis: true },
     { title: 'K8s 项目名', dataIndex: 'k8sProjectName', ellipsis: true },
     {
@@ -179,6 +193,9 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
               onChange={(val) => {
                 const uid = Array.isArray(val) ? val[0] : val
                 handleOwnerChange(uid)
+              }}
+              onUserSelect={(user) => {
+                ownerRef.current = { userId: user.userId, userName: user.name }
               }}
             />
           </Form.Item>
