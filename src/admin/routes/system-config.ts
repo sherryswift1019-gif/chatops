@@ -24,6 +24,33 @@ export async function registerSystemConfigRoutes(app: FastifyInstance): Promise<
     return reply.send(result)
   })
 
+  // Export all configs (unmasked, for migration)
+  app.get('/system-config/export', async (_req, reply) => {
+    const configs = await getAllConfig()
+    const result = configs.map(c => ({ key: c.key, value: c.value }))
+    return reply
+      .header('Content-Disposition', 'attachment; filename="chatops-config.json"')
+      .header('Content-Type', 'application/json')
+      .send(result)
+  })
+
+  // Import configs (bulk upsert)
+  app.post<{ Body: Array<{ key: string; value: Record<string, unknown> }> }>(
+    '/system-config/import',
+    async (req, reply) => {
+      const items = req.body
+      if (!Array.isArray(items)) return reply.status(400).send({ error: 'body must be an array' })
+      let count = 0
+      for (const item of items) {
+        if (item.key && item.value) {
+          await setConfig(item.key, item.value)
+          count++
+        }
+      }
+      return reply.send({ success: true, imported: count })
+    }
+  )
+
   app.put<{ Params: { key: string }; Body: Record<string, unknown> }>(
     '/system-config/:key',
     async (req, reply) => {

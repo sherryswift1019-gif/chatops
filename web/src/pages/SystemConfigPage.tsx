@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Card, Tabs, Form, Input, Button, message, Spin } from 'antd'
-import { getSystemConfig, updateSystemConfig } from '../api/system-config'
+import { useEffect, useState, useRef } from 'react'
+import { Card, Tabs, Form, Input, Button, Space, Upload, message, Spin } from 'antd'
+import { DownloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { getSystemConfig, updateSystemConfig, exportSystemConfig, importSystemConfig } from '../api/system-config'
 import type { SystemConfigEntry } from '../types'
 
 const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; label: string; secret?: boolean }[] }> = {
@@ -108,8 +109,48 @@ export default function SystemConfigPage() {
     ),
   }))
 
+  async function handleExport() {
+    try {
+      const data = await exportSystemConfig()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'chatops-config.json'
+      a.click()
+      URL.revokeObjectURL(url)
+      message.success('配置已导出')
+    } catch { message.error('导出失败') }
+  }
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  function handleImportClick() {
+    fileInputRef.current?.click()
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text) as Array<{ key: string; value: Record<string, unknown> }>
+      const result = await importSystemConfig(data)
+      message.success(`导入成功，共 ${result.imported} 项配置`)
+      await loadConfigs()
+    } catch { message.error('导入失败，请检查文件格式') }
+    // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
   return (
-    <Card title="系统配置">
+    <Card title="系统配置" extra={
+      <Space>
+        <Button icon={<DownloadOutlined />} onClick={handleExport}>导出配置</Button>
+        <Button icon={<UploadOutlined />} onClick={handleImportClick}>导入配置</Button>
+        <input ref={fileInputRef} type="file" accept=".json" style={{ display: 'none' }} onChange={handleImportFile} />
+      </Space>
+    }>
       <Tabs items={tabItems} />
     </Card>
   )
