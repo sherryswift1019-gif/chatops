@@ -72,3 +72,12 @@ CREATE TABLE IF NOT EXISTS system_config (
 
 -- Add product_line_id to existing approval_rules
 ALTER TABLE approval_rules ADD COLUMN IF NOT EXISTS product_line_id INT REFERENCES product_lines(id) ON DELETE CASCADE;
+
+-- tool_permissions (overrides default tool roles per product line)
+CREATE TABLE IF NOT EXISTS tool_permissions (
+  id               SERIAL PRIMARY KEY,
+  product_line_id  INT REFERENCES product_lines(id) ON DELETE CASCADE,
+  tool_name        TEXT NOT NULL,
+  min_role         TEXT NOT NULL CHECK (min_role IN ('developer','ops','admin')),
+  UNIQUE(product_line_id, tool_name)
+);
