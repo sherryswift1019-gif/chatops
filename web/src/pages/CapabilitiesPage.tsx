@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message } from 'antd'
+import { Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { getCapabilities, createCapability, updateCapability } from '../api/capabilities'
 import type { Capability } from '../api/capabilities'
@@ -81,12 +81,7 @@ export default function CapabilitiesPage() {
   ]
 
   return (
-    <>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 16, fontWeight: 500 }}>能力管理</span>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增能力</Button>
-      </div>
-
+    <Card title="能力管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增能力</Button>}>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
 
       <Modal
@@ -122,6 +117,6 @@ export default function CapabilitiesPage() {
           </Form.Item>
         </Form>
       </Modal>
-    </>
+    </Card>
   )
 }
