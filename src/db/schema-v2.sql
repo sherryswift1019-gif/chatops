@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS product_line_members (
   product_line_id  INT NOT NULL REFERENCES product_lines(id) ON DELETE CASCADE,
   user_id          TEXT NOT NULL,
   user_name        TEXT NOT NULL,
-  role             TEXT NOT NULL CHECK (role IN ('developer','ops','admin')),
+  role             TEXT NOT NULL CHECK (role IN ('developer','tester','ops','admin')),
   created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(product_line_id, user_id)
 );
@@ -73,11 +73,13 @@ CREATE TABLE IF NOT EXISTS system_config (
 -- Add product_line_id to existing approval_rules
 ALTER TABLE approval_rules ADD COLUMN IF NOT EXISTS product_line_id INT REFERENCES product_lines(id) ON DELETE CASCADE;
 
--- tool_permissions (overrides default tool roles per product line)
+-- tool_permissions (tool × env × allowed roles per product line)
+DROP TABLE IF EXISTS tool_permissions;
 CREATE TABLE IF NOT EXISTS tool_permissions (
   id               SERIAL PRIMARY KEY,
-  product_line_id  INT REFERENCES product_lines(id) ON DELETE CASCADE,
+  product_line_id  INT NOT NULL REFERENCES product_lines(id) ON DELETE CASCADE,
   tool_name        TEXT NOT NULL,
-  min_role         TEXT NOT NULL CHECK (min_role IN ('developer','ops','admin')),
-  UNIQUE(product_line_id, tool_name)
+  env_name         TEXT NOT NULL DEFAULT '*',
+  allowed_roles    JSONB NOT NULL DEFAULT '[]',
+  UNIQUE(product_line_id, tool_name, env_name)
 );

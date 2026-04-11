@@ -13,6 +13,7 @@ export interface RunOptions {
   executionMode?: boolean  // true = post-approval execution session (skip approval tool)
   approvedBy?: string
   productLineId?: number
+  envName?: string
 }
 
 export class ClaudeRunner {
@@ -44,8 +45,8 @@ When analyzing logs, look for ERROR/WARN patterns and correlate with recent comm
   }
 
   async run(opts: RunOptions): Promise<void> {
-    const { prompt, context, adapter, executionMode = false, approvedBy, productLineId } = opts
-    let tools = await getPermittedTools(context.initiatorRole, productLineId)
+    const { prompt, context, adapter, executionMode = false, approvedBy, productLineId, envName } = opts
+    let tools = await getPermittedTools(context.initiatorRole, productLineId, envName)
     if (executionMode) {
       tools = tools.filter(t => t.name !== 'request_approval')
     }

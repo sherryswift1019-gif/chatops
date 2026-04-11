@@ -5,7 +5,7 @@ export interface ProductLineMember {
   productLineId: number
   userId: string
   userName: string
-  role: 'developer' | 'ops' | 'admin'
+  role: 'developer' | 'tester' | 'ops' | 'admin'
   createdAt: Date
 }
 
@@ -13,7 +13,7 @@ function mapRow(r: Record<string, unknown>): ProductLineMember {
   return {
     id: r.id as number, productLineId: r.product_line_id as number,
     userId: r.user_id as string, userName: r.user_name as string,
-    role: r.role as 'developer' | 'ops' | 'admin', createdAt: r.created_at as Date,
+    role: r.role as 'developer' | 'tester' | 'ops' | 'admin', createdAt: r.created_at as Date,
   }
 }
 
@@ -37,7 +37,7 @@ export async function addMember(
   return mapRow(rows[0])
 }
 
-export async function updateMemberRole(id: number, role: 'developer' | 'ops' | 'admin'): Promise<ProductLineMember | null> {
+export async function updateMemberRole(id: number, role: 'developer' | 'tester' | 'ops' | 'admin'): Promise<ProductLineMember | null> {
   const pool = getPool()
   const { rows } = await pool.query(
     'UPDATE product_line_members SET role = $2 WHERE id = $1 RETURNING *', [id, role]

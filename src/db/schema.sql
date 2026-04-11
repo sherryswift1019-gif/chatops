@@ -3,7 +3,7 @@ CREATE TABLE IF NOT EXISTS user_roles (
   platform    TEXT NOT NULL,
   user_id     TEXT NOT NULL,
   user_name   TEXT NOT NULL,
-  role        TEXT NOT NULL CHECK (role IN ('developer','ops','admin')),
+  role        TEXT NOT NULL CHECK (role IN ('developer','tester','ops','admin')),
   group_id    TEXT NOT NULL,
   created_by  TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),

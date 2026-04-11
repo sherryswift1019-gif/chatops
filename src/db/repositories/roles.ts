@@ -1,6 +1,6 @@
 import { getPool } from '../client.js'
 
-export type Role = 'developer' | 'ops' | 'admin'
+export type Role = 'developer' | 'tester' | 'ops' | 'admin'
 
 export interface UserRole {
   id: number
