@@ -4,6 +4,8 @@ import zhCN from 'antd/locale/zh_CN'
 import AdminLayout from './layout/AdminLayout'
 import SystemConfigPage from './pages/SystemConfigPage'
 import EnvironmentListPage from './pages/EnvironmentListPage'
+import ProductLineListPage from './pages/ProductLineListPage'
+import ProductLineDetailPage from './pages/ProductLineDetailPage'
 
 // Placeholder pages for routes not yet implemented
 function Placeholder({ name }: { name: string }) {
@@ -17,8 +19,8 @@ export default function App() {
         <Routes>
           <Route element={<AdminLayout />}>
             <Route index element={<Navigate to="/product-lines" replace />} />
-            <Route path="/product-lines" element={<Placeholder name="产线列表" />} />
-            <Route path="/product-lines/:id" element={<Placeholder name="产线详情" />} />
+            <Route path="/product-lines" element={<ProductLineListPage />} />
+            <Route path="/product-lines/:id" element={<ProductLineDetailPage />} />
             <Route path="/projects" element={<Placeholder name="项目管理" />} />
             <Route path="/environments" element={<EnvironmentListPage />} />
             <Route path="/dingtalk-users" element={<Placeholder name="钉钉用户" />} />
