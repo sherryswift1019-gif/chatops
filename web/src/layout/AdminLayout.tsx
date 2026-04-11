@@ -6,7 +6,6 @@ import {
   ProjectOutlined,
   CloudServerOutlined,
   TeamOutlined,
-  SafetyCertificateOutlined,
   SettingOutlined,
 } from '@ant-design/icons'
 
@@ -17,7 +16,6 @@ const menuItems = [
   { key: '/projects', icon: <ProjectOutlined />, label: '项目管理' },
   { key: '/environments', icon: <CloudServerOutlined />, label: '环境管理' },
   { key: '/dingtalk-users', icon: <TeamOutlined />, label: '钉钉用户' },
-  { key: '/approval-rules', icon: <SafetyCertificateOutlined />, label: '审批规则' },
   { key: '/system-config', icon: <SettingOutlined />, label: '系统配置' },
 ]
 

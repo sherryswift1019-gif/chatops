@@ -7,7 +7,6 @@ import EnvironmentListPage from './pages/EnvironmentListPage'
 import ProductLineListPage from './pages/ProductLineListPage'
 import ProductLineDetailPage from './pages/ProductLineDetailPage'
 import ProjectsPage from './pages/ProjectsPage'
-import ApprovalRulesPage from './pages/ApprovalRulesPage'
 import DingTalkUsersPage from './pages/DingTalkUsersPage'
 
 export default function App() {
@@ -22,7 +21,6 @@ export default function App() {
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/environments" element={<EnvironmentListPage />} />
             <Route path="/dingtalk-users" element={<DingTalkUsersPage />} />
-            <Route path="/approval-rules" element={<ApprovalRulesPage />} />
             <Route path="/system-config" element={<SystemConfigPage />} />
           </Route>
         </Routes>
