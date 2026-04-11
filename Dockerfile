@@ -22,9 +22,12 @@ COPY src/ src/
 # Copy frontend build output
 COPY --from=web-build /app/web/dist web/dist
 
-# Verify TypeScript compiles and Claude CLI is available
+# Verify TypeScript compiles
 RUN npx tsc --noEmit
-RUN npx claude --version || echo "Claude CLI check skipped"
+
+# Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash chatops && chown -R chatops:chatops /app
+USER chatops
 
 EXPOSE 3000
 
