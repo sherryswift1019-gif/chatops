@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  Card, Tabs, Button, Table, Form, Input, Select, Modal, Space, Tag,
+  Card, Tabs, Button, Table, Form, Input, Select, Modal, Space, Tag, Avatar,
   Popconfirm, message, Switch, Spin, Typography, Divider, Checkbox,
 } from 'antd'
-import { ArrowLeftOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, PlusOutlined, SaveOutlined, UserOutlined } from '@ant-design/icons'
 import {
   getProductLines, updateProductLine,
   getMembers, addMember, updateMemberRole, removeMember,
@@ -265,8 +265,15 @@ function MembersTab({ productLineId }: { productLineId: number }) {
 
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: '用户名', dataIndex: 'userName' },
-    { title: '用户ID', dataIndex: 'userId' },
+    { title: '成员', key: 'user',
+      render: (_: unknown, record: ProductLineMember) => (
+        <Space>
+          <Avatar size="small" icon={<UserOutlined />} />
+          <span>{record.userName}</span>
+          <span style={{ color: '#999', fontSize: 12 }}>{record.userId}</span>
+        </Space>
+      ),
+    },
     {
       title: '角色', dataIndex: 'role',
       render: (role: string) => <Tag color={ROLE_COLORS[role] ?? 'default'}>{ROLE_LABELS[role] ?? role}</Tag>,
