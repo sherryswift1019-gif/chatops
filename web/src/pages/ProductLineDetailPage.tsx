@@ -13,6 +13,8 @@ import {
 import { getProjects, createProject, updateProject, deleteProject } from '../api/projects'
 import { getEnvironments } from '../api/environments'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
+import { getTools, getToolPermissions, setToolPermissions } from '../api/tool-permissions'
+import type { ToolInfo } from '../api/tool-permissions'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
 import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule } from '../types'
 
@@ -527,6 +529,83 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
   )
 }
 
+// ─── Tool Permissions Tab ─────────────────────────────────────────────────────
+
+function ToolPermissionsTab({ productLineId }: { productLineId: number }) {
+  const [tools, setTools] = useState<ToolInfo[]>([])
+  const [overrides, setOverrides] = useState<Map<string, string>>(new Map())
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { loadData() }, [productLineId])
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [toolList, perms] = await Promise.all([
+        getTools(),
+        getToolPermissions(productLineId),
+      ])
+      setTools(toolList)
+      const map = new Map<string, string>()
+      for (const p of perms) map.set(p.toolName, p.minRole)
+      setOverrides(map)
+    } finally { setLoading(false) }
+  }
+
+  function handleRoleChange(toolName: string, minRole: string) {
+    setOverrides(prev => new Map(prev).set(toolName, minRole))
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      const permissions = tools.map(t => ({
+        toolName: t.name,
+        minRole: overrides.get(t.name) ?? t.defaultMinRole,
+      }))
+      await setToolPermissions(productLineId, permissions)
+      message.success('工具权限已保存')
+    } catch { message.error('保存失败') }
+    finally { setSaving(false) }
+  }
+
+  const riskColors: Record<string, string> = { low: 'green', medium: 'orange', high: 'red' }
+  const roleLabels: Record<string, string> = { developer: '开发', ops: '运维', admin: '管理员' }
+
+  const columns = [
+    { title: '工具名称', dataIndex: 'name', width: 180 },
+    { title: '描述', dataIndex: 'description', ellipsis: true },
+    { title: '风险等级', dataIndex: 'riskLevel', width: 100,
+      render: (v: string) => <Tag color={riskColors[v] ?? 'default'}>{v}</Tag> },
+    { title: '默认权限', dataIndex: 'defaultMinRole', width: 100,
+      render: (v: string) => roleLabels[v] ?? v },
+    { title: '当前权限', key: 'currentRole', width: 140,
+      render: (_: unknown, record: ToolInfo) => (
+        <Select
+          value={overrides.get(record.name) ?? record.defaultMinRole}
+          onChange={(v) => handleRoleChange(record.name, v)}
+          style={{ width: 120 }}
+          options={[
+            { value: 'developer', label: '开发' },
+            { value: 'ops', label: '运维' },
+            { value: 'admin', label: '管理员' },
+          ]}
+        />
+      ),
+    },
+  ]
+
+  return (
+    <>
+      <Table rowKey="name" columns={columns} dataSource={tools} loading={loading} pagination={false} size="middle" />
+      <div style={{ marginTop: 16 }}>
+        <Button type="primary" loading={saving} onClick={handleSave}>保存权限配置</Button>
+      </div>
+    </>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ProductLineDetailPage() {
@@ -590,6 +669,11 @@ export default function ProductLineDetailPage() {
       key: 'approval-rules',
       label: '审批规则',
       children: <ApprovalRulesTab productLineId={productLineId} />,
+    },
+    {
+      key: 'tools',
+      label: '工具权限',
+      children: <ToolPermissionsTab productLineId={productLineId} />,
     },
   ]
 
