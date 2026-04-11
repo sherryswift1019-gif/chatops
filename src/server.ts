@@ -113,6 +113,20 @@ async function main(): Promise<void> {
     return reply.send({ ok: true })
   })
 
+  app.get('/', async () => ({
+    name: 'ChatOps Platform',
+    version: '1.0.0',
+    status: 'running',
+    endpoints: {
+      health: '/health',
+      webhooks: {
+        dingtalk: '/webhook/dingtalk',
+        feishu: '/webhook/feishu',
+        gitlab: '/webhook/gitlab',
+      },
+    },
+  }))
+
   app.get('/health', async () => ({ status: 'ok' }))
 
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
