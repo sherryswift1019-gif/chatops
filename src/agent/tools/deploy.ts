@@ -115,21 +115,16 @@ const deployTool: AgentTool = {
 
         if (composePath) {
           // Docker Compose 部署模式
+          // 先检测 compose 命令版本，后续统一使用
           commands = [
-            // 1. 登录 Harbor
+            `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
             `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
-            // 2. 进入 compose 目录
             `cd ${composePath}`,
-            // 3. 停止服务
-            `docker compose stop ${containerName} || docker-compose stop ${containerName} || true`,
-            // 4. 删除旧的 latest tag
+            `$COMPOSE_CMD stop ${containerName} || true`,
             `docker rmi ${latestImage} || true`,
-            // 5. 拉取新镜像
             `docker pull ${fullImage}`,
-            // 6. 打上 latest tag
             `docker tag ${fullImage} ${latestImage}`,
-            // 7. 启动服务
-            `docker compose up -d ${containerName} || docker-compose up -d ${containerName}`,
+            `$COMPOSE_CMD up -d ${containerName}`,
           ].join(' && ')
         } else {
           // 裸 Docker 部署模式（兼容旧方式）
@@ -261,7 +256,7 @@ const restartTool: AgentTool = {
         const containerName = project.dockerContainerName || project.name
         const composePath = project.composePath
         if (composePath) {
-          command = `cd ${composePath} && (docker compose restart ${containerName} || docker-compose restart ${containerName})`
+          command = `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose") && cd ${composePath} && $COMPOSE_CMD restart ${containerName}`
         } else {
           command = `docker restart ${containerName}`
         }
