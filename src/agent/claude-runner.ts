@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import type { IMAdapter } from '../adapters/im/types.js'
-import { getAllTools, getTool } from './tools/index.js'
+import { getPermittedTools, getTool } from './tools/index.js'
 import type { TaskContext } from './tools/types.js'
 import { getRecentTasks } from '../db/repositories/tasks.js'
 
@@ -12,6 +12,7 @@ export interface RunOptions {
   adapter: IMAdapter
   executionMode?: boolean  // true = post-approval execution session (skip approval tool)
   approvedBy?: string
+  productLineId?: number
 }
 
 export class ClaudeRunner {
@@ -31,14 +32,7 @@ Report progress clearly.`
     }
     return `You are a DevOps assistant for this engineering team. Users interact with you via group chat.
 
-Your capabilities:
-- query_deployments: check deployment history and current status
-- list_images: show available images from Harbor registry
-- get_logs: retrieve and analyze container logs
-- get_gitlab_commits: fetch recent code commits from GitLab
-- request_approval: REQUIRED before any deployment/rollback to staging or production
-- execute_restart: restart a service (approval required for staging/prod)
-- manage_role: grant/revoke user roles (admin only)
+You have access to various DevOps tools based on your permission level. Use only the tools provided to you.
 
 IMPORTANT RULES:
 1. Before deploying to staging or production, always call request_approval first
@@ -50,9 +44,11 @@ When analyzing logs, look for ERROR/WARN patterns and correlate with recent comm
   }
 
   async run(opts: RunOptions): Promise<void> {
-    const { prompt, context, adapter, executionMode = false, approvedBy } = opts
-    const tools = getAllTools()
-      .filter(t => !executionMode || t.name !== 'request_approval')
+    const { prompt, context, adapter, executionMode = false, approvedBy, productLineId } = opts
+    let tools = await getPermittedTools(context.initiatorRole, productLineId)
+    if (executionMode) {
+      tools = tools.filter(t => t.name !== 'request_approval')
+    }
 
     const toolDefs = tools.map(t => ({
       name: t.name,

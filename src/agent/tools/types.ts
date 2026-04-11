@@ -23,3 +23,14 @@ export interface AgentTool {
   readonly inputSchema: Record<string, unknown>
   execute(params: unknown, context: TaskContext): Promise<ToolResult>
 }
+
+export const ROLE_HIERARCHY: Record<Role, number> = {
+  developer: 0,
+  ops: 1,
+  admin: 2,
+}
+
+export function hasRolePermission(userRole: Role | null, requiredRole: Role): boolean {
+  if (!userRole) return requiredRole === 'developer'
+  return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[requiredRole]
+}
