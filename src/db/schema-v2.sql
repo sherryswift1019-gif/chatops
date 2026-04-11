@@ -45,14 +45,17 @@ CREATE TABLE IF NOT EXISTS environments (
 
 -- product_line_envs
 CREATE TABLE IF NOT EXISTS product_line_envs (
-  id               SERIAL PRIMARY KEY,
-  product_line_id  INT NOT NULL REFERENCES product_lines(id) ON DELETE CASCADE,
-  env_id           INT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
-  runtime          TEXT NOT NULL CHECK (runtime IN ('kubernetes','docker')),
-  namespace        TEXT DEFAULT '',
-  enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+  id                SERIAL PRIMARY KEY,
+  product_line_id   INT NOT NULL REFERENCES product_lines(id) ON DELETE CASCADE,
+  env_id            INT NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
+  runtime           TEXT NOT NULL CHECK (runtime IN ('kubernetes','docker')),
+  namespace         TEXT DEFAULT '',
+  enabled           BOOLEAN NOT NULL DEFAULT TRUE,
+  connection_config JSONB NOT NULL DEFAULT '{}',
   UNIQUE(product_line_id, env_id)
 );
+
+ALTER TABLE product_line_envs ADD COLUMN IF NOT EXISTS connection_config JSONB NOT NULL DEFAULT '{}';
 
 -- dingtalk_users
 CREATE TABLE IF NOT EXISTS dingtalk_users (

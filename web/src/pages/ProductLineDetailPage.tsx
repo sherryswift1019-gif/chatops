@@ -302,6 +302,7 @@ interface EnvRow {
   enabled: boolean
   runtime: 'kubernetes' | 'docker'
   namespace: string
+  connectionConfig: Record<string, unknown>
 }
 
 function EnvConfigTab({ productLineId }: { productLineId: number }) {
@@ -326,8 +327,9 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
           envName: env.name,
           envDisplayName: env.displayName,
           enabled: existing?.enabled ?? false,
-          runtime: (existing?.runtime as 'kubernetes' | 'docker') ?? 'kubernetes',
+          runtime: (existing?.runtime as 'kubernetes' | 'docker') ?? 'docker',
           namespace: existing?.namespace ?? '',
+          connectionConfig: existing?.connectionConfig ?? {},
         }
       }))
     } finally {
@@ -347,6 +349,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
         runtime: r.runtime,
         namespace: r.namespace,
         enabled: r.enabled,
+        connectionConfig: r.connectionConfig,
       })))
       message.success('环境配置保存成功')
     } finally {
@@ -378,15 +381,54 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
       ),
     },
     {
-      title: '命名空间/项目',
-      dataIndex: 'namespace',
-      render: (v: string, record: EnvRow) => (
-        <Input
-          value={v}
-          placeholder="如: pam-prod"
-          onChange={(e) => updateRow(record.envId, { namespace: e.target.value })}
-        />
-      ),
+      title: '连接配置',
+      key: 'connection',
+      width: 360,
+      render: (_: unknown, record: EnvRow) => {
+        const cfg = record.connectionConfig as Record<string, string>
+        if (record.runtime === 'kubernetes') {
+          return (
+            <Input
+              value={record.namespace || (cfg.namespace as string) || ''}
+              placeholder="K8s Namespace，如: pam-prod"
+              onChange={(e) => updateRow(record.envId, {
+                namespace: e.target.value,
+                connectionConfig: { ...cfg, namespace: e.target.value },
+              })}
+            />
+          )
+        }
+        // Docker: host + username + password
+        return (
+          <Space direction="vertical" size={4} style={{ width: '100%' }}>
+            <Input
+              value={cfg.host ?? ''}
+              placeholder="IP 地址，如: 192.168.1.100"
+              onChange={(e) => updateRow(record.envId, {
+                connectionConfig: { ...cfg, host: e.target.value },
+              })}
+            />
+            <Space>
+              <Input
+                value={cfg.username ?? ''}
+                placeholder="用户名"
+                style={{ width: 120 }}
+                onChange={(e) => updateRow(record.envId, {
+                  connectionConfig: { ...cfg, username: e.target.value },
+                })}
+              />
+              <Input.Password
+                value={cfg.password ?? ''}
+                placeholder="密码"
+                style={{ width: 140 }}
+                onChange={(e) => updateRow(record.envId, {
+                  connectionConfig: { ...cfg, password: e.target.value },
+                })}
+              />
+            </Space>
+          </Space>
+        )
+      },
     },
   ]
 

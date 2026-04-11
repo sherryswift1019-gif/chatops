@@ -26,6 +26,15 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; lab
       { name: 'password', label: '密码', secret: true },
     ],
   },
+  kubernetes: {
+    label: 'Kubernetes 配置',
+    fields: [
+      { name: 'apiServer', label: 'API Server 地址' },
+      { name: 'token', label: 'Bearer Token', secret: true },
+      { name: 'caCert', label: 'CA 证书 (Base64)' },
+      { name: 'kubeconfig', label: 'Kubeconfig (Base64)' },
+    ],
+  },
   claude: {
     label: 'Claude 配置',
     fields: [

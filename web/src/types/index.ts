@@ -10,6 +10,7 @@ export interface ProductLineMember {
 export interface ProductLineEnv {
   id: number; productLineId: number; envId: number
   runtime: 'kubernetes' | 'docker'; namespace: string; enabled: boolean
+  connectionConfig: Record<string, unknown>
 }
 
 export interface Project {
