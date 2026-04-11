@@ -5,7 +5,13 @@
  * Usage: node --import tsx/esm src/agent/mcp-server.ts
  * Env: CHATOPS_TASK_CONTEXT (JSON), DATABASE_URL
  */
+import { appendFileSync } from 'fs'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+
+function mcpLog(msg: string) {
+  const line = `[${new Date().toISOString()}] [MCP] ${msg}\n`
+  try { appendFileSync('/tmp/mcp-server.log', line) } catch { /* ignore */ }
+}
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   ListToolsRequestSchema,
@@ -54,9 +60,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const context: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
 
   try {
-    process.stderr.write(`[MCP] Calling tool: ${request.params.name} args=${JSON.stringify(request.params.arguments)}\n`)
+    mcpLog(`Calling tool: ${request.params.name} args=${JSON.stringify(request.params.arguments)}`)
     const result = await tool.execute(request.params.arguments ?? {}, context)
-    process.stderr.write(`[MCP] Tool result: success=${result.success} output=${result.output.slice(0, 200)}\n`)
+    mcpLog(`Tool result: success=${result.success} output=${result.output.slice(0, 500)}`)
     return {
       content: [{ type: 'text' as const, text: result.output }],
       isError: !result.success,
