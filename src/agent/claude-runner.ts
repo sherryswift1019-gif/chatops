@@ -62,10 +62,14 @@ export class ClaudeRunner {
       console.log('[Runner] Step 1: detecting intent for:', prompt)
       const intent = await this.detectIntent(prompt)
       console.log('[Runner] Intent result:', JSON.stringify(intent))
-      if (!intent) {
+
+      // Greeting or unknown → introduce capabilities
+      if (!intent || intent.capability === 'greet') {
+        const caps = await listCapabilities()
+        const capsList = caps.map(c => `• ${c.displayName} — ${c.description}`).join('\n')
         await adapter.sendMessage(
           { type: 'group', id: opts.groupId },
-          { text: '抱歉，我无法理解您的请求。我目前支持：查看部署状态、查看镜像、查看日志、查看提交记录、部署服务、回滚、重启服务、管理角色。' }
+          { text: `你好！我是 ChatOps 助手 🤖\n\n我目前支持以下能力：\n${capsList}\n\n你可以直接用自然语言告诉我你想做什么，比如「查看日志」「部署到开发环境」等。` }
         )
         return
       }
@@ -135,6 +139,9 @@ ${capList}
 
 返回 JSON（不要代码块）：
 {"capability":"能力key","project":"项目名(如有)","env":"环境名(如有)","summary":"一句话总结"}
+
+如果用户在打招呼、问好、自我介绍请求，返回：
+{"capability":"greet","summary":"打招呼"}
 
 如果不属于任何已知能力，返回：
 {"capability":"unknown","summary":"无法识别"}`,
