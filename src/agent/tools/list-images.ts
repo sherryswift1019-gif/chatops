@@ -44,8 +44,11 @@ const listImagesTool: AgentTool = {
 
     // Lookup harborProject from projects table
     const allProjects = await listProjects()
-    const projectRecord = allProjects.find(p => p.name === project || p.harborProject === project)
+    const projectRecord = allProjects.find(p =>
+      p.name === project || p.displayName === project || p.harborProject === project
+    )
     const harborProject = projectRecord?.harborProject || project
+    console.log(`[list_images] project="${project}" → matched="${projectRecord?.name ?? 'none'}" → harborProject="${harborProject}"`)
 
     // Try cache first
     const cached = await getFreshImages(harborProject, limit)
@@ -73,8 +76,9 @@ const listImagesTool: AgentTool = {
       const harborProjectName = parts.length > 1 ? parts[0] : harborProject
       const repoName = parts.length > 1 ? parts.slice(1).join('/') : harborProject
 
-      const res = await axios.get(
-        `${harbor.url}/api/v2.0/projects/${harborProjectName}/repositories/${encodeURIComponent(repoName)}/artifacts`,
+      const apiUrl = `${harbor.url}/api/v2.0/projects/${harborProjectName}/repositories/${encodeURIComponent(repoName)}/artifacts`
+      console.log(`[list_images] Requesting Harbor API: ${apiUrl}`)
+      const res = await axios.get(apiUrl,
         {
           headers: { Authorization: `Basic ${auth}` },
           params: { page_size: limit, with_tag: true },
@@ -103,7 +107,11 @@ const listImagesTool: AgentTool = {
       const fresh = await getFreshImages(harborProject, limit)
       return formatImages(project, fresh)
     } catch (err) {
-      return { success: false, output: `Harbor 访问失败: ${String(err)}` }
+      const errMsg = (err as Record<string, unknown>)?.response
+        ? `HTTP ${((err as Record<string, unknown>).response as Record<string, unknown>).status}: ${JSON.stringify(((err as Record<string, unknown>).response as Record<string, unknown>).data)}`
+        : String(err)
+      console.error(`[list_images] Harbor error:`, errMsg)
+      return { success: false, output: `Harbor 访问失败: ${errMsg}` }
     }
   },
 }
