@@ -6,6 +6,7 @@ import { registerEnvironmentRoutes } from './routes/environments.js'
 import { registerApprovalRuleRoutes } from './routes/approval-rules.js'
 import { registerDingTalkUserRoutes } from './routes/dingtalk-users.js'
 import { registerToolPermissionRoutes } from './routes/tool-permissions.js'
+import { registerCapabilityRoutes } from './routes/capabilities.js'
 
 export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerSystemConfigRoutes(app)
@@ -15,4 +16,5 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerApprovalRuleRoutes(app)
   await registerDingTalkUserRoutes(app)
   await registerToolPermissionRoutes(app)
+  await registerCapabilityRoutes(app)
 }

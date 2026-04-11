@@ -4,6 +4,7 @@ import {
 } from '../../db/repositories/product-lines.js'
 import { listMembers, addMember, updateMemberRole, removeMember } from '../../db/repositories/product-line-members.js'
 import { listProductLineEnvs, batchSetProductLineEnvs } from '../../db/repositories/product-line-envs.js'
+import { getProductLineCapabilities, batchSetProductLineCapabilities } from '../../db/repositories/product-line-capabilities.js'
 
 export async function registerProductLineRoutes(app: FastifyInstance): Promise<void> {
   app.get('/product-lines', async (_req, reply) => {
@@ -79,6 +80,21 @@ export async function registerProductLineRoutes(app: FastifyInstance): Promise<v
         Number(req.params.id),
         envs.map(e => ({ envId: e.envId, runtime: e.runtime as 'kubernetes' | 'docker', namespace: e.namespace, enabled: e.enabled }))
       )
+      return reply.send(result)
+    }
+  )
+
+  // Capabilities
+  app.get<{ Params: { id: string } }>('/product-lines/:id/capabilities', async (req, reply) => {
+    return reply.send(await getProductLineCapabilities(Number(req.params.id)))
+  })
+
+  app.put<{ Params: { id: string }; Body: Array<{ capabilityKey: string; envName: string; enabled: boolean; allowedRoles: string[] }> }>(
+    '/product-lines/:id/capabilities', async (req, reply) => {
+      const productLineId = Number(req.params.id)
+      const caps = req.body
+      if (!Array.isArray(caps)) return reply.status(400).send({ error: 'body must be array' })
+      const result = await batchSetProductLineCapabilities(productLineId, caps)
       return reply.send(result)
     }
   )
