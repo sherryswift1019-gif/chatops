@@ -25,8 +25,8 @@ async function main(): Promise<void> {
 
   // Build IM adapters
   const dingtalk = new DingTalkAdapter({
-    appSecret: config.DINGTALK_APP_SECRET,
-    accessToken: config.DINGTALK_ACCESS_TOKEN,
+    clientId: config.DINGTALK_CLIENT_ID,
+    clientSecret: config.DINGTALK_CLIENT_SECRET,
   })
   const feishu = new FeishuAdapter({
     appId: config.FEISHU_APP_ID,
@@ -86,12 +86,7 @@ async function main(): Promise<void> {
     })
   }
 
-  // HTTP Routes
-  app.post('/webhook/dingtalk', async (req, reply) => {
-    await dingtalk.handleWebhook(req.body, req.headers as Record<string, string>)
-    return reply.send({ ok: true })
-  })
-
+  // HTTP Routes (DingTalk uses Stream mode — no webhook route needed)
   app.post('/webhook/feishu', async (req, reply) => {
     const body = req.body as Record<string, unknown>
     if (body.type === 'url_verification') {
@@ -120,16 +115,34 @@ async function main(): Promise<void> {
     endpoints: {
       health: '/health',
       webhooks: {
-        dingtalk: '/webhook/dingtalk',
         feishu: '/webhook/feishu',
         gitlab: '/webhook/gitlab',
+      },
+      stream: {
+        dingtalk: 'connected via WebSocket (Stream mode)',
       },
     },
   }))
 
   app.get('/health', async () => ({ status: 'ok' }))
 
+  // Start adapters with long connections (e.g. DingTalk Stream)
+  for (const adapter of adapters) {
+    await adapter.start?.()
+  }
+
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
+
+  // Graceful shutdown
+  const shutdown = async () => {
+    for (const adapter of adapters) {
+      await adapter.stop?.()
+    }
+    await app.close()
+    process.exit(0)
+  }
+  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', shutdown)
 }
 
 main().catch(err => {
