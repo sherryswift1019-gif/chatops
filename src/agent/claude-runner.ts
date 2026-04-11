@@ -34,7 +34,7 @@ interface GroupSession {
   lastUsed: number
 }
 
-const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000 // 8 hours
 
 export class ClaudeRunner {
   private porygon: Porygon
