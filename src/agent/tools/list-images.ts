@@ -1,6 +1,7 @@
 import { registerTool } from './index.js'
 import { getFreshImages, upsertImageCache } from '../../db/repositories/image-cache.js'
 import { getConfig } from '../../db/repositories/system-config.js'
+import { listProjects } from '../../db/repositories/projects-repo.js'
 import axios from 'axios'
 import https from 'https'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
@@ -41,8 +42,13 @@ const listImagesTool: AgentTool = {
   async execute(params: unknown, _ctx: TaskContext): Promise<ToolResult> {
     const { project, limit = 8 } = params as { project: string; limit?: number }
 
+    // Lookup harborProject from projects table
+    const allProjects = await listProjects()
+    const projectRecord = allProjects.find(p => p.name === project || p.harborProject === project)
+    const harborProject = projectRecord?.harborProject || project
+
     // Try cache first
-    const cached = await getFreshImages(project, limit)
+    const cached = await getFreshImages(harborProject, limit)
     if (cached.length > 0) {
       return formatImages(project, cached)
     }
@@ -62,8 +68,13 @@ const listImagesTool: AgentTool = {
         ...(harbor.caCert ? { ca: harbor.caCert } : {}),
       })
 
+      // harborProject format: "project_name/repo_name" or just "repo_name"
+      const parts = harborProject.split('/')
+      const harborProjectName = parts.length > 1 ? parts[0] : harborProject
+      const repoName = parts.length > 1 ? parts.slice(1).join('/') : harborProject
+
       const res = await axios.get(
-        `${harbor.url}/api/v2.0/projects/${project}/repositories/${encodeURIComponent(project)}/artifacts`,
+        `${harbor.url}/api/v2.0/projects/${harborProjectName}/repositories/${encodeURIComponent(repoName)}/artifacts`,
         {
           headers: { Authorization: `Basic ${auth}` },
           params: { page_size: limit, with_tag: true },
@@ -80,7 +91,7 @@ const listImagesTool: AgentTool = {
       for (const artifact of artifacts) {
         const tag = artifact.tags?.[0]?.name ?? 'untagged'
         await upsertImageCache({
-          project,
+          project: harborProject,
           tag,
           digest: artifact.digest,
           builtAt: new Date(artifact.push_time),
@@ -89,7 +100,7 @@ const listImagesTool: AgentTool = {
         })
       }
 
-      const fresh = await getFreshImages(project, limit)
+      const fresh = await getFreshImages(harborProject, limit)
       return formatImages(project, fresh)
     } catch (err) {
       return { success: false, output: `Harbor 访问失败: ${String(err)}` }
