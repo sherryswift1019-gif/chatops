@@ -4,7 +4,7 @@ import type { AgentTool, TaskContext, ToolResult, Role } from './types.js'
 
 const manageRoleTool: AgentTool = {
   name: 'manage_role',
-  description: 'Grant or revoke a user role. Admin only. Usage: grant or revoke developer/ops/admin role to a user.',
+  description: '授予或撤销用户角色。仅管理员可操作。',
   riskLevel: 'high',
   requiredRole: 'admin',
   inputSchema: {
@@ -12,7 +12,7 @@ const manageRoleTool: AgentTool = {
     properties: {
       targetUserId: { type: 'string', description: 'User ID to modify' },
       targetUserName: { type: 'string', description: 'Display name of the user' },
-      role: { type: 'string', enum: ['developer', 'ops', 'admin'], description: 'Role to assign' },
+      role: { type: 'string', enum: ['developer', 'tester', 'ops', 'admin'], description: '要分配的角色' },
       action: { type: 'string', enum: ['grant', 'revoke'], description: 'Grant or revoke the role' },
     },
     required: ['targetUserId', 'targetUserName', 'role', 'action'],
