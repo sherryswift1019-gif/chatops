@@ -140,6 +140,7 @@ ${capList}
 {"capability":"unknown","summary":"无法识别"}`,
         maxTurns: 1,
         disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'],
+        envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
       })
 
       console.log('[Runner] Porygon raw result:', result)
@@ -198,6 +199,7 @@ ${capList}
       },
       // Only allow our custom tools from MCP server (block built-in tools)
       disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
+      envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
     })) {
       switch (msg.type) {
         case 'assistant':
