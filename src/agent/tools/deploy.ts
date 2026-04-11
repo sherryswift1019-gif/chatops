@@ -109,12 +109,21 @@ const deployTool: AgentTool = {
         const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
         deployLog(`SSH to ${conn.host}, container=${containerName}, image=${fullImage}`)
 
+        const latestImage = `${registryHost}/${harborProject}:latest`
         const commands = [
+          // 1. 登录 Harbor
           `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
-          `docker pull ${fullImage}`,
+          // 2. 停止并删除旧容器
           `docker stop ${containerName} || true`,
           `docker rm ${containerName} || true`,
-          `docker run -d --name ${containerName} --restart unless-stopped ${fullImage}`,
+          // 3. 删除旧的 latest tag
+          `docker rmi ${latestImage} || true`,
+          // 4. 拉取新镜像
+          `docker pull ${fullImage}`,
+          // 5. 打上 latest tag
+          `docker tag ${fullImage} ${latestImage}`,
+          // 6. 用 latest 启动新容器
+          `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
         ].join(' && ')
 
         const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, commands)
