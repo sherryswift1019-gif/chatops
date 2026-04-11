@@ -7,6 +7,7 @@ import { SessionManager } from './agent/session-manager.js'
 import { ApprovalGate } from './approval/gate.js'
 import { ClaudeRunner } from './agent/claude-runner.js'
 import { setApprovalGateHandler } from './agent/tools/approval.js'
+import { adminPlugin } from './admin/index.js'
 import type { IMAdapter } from './adapters/im/types.js'
 import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
@@ -95,6 +96,9 @@ async function main(): Promise<void> {
       }
     })
   }
+
+  // Admin API routes (under /admin prefix)
+  await app.register(adminPlugin, { prefix: '/admin' })
 
   // HTTP Routes (DingTalk uses Stream mode — no webhook route needed)
   const feishuAdapter = adapters.find(a => a.platform === 'feishu')
