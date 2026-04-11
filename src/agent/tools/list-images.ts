@@ -43,7 +43,12 @@ const listImagesTool: AgentTool = {
     const { project, limit = 8 } = params as { project: string; limit?: number }
 
     // Lookup harborProject from projects table
-    const allProjects = await listProjects()
+    let allProjects: Awaited<ReturnType<typeof listProjects>> = []
+    try {
+      allProjects = await listProjects()
+    } catch (err) {
+      return { success: false, output: `数据库查询项目失败: ${String(err)}` }
+    }
     const projectRecord = allProjects.find(p =>
       p.name === project || p.displayName === project || p.harborProject === project
     )
@@ -51,8 +56,10 @@ const listImagesTool: AgentTool = {
 
     // Debug: include matching info in output if no Harbor project configured
     if (!projectRecord) {
-      const projectNames = allProjects.map(p => `${p.name}(harbor=${p.harborProject})`).join(', ')
-      return { success: false, output: `项目 "${project}" 在数据库中未找到。已注册项目: [${projectNames}]。请使用项目名称或 Harbor 镜像地址进行查询。` }
+      const projectNames = allProjects.length > 0
+        ? allProjects.map(p => `${p.name}(harbor=${p.harborProject})`).join(', ')
+        : '无（数据库中没有项目）'
+      return { success: false, output: `项目 "${project}" 在数据库中未找到匹配。\n已注册项目: [${projectNames}]\n请确认项目名称是否正确。` }
     }
     if (!harborProject) {
       return { success: false, output: `项目 "${project}" 未配置 Harbor 镜像地址。请在管理后台的项目配置中设置 Harbor 项目路径。` }
