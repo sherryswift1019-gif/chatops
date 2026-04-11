@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card, Tabs, Button, Table, Form, Input, Select, Modal, Space, Tag,
-  Popconfirm, message, Switch, Spin, Typography, Divider,
+  Popconfirm, message, Switch, Spin, Typography, Divider, Checkbox,
 } from 'antd'
 import { ArrowLeftOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
 import {
@@ -14,7 +14,7 @@ import { getProjects, createProject, updateProject, deleteProject } from '../api
 import { getEnvironments } from '../api/environments'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
 import { getTools, getToolPermissions, setToolPermissions } from '../api/tool-permissions'
-import type { ToolInfo } from '../api/tool-permissions'
+import type { ToolInfo, ToolPermission } from '../api/tool-permissions'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
 import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule } from '../types'
 
@@ -533,8 +533,11 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
 
 function ToolPermissionsTab({ productLineId }: { productLineId: number }) {
   const [tools, setTools] = useState<ToolInfo[]>([])
-  const [overrides, setOverrides] = useState<Map<string, string>>(new Map())
+  const [envs, setEnvs] = useState<Environment[]>([])
+  const [permissions, setPermissions] = useState<ToolPermission[]>([])
   const [loading, setLoading] = useState(false)
+  const [editingTool, setEditingTool] = useState<ToolInfo | null>(null)
+  const [editPerms, setEditPerms] = useState<Record<string, string[]>>({}) // envName -> roles
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { loadData() }, [productLineId])
@@ -542,66 +545,130 @@ function ToolPermissionsTab({ productLineId }: { productLineId: number }) {
   async function loadData() {
     setLoading(true)
     try {
-      const [toolList, perms] = await Promise.all([
-        getTools(),
-        getToolPermissions(productLineId),
+      const [t, e, p] = await Promise.all([
+        getTools(), getEnvironments(), getToolPermissions(productLineId),
       ])
-      setTools(toolList)
-      const map = new Map<string, string>()
-      for (const p of perms) map.set(p.toolName, p.minRole)
-      setOverrides(map)
+      setTools(t); setEnvs(e); setPermissions(p)
     } finally { setLoading(false) }
   }
 
-  function handleRoleChange(toolName: string, minRole: string) {
-    setOverrides(prev => new Map(prev).set(toolName, minRole))
+  function openEdit(tool: ToolInfo) {
+    setEditingTool(tool)
+    // Build current state from permissions
+    const perms: Record<string, string[]> = {}
+    const toolPerms = permissions.filter(p => p.toolName === tool.name)
+    for (const p of toolPerms) {
+      perms[p.envName] = [...p.allowedRoles]
+    }
+    setEditPerms(perms)
+  }
+
+  function handleRoleChange(envName: string, roles: string[]) {
+    setEditPerms(prev => ({ ...prev, [envName]: roles }))
   }
 
   async function handleSave() {
+    if (!editingTool) return
     setSaving(true)
     try {
-      const permissions = tools.map(t => ({
-        toolName: t.name,
-        minRole: overrides.get(t.name) ?? t.defaultMinRole,
-      }))
-      await setToolPermissions(productLineId, permissions)
-      message.success('工具权限已保存')
+      // Collect all permissions for this product line (keep other tools' perms unchanged)
+      const otherPerms = permissions
+        .filter(p => p.toolName !== editingTool.name)
+        .map(p => ({ toolName: p.toolName, envName: p.envName, allowedRoles: p.allowedRoles }))
+
+      const thisToolPerms = Object.entries(editPerms)
+        .filter(([_, roles]) => roles.length > 0)
+        .map(([envName, allowedRoles]) => ({ toolName: editingTool.name, envName, allowedRoles }))
+
+      await setToolPermissions(productLineId, [...otherPerms, ...thisToolPerms])
+      message.success('权限已保存')
+      setEditingTool(null)
+      await loadData()
     } catch { message.error('保存失败') }
     finally { setSaving(false) }
   }
 
+  const roleOptions = [
+    { label: '开发', value: 'developer' },
+    { label: '测试', value: 'tester' },
+    { label: '运维', value: 'ops' },
+    { label: '管理员', value: 'admin' },
+  ]
+
   const riskColors: Record<string, string> = { low: 'green', medium: 'orange', high: 'red' }
-  const roleLabels: Record<string, string> = { developer: '开发', ops: '运维', admin: '管理员' }
+  const roleLabels: Record<string, string> = { developer: '开发', tester: '测试', ops: '运维', admin: '管理员' }
+
+  function getEffectiveRoles(toolName: string): string {
+    const toolPerms = permissions.filter(p => p.toolName === toolName)
+    if (toolPerms.length === 0) return '默认'
+    const envCount = toolPerms.length
+    return `已配置 ${envCount} 个环境`
+  }
 
   const columns = [
     { title: '工具名称', dataIndex: 'name', width: 180 },
     { title: '描述', dataIndex: 'description', ellipsis: true },
-    { title: '风险等级', dataIndex: 'riskLevel', width: 100,
+    { title: '风险等级', dataIndex: 'riskLevel', width: 90,
       render: (v: string) => <Tag color={riskColors[v] ?? 'default'}>{v}</Tag> },
-    { title: '默认权限', dataIndex: 'defaultMinRole', width: 100,
-      render: (v: string) => roleLabels[v] ?? v },
-    { title: '当前权限', key: 'currentRole', width: 140,
+    { title: '默认权限', key: 'defaults', width: 200,
       render: (_: unknown, record: ToolInfo) => (
-        <Select
-          value={overrides.get(record.name) ?? record.defaultMinRole}
-          onChange={(v) => handleRoleChange(record.name, v)}
-          style={{ width: 120 }}
-          options={[
-            { value: 'developer', label: '开发' },
-            { value: 'ops', label: '运维' },
-            { value: 'admin', label: '管理员' },
-          ]}
-        />
-      ),
-    },
+        <Space size={[0, 4]} wrap>
+          {record.defaultAllowedRoles.map(r => <Tag key={r}>{roleLabels[r] ?? r}</Tag>)}
+        </Space>
+      ) },
+    { title: '当前配置', key: 'current', width: 140,
+      render: (_: unknown, record: ToolInfo) => (
+        <span style={{ color: '#999' }}>{getEffectiveRoles(record.name)}</span>
+      ) },
+    { title: '操作', key: 'action', width: 100,
+      render: (_: unknown, record: ToolInfo) => (
+        <a onClick={() => openEdit(record)}>编辑权限</a>
+      ) },
   ]
 
   return (
     <>
       <Table rowKey="name" columns={columns} dataSource={tools} loading={loading} pagination={false} size="middle" />
-      <div style={{ marginTop: 16 }}>
-        <Button type="primary" loading={saving} onClick={handleSave}>保存权限配置</Button>
-      </div>
+
+      <Modal
+        title={editingTool ? `编辑权限：${editingTool.name}` : ''}
+        open={!!editingTool}
+        onOk={handleSave}
+        onCancel={() => setEditingTool(null)}
+        confirmLoading={saving}
+        width={600}
+        destroyOnClose
+      >
+        {editingTool && (
+          <div>
+            <p style={{ color: '#666', marginBottom: 16 }}>
+              为每个环境选择允许使用此工具的角色。未配置的环境将使用默认权限。
+            </p>
+
+            {/* Global wildcard */}
+            <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
+              <div style={{ fontWeight: 500, marginBottom: 4 }}>* 全局（所有环境）</div>
+              <Checkbox.Group
+                options={roleOptions}
+                value={editPerms['*'] ?? []}
+                onChange={(vals) => handleRoleChange('*', vals as string[])}
+              />
+            </div>
+
+            {/* Per environment */}
+            {envs.map(env => (
+              <div key={env.id} style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>{env.displayName}（{env.name}）</div>
+                <Checkbox.Group
+                  options={roleOptions}
+                  value={editPerms[env.name] ?? []}
+                  onChange={(vals) => handleRoleChange(env.name, vals as string[])}
+                />
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
     </>
   )
 }

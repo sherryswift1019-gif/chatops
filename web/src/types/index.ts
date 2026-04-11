@@ -4,7 +4,7 @@ export interface ProductLine {
 
 export interface ProductLineMember {
   id: number; productLineId: number; userId: string; userName: string
-  role: 'developer' | 'ops' | 'admin'; createdAt: string
+  role: 'developer' | 'tester' | 'ops' | 'admin'; createdAt: string
 }
 
 export interface ProductLineEnv {
