@@ -19,7 +19,7 @@ export interface Project {
 }
 
 export interface Environment {
-  id: number; name: string; displayName: string; sortOrder: number; createdAt: string
+  id: number; name: string; displayName: string; defaultRuntime: 'kubernetes' | 'docker'; sortOrder: number; createdAt: string
 }
 
 export interface ApprovalRule {

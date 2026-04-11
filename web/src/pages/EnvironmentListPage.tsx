@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Button, Modal, Form, Input, InputNumber, Popconfirm, Space, message } from 'antd'
+import { Card, Table, Button, Modal, Form, Input, InputNumber, Select, Tag, Popconfirm, Space, message } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { getEnvironments, createEnvironment, updateEnvironment, deleteEnvironment } from '../api/environments'
 import type { Environment } from '../types'
@@ -53,6 +53,8 @@ export default function EnvironmentListPage() {
     { title: 'ID', dataIndex: 'id', width: 60 },
     { title: '名称', dataIndex: 'name' },
     { title: '显示名', dataIndex: 'displayName' },
+    { title: '运行时', dataIndex: 'defaultRuntime', width: 110,
+      render: (v: string) => <Tag color={v === 'kubernetes' ? 'blue' : 'green'}>{v === 'kubernetes' ? 'Kubernetes' : 'Docker'}</Tag> },
     { title: '排序', dataIndex: 'sortOrder', width: 80 },
     { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
     {
@@ -78,6 +80,12 @@ export default function EnvironmentListPage() {
           </Form.Item>
           <Form.Item name="displayName" label="显示名" rules={[{ required: true, message: '请输入显示名' }]}>
             <Input placeholder="如: 开发环境" />
+          </Form.Item>
+          <Form.Item name="defaultRuntime" label="运行时" rules={[{ required: true, message: '请选择运行时' }]} initialValue="docker">
+            <Select>
+              <Select.Option value="docker">Docker</Select.Option>
+              <Select.Option value="kubernetes">Kubernetes</Select.Option>
+            </Select>
           </Form.Item>
           <Form.Item name="sortOrder" label="排序" initialValue={0}>
             <InputNumber style={{ width: '100%' }} />
