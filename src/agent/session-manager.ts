@@ -26,15 +26,24 @@ export class SessionManager {
     const queueKey = `${msg.platform}:${msg.groupId}`
 
     // Immediate ack
-    await adapter.sendMessage(
-      { type: 'group', id: msg.groupId },
-      { text: `🤖 收到，处理中...` }
-    )
+    try {
+      await adapter.sendMessage(
+        { type: 'group', id: msg.groupId },
+        { text: `🤖 收到，处理中...` }
+      )
+      console.log('[SessionManager] Ack sent')
+    } catch (err) {
+      console.error('[SessionManager] Failed to send ack:', err)
+    }
 
     const queue = this.getOrCreateQueue(msg)
     this.resetInactivityTimer(queueKey, msg)
 
-    await this.processMessage(msg, queue)
+    try {
+      await this.processMessage(msg, queue)
+    } catch (err) {
+      console.error('[SessionManager] processMessage error:', err)
+    }
   }
 
   private getOrCreateQueue(msg: NormalizedMessage): TaskQueue {

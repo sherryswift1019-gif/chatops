@@ -59,7 +59,9 @@ export class ClaudeRunner {
       }
 
       // Step 1: Detect intent
+      console.log('[Runner] Step 1: detecting intent for:', prompt)
       const intent = await this.detectIntent(prompt)
+      console.log('[Runner] Intent result:', JSON.stringify(intent))
       if (!intent) {
         await adapter.sendMessage(
           { type: 'group', id: opts.groupId },
@@ -109,10 +111,11 @@ export class ClaudeRunner {
       await this.executeWithPorygon(opts, capabilityTools)
 
     } catch (err) {
+      console.error('[Runner] Error:', err)
       await adapter.sendMessage(
         { type: 'group', id: opts.groupId },
         { text: `❌ Agent error: ${String(err)}` }
-      )
+      ).catch(e => console.error('[Runner] Failed to send error to IM:', e))
     }
   }
 
@@ -121,6 +124,7 @@ export class ClaudeRunner {
     const capList = capabilities.map(c => `- ${c.key}: ${c.displayName} (${c.description})`).join('\n')
 
     try {
+      console.log('[Runner] Calling porygon.run for intent detection...')
       const result = await this.porygon.run({
         prompt: `分析以下用户请求，识别意图。
 
@@ -138,9 +142,14 @@ ${capList}
         disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'],
       })
 
-      const parsed = JSON.parse(result) as DetectedIntent
+      console.log('[Runner] Porygon raw result:', result)
+
+      // Clean markdown code block wrapping if present
+      const cleaned = result.replace(/```json?\n?/g, '').replace(/```\n?/g, '').trim()
+      const parsed = JSON.parse(cleaned) as DetectedIntent
       return parsed.capability === 'unknown' ? null : parsed
-    } catch {
+    } catch (err) {
+      console.error('[Runner] detectIntent error:', err)
       return null
     }
   }
