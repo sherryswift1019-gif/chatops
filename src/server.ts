@@ -23,17 +23,27 @@ import './agent/tools/role.js'
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
 
-  // Build IM adapters
-  const dingtalk = new DingTalkAdapter({
-    clientId: config.DINGTALK_CLIENT_ID,
-    clientSecret: config.DINGTALK_CLIENT_SECRET,
-  })
-  const feishu = new FeishuAdapter({
-    appId: config.FEISHU_APP_ID,
-    appSecret: config.FEISHU_APP_SECRET,
-    verificationToken: config.FEISHU_VERIFICATION_TOKEN,
-  })
-  const adapters: IMAdapter[] = [dingtalk, feishu]
+  // Build IM adapters (only create if credentials are configured)
+  const adapters: IMAdapter[] = []
+
+  if (config.DINGTALK_CLIENT_ID && config.DINGTALK_CLIENT_SECRET) {
+    const dingtalk = new DingTalkAdapter({
+      clientId: config.DINGTALK_CLIENT_ID,
+      clientSecret: config.DINGTALK_CLIENT_SECRET,
+    })
+    adapters.push(dingtalk)
+    app.log.info('DingTalk adapter enabled (Stream mode)')
+  }
+
+  if (config.FEISHU_APP_ID && config.FEISHU_APP_SECRET) {
+    const feishu = new FeishuAdapter({
+      appId: config.FEISHU_APP_ID,
+      appSecret: config.FEISHU_APP_SECRET,
+      verificationToken: config.FEISHU_VERIFICATION_TOKEN,
+    })
+    adapters.push(feishu)
+    app.log.info('Feishu adapter enabled (Webhook mode)')
+  }
 
   // Approval gate
   const gate = new ApprovalGate(adapters)
@@ -87,14 +97,17 @@ async function main(): Promise<void> {
   }
 
   // HTTP Routes (DingTalk uses Stream mode — no webhook route needed)
-  app.post('/webhook/feishu', async (req, reply) => {
-    const body = req.body as Record<string, unknown>
-    if (body.type === 'url_verification') {
-      return reply.send({ challenge: body.challenge })
-    }
-    await feishu.handleWebhook(body, req.headers as Record<string, string>)
-    return reply.send({ ok: true })
-  })
+  const feishuAdapter = adapters.find(a => a.platform === 'feishu')
+  if (feishuAdapter) {
+    app.post('/webhook/feishu', async (req, reply) => {
+      const body = req.body as Record<string, unknown>
+      if (body.type === 'url_verification') {
+        return reply.send({ challenge: body.challenge })
+      }
+      await feishuAdapter.handleWebhook(body, req.headers as Record<string, string>)
+      return reply.send({ ok: true })
+    })
+  }
 
   const gitlabReceiver = new GitLabWebhookReceiver(config.GITLAB_WEBHOOK_SECRET)
   gitlabReceiver.onPipelineEvent(async (project, status, pipelineId) => {
