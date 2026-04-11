@@ -95,8 +95,8 @@ export class DingTalkAdapter implements IMAdapter {
   async sendMessage(target: MessageTarget, content: TextContent): Promise<void> {
     const webhook = this.getWebhook(target)
     await axios.post(webhook, {
-      msgtype: 'text',
-      text: { content: content.text },
+      msgtype: 'markdown',
+      markdown: { title: 'ChatOps', text: content.text },
     })
   }
 
