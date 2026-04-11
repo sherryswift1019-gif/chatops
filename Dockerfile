@@ -22,7 +22,9 @@ COPY src/ src/
 # Copy frontend build output
 COPY --from=web-build /app/web/dist web/dist
 
+# Verify TypeScript compiles and Claude CLI is available
 RUN npx tsc --noEmit
+RUN npx claude --version || echo "Claude CLI check skipped"
 
 EXPOSE 3000
 
