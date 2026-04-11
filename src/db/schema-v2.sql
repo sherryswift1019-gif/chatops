@@ -83,3 +83,40 @@ CREATE TABLE IF NOT EXISTS tool_permissions (
   allowed_roles    JSONB NOT NULL DEFAULT '[]',
   UNIQUE(product_line_id, tool_name, env_name)
 );
+
+-- capabilities (system-wide capability definitions)
+CREATE TABLE IF NOT EXISTS capabilities (
+  id             SERIAL PRIMARY KEY,
+  key            TEXT NOT NULL UNIQUE,
+  display_name   TEXT NOT NULL,
+  description    TEXT DEFAULT '',
+  category       TEXT NOT NULL DEFAULT 'query' CHECK (category IN ('query','action','admin')),
+  tool_names     JSONB NOT NULL DEFAULT '[]',
+  needs_approval BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- product_line_capabilities (per product line capability enablement)
+CREATE TABLE IF NOT EXISTS product_line_capabilities (
+  id               SERIAL PRIMARY KEY,
+  product_line_id  INT NOT NULL REFERENCES product_lines(id) ON DELETE CASCADE,
+  capability_key   TEXT NOT NULL,
+  env_name         TEXT NOT NULL DEFAULT '*',
+  enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+  allowed_roles    JSONB NOT NULL DEFAULT '["developer","tester","ops","admin"]',
+  UNIQUE(product_line_id, capability_key, env_name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_plc_lookup ON product_line_capabilities(product_line_id, capability_key, env_name);
+
+-- Seed default capabilities
+INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval) VALUES
+  ('view_deployments', '查看部署状态', '查询部署历史和当前版本', 'query', '["query_deployments"]', false),
+  ('view_images', '查看镜像列表', '列出可用容器镜像', 'query', '["list_images"]', false),
+  ('view_logs', '查看日志', '拉取和分析容器日志', 'query', '["get_logs"]', false),
+  ('view_commits', '查看提交记录', '查看GitLab代码提交', 'query', '["get_gitlab_commits"]', false),
+  ('deploy', '部署服务', '部署指定镜像到指定环境', 'action', '["request_approval","execute_deploy"]', true),
+  ('rollback', '回滚服务', '回滚到上一版本', 'action', '["request_approval","execute_rollback"]', true),
+  ('restart', '重启服务', '重启运行中的服务', 'action', '["request_approval","execute_restart"]', true),
+  ('manage_role', '管理角色', '授予或撤销用户角色', 'admin', '["manage_role"]', true)
+ON CONFLICT (key) DO NOTHING;
