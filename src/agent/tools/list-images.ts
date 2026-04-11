@@ -4,7 +4,12 @@ import { getConfig } from '../../db/repositories/system-config.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import axios from 'axios'
 import https from 'https'
+import { appendFileSync } from 'fs'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
+
+function toolLog(msg: string) {
+  try { appendFileSync('/tmp/mcp-server.log', `[${new Date().toISOString()}] [list_images] ${msg}\n`) } catch { /* */ }
+}
 
 async function getHarborConfig(): Promise<{ url: string; username: string; password: string; skipTlsVerify: boolean; caCert?: string }> {
   const cfg = await getConfig('harbor')
@@ -46,15 +51,17 @@ const listImagesTool: AgentTool = {
     let allProjects: Awaited<ReturnType<typeof listProjects>> = []
     try {
       allProjects = await listProjects()
+      toolLog(`listProjects returned ${allProjects.length} projects: ${allProjects.map(p => `${p.name}(harbor=${p.harborProject})`).join(', ')}`)
     } catch (err) {
+      toolLog(`listProjects ERROR: ${String(err)}`)
       return { success: false, output: `数据库查询项目失败: ${String(err)}` }
     }
     const projectRecord = allProjects.find(p =>
       p.name === project || p.displayName === project || p.harborProject === project
     )
     const harborProject = projectRecord?.harborProject || project
+    toolLog(`Matching: input="${project}" → matched=${projectRecord?.name ?? 'NONE'} → harborProject="${harborProject}"`)
 
-    // Debug: include matching info in output if no Harbor project configured
     if (!projectRecord) {
       const projectNames = allProjects.length > 0
         ? allProjects.map(p => `${p.name}(harbor=${p.harborProject})`).join(', ')
@@ -93,6 +100,7 @@ const listImagesTool: AgentTool = {
       })
 
       apiUrl = `${harbor.url}/api/v2.0/projects/${harborProjectName}/repositories/${encodeURIComponent(repoName)}/artifacts`
+      toolLog(`Harbor API: ${apiUrl}`)
       const res = await axios.get(apiUrl,
         {
           headers: { Authorization: `Basic ${auth}` },
