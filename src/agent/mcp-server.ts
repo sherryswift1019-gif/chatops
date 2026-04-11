@@ -54,7 +54,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const context: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
 
   try {
+    process.stderr.write(`[MCP] Calling tool: ${request.params.name} args=${JSON.stringify(request.params.arguments)}\n`)
     const result = await tool.execute(request.params.arguments ?? {}, context)
+    process.stderr.write(`[MCP] Tool result: success=${result.success} output=${result.output.slice(0, 200)}\n`)
     return {
       content: [{ type: 'text' as const, text: result.output }],
       isError: !result.success,
