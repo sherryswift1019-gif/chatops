@@ -24,6 +24,8 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; lab
       { name: 'url', label: 'Harbor URL' },
       { name: 'username', label: '用户名' },
       { name: 'password', label: '密码', secret: true },
+      { name: 'skipTlsVerify', label: '跳过证书验证 (自签名证书设为 true)' },
+      { name: 'caCert', label: 'CA 证书 (PEM 格式，可选)' },
     ],
   },
   kubernetes: {

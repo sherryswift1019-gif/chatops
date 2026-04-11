@@ -1,8 +1,30 @@
 import { registerTool } from './index.js'
 import { getFreshImages, upsertImageCache } from '../../db/repositories/image-cache.js'
-import { config } from '../../config.js'
+import { getConfig } from '../../db/repositories/system-config.js'
 import axios from 'axios'
+import https from 'https'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
+
+async function getHarborConfig(): Promise<{ url: string; username: string; password: string; skipTlsVerify: boolean; caCert?: string }> {
+  const cfg = await getConfig('harbor')
+  if (!cfg) {
+    // Fallback to env vars
+    return {
+      url: process.env.HARBOR_URL ?? '',
+      username: process.env.HARBOR_USERNAME ?? '',
+      password: process.env.HARBOR_PASSWORD ?? '',
+      skipTlsVerify: false,
+    }
+  }
+  const v = cfg.value as Record<string, string>
+  return {
+    url: v.url ?? '',
+    username: v.username ?? '',
+    password: v.password ?? '',
+    skipTlsVerify: v.skipTlsVerify === 'true' || v.skipTlsVerify === true as unknown as string,
+    caCert: v.caCert,
+  }
+}
 
 const listImagesTool: AgentTool = {
   name: 'list_images',
@@ -27,10 +49,26 @@ const listImagesTool: AgentTool = {
 
     // Fetch from Harbor
     try {
-      const auth = Buffer.from(`${config.HARBOR_USERNAME}:${config.HARBOR_PASSWORD}`).toString('base64')
+      const harbor = await getHarborConfig()
+      if (!harbor.url) {
+        return { success: false, output: 'Harbor URL 未配置。请在系统配置中设置 Harbor 地址。' }
+      }
+
+      const auth = Buffer.from(`${harbor.username}:${harbor.password}`).toString('base64')
+
+      // Build HTTPS agent for self-signed certs
+      const httpsAgent = new https.Agent({
+        rejectUnauthorized: !harbor.skipTlsVerify,
+        ...(harbor.caCert ? { ca: harbor.caCert } : {}),
+      })
+
       const res = await axios.get(
-        `${config.HARBOR_URL}/api/v2.0/projects/${project}/repositories/${project}/artifacts`,
-        { headers: { Authorization: `Basic ${auth}` }, params: { page_size: limit, with_tag: true } }
+        `${harbor.url}/api/v2.0/projects/${project}/repositories/${encodeURIComponent(project)}/artifacts`,
+        {
+          headers: { Authorization: `Basic ${auth}` },
+          params: { page_size: limit, with_tag: true },
+          httpsAgent,
+        }
       )
       const artifacts = res.data as Array<{
         tags?: Array<{ name: string }>
@@ -54,7 +92,7 @@ const listImagesTool: AgentTool = {
       const fresh = await getFreshImages(project, limit)
       return formatImages(project, fresh)
     } catch (err) {
-      return { success: false, output: `Failed to fetch images from Harbor: ${String(err)}` }
+      return { success: false, output: `Harbor 访问失败: ${String(err)}` }
     }
   },
 }
