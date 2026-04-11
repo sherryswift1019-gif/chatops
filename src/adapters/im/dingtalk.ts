@@ -44,6 +44,9 @@ export class DingTalkAdapter implements IMAdapter {
   // Cache sessionWebhook by conversationId for group replies
   private readonly webhookCache = new Map<string, string>()
 
+  // Dedup: track processed msgIds to prevent duplicate handling
+  private readonly processedMsgIds = new Set<string>()
+
   // Access token cache for OpenAPI (DMs)
   private accessTokenCache: AccessTokenCache | null = null
 
@@ -143,6 +146,19 @@ export class DingTalkAdapter implements IMAdapter {
     } catch (err) {
       console.error('[DingTalk] Failed to parse robot message:', err)
       return
+    }
+
+    // Dedup by msgId — DingTalk may redeliver the same message
+    if (this.processedMsgIds.has(msg.msgId)) {
+      console.log('[DingTalk] Duplicate msgId, skipping:', msg.msgId)
+      this.client.send(res.headers.messageId, { status: 'SUCCESS' })
+      return
+    }
+    this.processedMsgIds.add(msg.msgId)
+    // Cleanup old msgIds (keep last 200)
+    if (this.processedMsgIds.size > 200) {
+      const first = this.processedMsgIds.values().next().value
+      if (first) this.processedMsgIds.delete(first)
     }
 
     console.log('[DingTalk] Message from:', msg.senderNick, '| conversationId:', msg.conversationId, '| text:', msg.text?.content)
