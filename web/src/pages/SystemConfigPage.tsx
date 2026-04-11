@@ -52,6 +52,7 @@ export default function SystemConfigPage() {
   const [configs, setConfigs] = useState<Record<string, Record<string, unknown>>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     loadConfigs()
@@ -122,8 +123,6 @@ export default function SystemConfigPage() {
       message.success('配置已导出')
     } catch { message.error('导出失败') }
   }
-
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   function handleImportClick() {
     fileInputRef.current?.click()
