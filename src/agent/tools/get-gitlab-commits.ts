@@ -2,13 +2,18 @@ import { registerTool } from './index.js'
 import { getConfig } from '../../db/repositories/system-config.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import axios from 'axios'
+import https from 'https'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
-async function getGitLabConfig(): Promise<{ url: string; token: string }> {
+async function getGitLabConfig(): Promise<{ url: string; token: string; skipTlsVerify: boolean }> {
   const cfg = await getConfig('gitlab')
-  if (!cfg) return { url: '', token: '' }
+  if (!cfg) return { url: '', token: '', skipTlsVerify: false }
   const v = cfg.value as Record<string, string>
-  return { url: v.url ?? '', token: v.token ?? '' }
+  return {
+    url: v.url ?? '',
+    token: v.token ?? '',
+    skipTlsVerify: v.skipTlsVerify === 'true' || v.skipTlsVerify === true as unknown as string,
+  }
 }
 
 const getGitLabCommitsTool: AgentTool = {
@@ -27,7 +32,6 @@ const getGitLabCommitsTool: AgentTool = {
   async execute(params: unknown, _ctx: TaskContext): Promise<ToolResult> {
     const { project: projectName, limit = 10, since } = params as { project: string; limit?: number; since?: string }
     try {
-      // 从 projects 表查 gitlabPath
       const projects = await listProjects()
       const projectRecord = projects.find(p => p.name === projectName || p.displayName === projectName)
       const gitlabPath = projectRecord?.gitlabPath || projectName
@@ -35,12 +39,17 @@ const getGitLabCommitsTool: AgentTool = {
       const gitlab = await getGitLabConfig()
       if (!gitlab.url) return { success: false, output: 'GitLab URL 未配置。请在系统配置中设置。' }
 
+      const httpsAgent = new https.Agent({
+        rejectUnauthorized: !gitlab.skipTlsVerify,
+      })
+
       const encodedProject = encodeURIComponent(gitlabPath)
       const res = await axios.get(
         `${gitlab.url}/api/v4/projects/${encodedProject}/repository/commits`,
         {
           headers: { 'PRIVATE-TOKEN': gitlab.token },
           params: { per_page: limit, since },
+          httpsAgent,
         }
       )
       const commits = res.data as Array<{ short_id: string; title: string; author_name: string; created_at: string }>

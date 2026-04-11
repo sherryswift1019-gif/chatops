@@ -16,6 +16,7 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; lab
     fields: [
       { name: 'url', label: 'GitLab URL' },
       { name: 'token', label: 'Private Token', secret: true },
+      { name: 'skipTlsVerify', label: '跳过证书验证 (自签名证书设为 true)' },
     ],
   },
   harbor: {
