@@ -22,6 +22,7 @@ export class SessionManager {
   }
 
   private async handleMessage(adapter: IMAdapter, msg: NormalizedMessage): Promise<void> {
+    console.log(`[SessionManager] Message from ${msg.platform}:${msg.groupId} user=${msg.userName}: "${msg.text}"`)
     const queueKey = `${msg.platform}:${msg.groupId}`
 
     // Immediate ack

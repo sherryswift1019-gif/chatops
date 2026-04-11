@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { DWClient, DWClientDownStream, TOPIC_ROBOT, TOPIC_CARD } from 'dingtalk-stream-sdk-nodejs'
+import { DWClient, DWClientDownStream, EventAck, TOPIC_ROBOT, TOPIC_CARD } from 'dingtalk-stream-sdk-nodejs'
 import type {
   IMAdapter, MessageHandler, CardActionHandler,
   MessageTarget, TextContent, InteractiveCard, UserInfo, NormalizedMessage
@@ -54,11 +54,19 @@ export class DingTalkAdapter implements IMAdapter {
       keepAlive: true,
     })
 
+    // Log ALL events for debugging
+    this.client.registerAllEventListener((res: DWClientDownStream) => {
+      console.log('[DingTalk] Event received:', res.type, res.headers?.topic, res.headers?.messageId)
+      return { status: EventAck.SUCCESS }
+    })
+
     this.client
       .registerCallbackListener(TOPIC_ROBOT, (res: DWClientDownStream) => {
+        console.log('[DingTalk] Robot message received:', res.headers.messageId)
         void this.handleRobotMessage(res)
       })
       .registerCallbackListener(TOPIC_CARD, (res: DWClientDownStream) => {
+        console.log('[DingTalk] Card callback received:', res.headers.messageId)
         void this.handleCardCallback(res)
       })
   }
@@ -132,9 +140,12 @@ export class DingTalkAdapter implements IMAdapter {
     let msg: RobotMessage
     try {
       msg = JSON.parse(res.data) as RobotMessage
-    } catch {
+    } catch (err) {
+      console.error('[DingTalk] Failed to parse robot message:', err)
       return
     }
+
+    console.log('[DingTalk] Message from:', msg.senderNick, '| conversationId:', msg.conversationId, '| text:', msg.text?.content)
 
     // Cache sessionWebhook so we can reply to this conversation later
     if (msg.sessionWebhook) {
@@ -147,7 +158,12 @@ export class DingTalkAdapter implements IMAdapter {
     // ACK immediately
     this.client.send(res.headers.messageId, { status: 'SUCCESS' })
 
-    if (!text) return
+    if (!text) {
+      console.log('[DingTalk] Empty text after stripping mentions, skipping')
+      return
+    }
+
+    console.log('[DingTalk] Processed text:', text, '| hasHandler:', !!this.messageHandler)
 
     const normalized: NormalizedMessage = {
       platform: 'dingtalk',
