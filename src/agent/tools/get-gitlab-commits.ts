@@ -6,11 +6,9 @@ import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
 async function getGitLabConfig(): Promise<{ url: string; token: string }> {
   const cfg = await getConfig('gitlab')
-  if (cfg) {
-    const v = cfg.value as Record<string, string>
-    return { url: v.url ?? '', token: v.token ?? '' }
-  }
-  return { url: process.env.GITLAB_URL ?? '', token: process.env.GITLAB_TOKEN ?? '' }
+  if (!cfg) return { url: '', token: '' }
+  const v = cfg.value as Record<string, string>
+  return { url: v.url ?? '', token: v.token ?? '' }
 }
 
 const getGitLabCommitsTool: AgentTool = {

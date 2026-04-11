@@ -14,13 +14,7 @@ function toolLog(msg: string) {
 async function getHarborConfig(): Promise<{ url: string; username: string; password: string; skipTlsVerify: boolean; caCert?: string }> {
   const cfg = await getConfig('harbor')
   if (!cfg) {
-    // Fallback to env vars
-    return {
-      url: process.env.HARBOR_URL ?? '',
-      username: process.env.HARBOR_USERNAME ?? '',
-      password: process.env.HARBOR_PASSWORD ?? '',
-      skipTlsVerify: false,
-    }
+    return { url: '', username: '', password: '', skipTlsVerify: false }
   }
   const v = cfg.value as Record<string, string>
   return {
