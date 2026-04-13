@@ -1,0 +1,100 @@
+import { registerTool } from './index.js'
+import { listTestPipelines } from '../../db/repositories/test-pipelines.js'
+import { listTestServers } from '../../db/repositories/test-servers.js'
+import { getTestRunById } from '../../db/repositories/test-runs.js'
+import { runPipeline } from '../../pipeline/executor.js'
+import type { AgentTool, TaskContext, ToolResult } from './types.js'
+
+const autotestTool: AgentTool = {
+  name: 'autotest',
+  description: '自动化测试：查看测试流水线、触发执行、查看执行状态和测试报告。支持完整的环境部署+测试+报告流程。',
+  riskLevel: 'high',
+  requiredRole: 'tester',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        description: '操作类型: list_pipelines(查看流水线) | list_servers(查看测试服务器) | trigger_run(触发执行) | get_status(查看状态) | get_report(获取报告链接)',
+        enum: ['list_pipelines', 'list_servers', 'trigger_run', 'get_status', 'get_report'],
+      },
+      pipelineId: { type: 'number', description: '流水线ID (trigger_run 必填)' },
+      productLineId: { type: 'number', description: '产线ID (list_pipelines/list_servers 可选)' },
+      servers: {
+        type: 'object',
+        description: '服务器角色分配 (trigger_run 必填)，格式: {"db": ["192.168.1.10"], "app": ["192.168.1.11"]}',
+      },
+      runId: { type: 'number', description: '执行记录ID (get_status/get_report 必填)' },
+    },
+    required: ['action'],
+  },
+
+  async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
+    const { action, pipelineId, productLineId, servers, runId } = params as {
+      action: string; pipelineId?: number; productLineId?: number
+      servers?: Record<string, string[]>; runId?: number
+    }
+
+    switch (action) {
+      case 'list_pipelines': {
+        const pipelines = await listTestPipelines(productLineId)
+        if (pipelines.length === 0) return { success: true, output: '当前没有配置测试流水线。' }
+        const list = pipelines.map(p =>
+          `- [${p.id}] ${p.name}${p.description ? ` — ${p.description}` : ''}${p.schedule ? ` (定时: ${p.schedule})` : ''}${p.enabled ? '' : ' [已禁用]'}`
+        ).join('\n')
+        return { success: true, output: `测试流水线列表:\n${list}` }
+      }
+
+      case 'list_servers': {
+        const svrs = await listTestServers(productLineId)
+        if (svrs.length === 0) return { success: true, output: '当前没有配置测试服务器。' }
+        const list = svrs.map(s =>
+          `- [${s.id}] ${s.name} (${s.host}:${s.port}) 角色:${s.role} 状态:${s.status}`
+        ).join('\n')
+        return { success: true, output: `测试服务器列表:\n${list}` }
+      }
+
+      case 'trigger_run': {
+        if (!pipelineId) return { success: false, output: '请指定 pipelineId' }
+        if (!servers || Object.keys(servers).length === 0) return { success: false, output: '请指定 servers 角色分配' }
+        try {
+          const id = await runPipeline(pipelineId, servers, 'manual', ctx.initiatorId)
+          return { success: true, output: `测试流水线已启动，执行ID: ${id}\n使用 get_status 查看进度，或使用 get_report 获取报告。` }
+        } catch (err) {
+          return { success: false, output: `启动失败: ${String(err)}` }
+        }
+      }
+
+      case 'get_status': {
+        if (!runId) return { success: false, output: '请指定 runId' }
+        const run = await getTestRunById(runId)
+        if (!run) return { success: false, output: `执行记录 ${runId} 不存在` }
+        const stages = run.stageResults.map((s, i) => {
+          const dur = s.durationMs ? ` (${s.durationMs < 1000 ? s.durationMs + 'ms' : (s.durationMs / 1000).toFixed(1) + 's'})` : ''
+          const icon = s.status === 'success' ? 'OK' : s.status === 'failed' ? 'FAIL' : s.status === 'running' ? '...' : '-'
+          return `  ${i + 1}. [${icon}] ${s.name}${dur}${s.error ? ' — ' + s.error : ''}`
+        }).join('\n')
+        return {
+          success: true,
+          output: `执行 #${run.id} 状态: ${run.status}\n阶段进度:\n${stages}${run.errorMessage ? `\n错误: ${run.errorMessage}` : ''}`,
+        }
+      }
+
+      case 'get_report': {
+        if (!runId) return { success: false, output: '请指定 runId' }
+        const run = await getTestRunById(runId)
+        if (!run) return { success: false, output: `执行记录 ${runId} 不存在` }
+        if (run.status === 'running' || run.status === 'pending') {
+          return { success: true, output: `执行 #${runId} 仍在进行中，报告尚未生成。` }
+        }
+        return { success: true, output: `测试报告:\n在线查看: /api/test-runs/${runId}/report\n下载数据包: /api/test-runs/${runId}/report/download` }
+      }
+
+      default:
+        return { success: false, output: `未知操作: ${action}` }
+    }
+  },
+}
+
+registerTool(autotestTool)
+export { autotestTool }

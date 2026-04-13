@@ -1,0 +1,87 @@
+import { getPool } from '../client.js'
+
+export interface TestPipeline {
+  id: number
+  productLineId: number
+  name: string
+  description: string
+  stages: unknown[]
+  serverRoles: Record<string, { count: number }>
+  schedule: string
+  enabled: boolean
+  createdAt: Date
+  updatedAt: Date
+}
+
+function mapRow(r: Record<string, unknown>): TestPipeline {
+  return {
+    id: r.id as number, productLineId: r.product_line_id as number,
+    name: r.name as string, description: (r.description ?? '') as string,
+    stages: (r.stages ?? []) as unknown[], serverRoles: (r.server_roles ?? {}) as Record<string, { count: number }>,
+    schedule: (r.schedule ?? '') as string, enabled: r.enabled as boolean,
+    createdAt: r.created_at as Date, updatedAt: r.updated_at as Date,
+  }
+}
+
+export async function listTestPipelines(productLineId?: number): Promise<TestPipeline[]> {
+  const pool = getPool()
+  if (productLineId) {
+    const { rows } = await pool.query('SELECT * FROM test_pipelines WHERE product_line_id = $1 ORDER BY id', [productLineId])
+    return rows.map(mapRow)
+  }
+  const { rows } = await pool.query('SELECT * FROM test_pipelines ORDER BY id')
+  return rows.map(mapRow)
+}
+
+export async function getTestPipelineById(id: number): Promise<TestPipeline | null> {
+  const pool = getPool()
+  const { rows } = await pool.query('SELECT * FROM test_pipelines WHERE id = $1', [id])
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+export async function createTestPipeline(data: {
+  productLineId: number; name: string; description?: string
+  stages: unknown[]; serverRoles: Record<string, { count: number }>
+  schedule?: string; enabled?: boolean
+}): Promise<TestPipeline> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [data.productLineId, data.name, data.description ?? '', JSON.stringify(data.stages),
+     JSON.stringify(data.serverRoles), data.schedule ?? '', data.enabled ?? true]
+  )
+  return mapRow(rows[0])
+}
+
+export async function updateTestPipeline(id: number, data: Partial<{
+  name: string; description: string; stages: unknown[]
+  serverRoles: Record<string, { count: number }>; schedule: string; enabled: boolean
+}>): Promise<TestPipeline | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `UPDATE test_pipelines SET
+       name = COALESCE($2, name), description = COALESCE($3, description),
+       stages = COALESCE($4, stages), server_roles = COALESCE($5, server_roles),
+       schedule = COALESCE($6, schedule), enabled = COALESCE($7, enabled),
+       updated_at = NOW()
+     WHERE id = $1 RETURNING *`,
+    [id, data.name ?? null, data.description ?? null,
+     data.stages ? JSON.stringify(data.stages) : null,
+     data.serverRoles ? JSON.stringify(data.serverRoles) : null,
+     data.schedule ?? null, data.enabled ?? null]
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+export async function deleteTestPipeline(id: number): Promise<boolean> {
+  const pool = getPool()
+  const { rowCount } = await pool.query('DELETE FROM test_pipelines WHERE id = $1', [id])
+  return (rowCount ?? 0) > 0
+}
+
+export async function listScheduledPipelines(): Promise<TestPipeline[]> {
+  const pool = getPool()
+  const { rows } = await pool.query("SELECT * FROM test_pipelines WHERE enabled = true AND schedule != '' ORDER BY id")
+  return rows.map(mapRow)
+}

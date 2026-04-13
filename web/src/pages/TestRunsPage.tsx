@@ -1,0 +1,125 @@
+import { useEffect, useState } from 'react'
+import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message } from 'antd'
+import { ReloadOutlined, FileTextOutlined, DownloadOutlined } from '@ant-design/icons'
+import { getTestRuns, getTestRun } from '../api/test-runs'
+import { getTestPipelines } from '../api/test-pipelines'
+import type { TestRun, TestPipeline } from '../types'
+
+const statusColors: Record<string, string> = { pending: 'default', running: 'processing', success: 'success', failed: 'error', cancelled: 'warning' }
+const statusLabels: Record<string, string> = { pending: '等待中', running: '执行中', success: '成功', failed: '失败', cancelled: '已取消' }
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  return `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`
+}
+
+export default function TestRunsPage() {
+  const [data, setData] = useState<TestRun[]>([])
+  const [pipelines, setPipelines] = useState<TestPipeline[]>([])
+  const [loading, setLoading] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [selectedRun, setSelectedRun] = useState<TestRun | null>(null)
+
+  useEffect(() => { load(); loadPipelines() }, [])
+
+  async function load() {
+    setLoading(true)
+    try { setData(await getTestRuns()) } finally { setLoading(false) }
+  }
+  async function loadPipelines() {
+    try { setPipelines(await getTestPipelines()) } catch { /* */ }
+  }
+
+  async function showDetail(id: number) {
+    try {
+      const run = await getTestRun(id)
+      setSelectedRun(run)
+      setDrawerOpen(true)
+    } catch { message.error('加载失败') }
+  }
+
+  const triggerLabels: Record<string, string> = { manual: '手动', api: 'API', scheduled: '定时' }
+
+  const columns = [
+    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: '流水线', dataIndex: 'pipelineId', render: (v: number) => pipelines.find(p => p.id === v)?.name ?? `#${v}` },
+    { title: '触发', dataIndex: 'triggerType', width: 80, render: (v: string) => triggerLabels[v] ?? v },
+    { title: '触发人', dataIndex: 'triggeredBy', width: 120, ellipsis: true },
+    { title: '状态', dataIndex: 'status', width: 90, render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
+    { title: '进度', width: 80, render: (_: unknown, r: TestRun) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
+    { title: '开始时间', dataIndex: 'startedAt', width: 170, render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+    { title: '结束时间', dataIndex: 'finishedAt', width: 170, render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+    {
+      title: '操作', width: 120,
+      render: (_: unknown, r: TestRun) => (
+        <Space>
+          <a onClick={() => showDetail(r.id)}>详情</a>
+          {(r.status === 'success' || r.status === 'failed') && (
+            <a href={`/api/test-runs/${r.id}/report`} target="_blank" rel="noopener"><FileTextOutlined /></a>
+          )}
+        </Space>
+      ),
+    },
+  ]
+
+  const stageStatusColors: Record<string, string> = { success: 'green', failed: 'red', running: 'blue', pending: 'gray', skipped: 'gray' }
+
+  return (
+    <>
+      <Card title="测试执行历史" extra={<Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>}>
+        <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={{ pageSize: 20 }} />
+      </Card>
+
+      <Drawer title={selectedRun ? `执行详情 #${selectedRun.id}` : ''} open={drawerOpen} onClose={() => setDrawerOpen(false)} width={600}>
+        {selectedRun && (
+          <>
+            <Descriptions column={2} size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="状态"><Tag color={statusColors[selectedRun.status]}>{statusLabels[selectedRun.status]}</Tag></Descriptions.Item>
+              <Descriptions.Item label="触发方式">{triggerLabels[selectedRun.triggerType]}</Descriptions.Item>
+              <Descriptions.Item label="触发人">{selectedRun.triggeredBy || '-'}</Descriptions.Item>
+              <Descriptions.Item label="开始时间">{selectedRun.startedAt ? new Date(selectedRun.startedAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
+              <Descriptions.Item label="结束时间">{selectedRun.finishedAt ? new Date(selectedRun.finishedAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
+            </Descriptions>
+
+            {selectedRun.errorMessage && (
+              <div style={{ background: '#fff2f0', border: '1px solid #ffa39e', padding: '8px 12px', borderRadius: 4, marginBottom: 16, fontSize: 13 }}>
+                {selectedRun.errorMessage}
+              </div>
+            )}
+
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>服务器分配</div>
+            <div style={{ marginBottom: 16 }}>
+              {Object.entries(selectedRun.servers).map(([role, hosts]) => (
+                <div key={role}><Tag>{role}</Tag> {(hosts as string[]).join(', ')}</div>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>执行阶段</div>
+            <Timeline items={selectedRun.stageResults.map(s => ({
+              color: stageStatusColors[s.status] ?? 'gray',
+              children: (
+                <div>
+                  <strong>{s.name}</strong> <Tag color={stageStatusColors[s.status]}>{s.status}</Tag>
+                  {s.durationMs !== undefined && <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatDuration(s.durationMs)}</span>}
+                  {s.error && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{s.error}</div>}
+                </div>
+              ),
+            }))} />
+
+            {(selectedRun.status === 'success' || selectedRun.status === 'failed') && (
+              <Space style={{ marginTop: 16 }}>
+                <Button type="primary" icon={<FileTextOutlined />} href={`/api/test-runs/${selectedRun.id}/report`} target="_blank">
+                  查看报告
+                </Button>
+                <Button icon={<DownloadOutlined />} href={`/api/test-runs/${selectedRun.id}/report/download`}>
+                  下载数据包
+                </Button>
+              </Space>
+            )}
+          </>
+        )}
+      </Drawer>
+    </>
+  )
+}

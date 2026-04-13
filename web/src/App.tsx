@@ -8,6 +8,9 @@ import ProductLineListPage from './pages/ProductLineListPage'
 import ProductLineDetailPage from './pages/ProductLineDetailPage'
 import DingTalkUsersPage from './pages/DingTalkUsersPage'
 import CapabilitiesPage from './pages/CapabilitiesPage'
+import TestServersPage from './pages/TestServersPage'
+import TestPipelinesPage from './pages/TestPipelinesPage'
+import TestRunsPage from './pages/TestRunsPage'
 
 export default function App() {
   return (
@@ -22,6 +25,9 @@ export default function App() {
             <Route path="/dingtalk-users" element={<DingTalkUsersPage />} />
             <Route path="/capabilities" element={<CapabilitiesPage />} />
             <Route path="/system-config" element={<SystemConfigPage />} />
+            <Route path="/test-servers" element={<TestServersPage />} />
+            <Route path="/test-pipelines" element={<TestPipelinesPage />} />
+            <Route path="/test-runs" element={<TestRunsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -24,6 +24,7 @@ import './agent/tools/get-logs.js'
 import './agent/tools/deploy.js'
 import './agent/tools/approval.js'
 import './agent/tools/role.js'
+import './agent/tools/autotest.js'
 
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
@@ -104,6 +105,10 @@ async function main(): Promise<void> {
   // Admin API routes (under /admin prefix)
   await app.register(adminPlugin, { prefix: '/admin' })
 
+  // Start pipeline scheduler
+  const { startScheduler } = await import('./pipeline/scheduler.js')
+  startScheduler().catch(err => app.log.error({ err }, 'Failed to start pipeline scheduler'))
+
   // HTTP Routes (DingTalk uses Stream mode — no webhook route needed)
   const feishuAdapter = adapters.find(a => a.platform === 'feishu')
   if (feishuAdapter) {
@@ -143,7 +148,7 @@ async function main(): Promise<void> {
 
     // SPA fallback: non-API GET requests return index.html
     app.setNotFoundHandler(async (req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/admin') && !req.url.startsWith('/webhook') && !req.url.startsWith('/health')) {
+      if (req.method === 'GET' && !req.url.startsWith('/admin') && !req.url.startsWith('/api') && !req.url.startsWith('/webhook') && !req.url.startsWith('/health')) {
         return reply.sendFile('index.html')
       }
       return reply.status(404).send({ error: 'not found' })

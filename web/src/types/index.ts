@@ -39,3 +39,35 @@ export interface DingTalkUsersResponse { users: DingTalkUser[]; total: number }
 export interface SystemConfigEntry {
   key: string; value: Record<string, unknown>; updatedAt: string
 }
+
+export interface TestServer {
+  id: number; productLineId: number; name: string; host: string; port: number
+  username: string; authType: 'password' | 'key'; credential: string; role: string
+  status: 'idle' | 'in_use' | 'offline'; tags: Record<string, unknown>
+  createdAt: string; updatedAt: string
+}
+
+export interface TestPipeline {
+  id: number; productLineId: number; name: string; description: string
+  stages: StageDefinition[]; serverRoles: Record<string, { count: number }>
+  schedule: string; enabled: boolean; createdAt: string; updatedAt: string
+}
+
+export interface StageDefinition {
+  name: string; type: string; targetRoles: string[]; parallel: boolean
+  timeoutSeconds: number; retryCount: number; params: Record<string, unknown>
+  onFailure: 'stop' | 'continue'
+}
+
+export interface TestRun {
+  id: number; pipelineId: number; triggerType: 'manual' | 'api' | 'scheduled'
+  triggeredBy: string; status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
+  servers: Record<string, string[]>; currentStage: number
+  stageResults: StageResult[]; reportPath: string
+  startedAt: string | null; finishedAt: string | null; errorMessage: string; createdAt: string
+}
+
+export interface StageResult {
+  name: string; type: string; status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
+  startedAt?: string; finishedAt?: string; durationMs?: number; output?: string; error?: string
+}

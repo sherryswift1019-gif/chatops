@@ -18,4 +18,6 @@ export async function resetTestDb(): Promise<void> {
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
   await pool.query(schema)
   await pool.query(schemaV2)
+  const schemaV3 = readFileSync(join(process.cwd(), 'src/db/schema-v3.sql'), 'utf8')
+  await pool.query(schemaV3)
 }

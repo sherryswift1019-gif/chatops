@@ -7,6 +7,7 @@ import {
   TeamOutlined,
   ThunderboltOutlined,
   SettingOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content, Header } = Layout
@@ -17,6 +18,9 @@ const menuItems = [
   { key: '/dingtalk-users', icon: <TeamOutlined />, label: '钉钉用户' },
   { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
   { key: '/system-config', icon: <SettingOutlined />, label: '系统配置' },
+  { key: '/test-servers', icon: <CloudServerOutlined />, label: '测试服务器' },
+  { key: '/test-pipelines', icon: <ExperimentOutlined />, label: '测试流水线' },
+  { key: '/test-runs', icon: <ExperimentOutlined />, label: '测试执行' },
 ]
 
 export default function AdminLayout() {
