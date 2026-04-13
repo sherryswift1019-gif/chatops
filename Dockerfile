@@ -25,8 +25,11 @@ COPY --from=web-build /app/web/dist web/dist
 # Verify TypeScript compiles
 RUN npx tsc --noEmit
 
+# Create data directory for test reports
+RUN mkdir -p /data/chatops/test-runs
+
 # Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
-RUN useradd -m -s /bin/bash chatops && chown -R chatops:chatops /app
+RUN useradd -m -s /bin/bash chatops && chown -R chatops:chatops /app /data/chatops
 USER chatops
 
 EXPOSE 3000
