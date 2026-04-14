@@ -13,11 +13,12 @@ import {
 import { getProjects, createProject, updateProject, deleteProject } from '../api/projects'
 import { getEnvironments } from '../api/environments'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
+import { getTestServers } from '../api/test-servers'
 import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getCapabilities, getProductLineCapabilities, setProductLineCapabilities } from '../api/capabilities'
 import type { Capability, ProductLineCapability } from '../api/capabilities'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
-import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule } from '../types'
+import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule, TestServer } from '../types'
 
 const { Title } = Typography
 
@@ -385,6 +386,7 @@ interface EnvRow {
 
 function EnvConfigTab({ productLineId }: { productLineId: number }) {
   const [rows, setRows] = useState<EnvRow[]>([])
+  const [servers, setServers] = useState<TestServer[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -393,10 +395,12 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
   async function load() {
     setLoading(true)
     try {
-      const [allEnvs, plEnvs] = await Promise.all([
+      const [allEnvs, plEnvs, plServers] = await Promise.all([
         getEnvironments(),
         getProductLineEnvs(productLineId),
+        getTestServers(productLineId),
       ])
+      setServers(plServers)
       const plEnvMap = new Map<number, ProductLineEnv>(plEnvs.map(e => [e.envId, e]))
       setRows(allEnvs.map(env => {
         const existing = plEnvMap.get(env.id)
@@ -476,35 +480,43 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
             />
           )
         }
-        // Docker: host + username + password
-        return (
-          <Space direction="vertical" size={4} style={{ width: '100%' }}>
-            <Input
-              value={cfg.host ?? ''}
-              placeholder="IP 地址，如: 192.168.1.100"
-              onChange={(e) => updateRow(record.envId, {
-                connectionConfig: { ...cfg, host: e.target.value },
-              })}
-            />
-            <Space>
-              <Input
-                value={cfg.username ?? ''}
-                placeholder="用户名"
-                style={{ width: 120 }}
-                onChange={(e) => updateRow(record.envId, {
-                  connectionConfig: { ...cfg, username: e.target.value },
+        // Docker: select servers from TestServer pool
+        const serverIds = (cfg.serverIds as unknown as number[]) ?? []
+        // Legacy format: show migration hint
+        if (!cfg.serverIds && cfg.host) {
+          return (
+            <Space direction="vertical" size={4} style={{ width: '100%' }}>
+              <Tag color="orange">旧配置: {cfg.host as string}@{cfg.username as string ?? ''}</Tag>
+              <Select
+                mode="multiple"
+                value={[]}
+                style={{ width: '100%' }}
+                placeholder="请选择服务器以替换旧配置"
+                onChange={(ids: number[]) => updateRow(record.envId, {
+                  connectionConfig: { serverIds: ids },
                 })}
-              />
-              <Input.Password
-                value={cfg.password ?? ''}
-                placeholder="密码"
-                style={{ width: 140 }}
-                onChange={(e) => updateRow(record.envId, {
-                  connectionConfig: { ...cfg, password: e.target.value },
-                })}
+                options={servers.map(s => ({
+                  value: s.id,
+                  label: `${s.name} (${s.host}) - ${s.role || '无角色'}`,
+                }))}
               />
             </Space>
-          </Space>
+          )
+        }
+        return (
+          <Select
+            mode="multiple"
+            value={serverIds}
+            style={{ width: '100%' }}
+            placeholder={servers.length > 0 ? '选择服务器' : '请先在测试服务器页面添加服务器'}
+            onChange={(ids: number[]) => updateRow(record.envId, {
+              connectionConfig: { serverIds: ids },
+            })}
+            options={servers.map(s => ({
+              value: s.id,
+              label: `${s.name} (${s.host}) - ${s.role || '无角色'}`,
+            }))}
+          />
         )
       },
     },
