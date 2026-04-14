@@ -5,9 +5,13 @@ export interface Capability {
   key: string
   displayName: string
   description: string
-  category: 'query' | 'action' | 'admin'
+  category: 'query' | 'action' | 'admin' | 'env_prep' | 'verify' | 'testing' | 'result'
   toolNames: string[]
   needsApproval: boolean
+  paramSchema: Record<string, unknown>
+  playbook: unknown[]
+  isSystem: boolean
+  updatedAt: string
   createdAt: string
 }
 
@@ -30,3 +34,6 @@ export const getProductLineCapabilities = (plId: number) =>
   client.get<ProductLineCapability[]>(`/product-lines/${plId}/capabilities`).then(r => r.data)
 export const setProductLineCapabilities = (plId: number, caps: Array<{ capabilityKey: string; envName: string; enabled: boolean; allowedRoles: string[] }>) =>
   client.put<ProductLineCapability[]>(`/product-lines/${plId}/capabilities`, caps).then(r => r.data)
+
+export const getPipelineCapabilities = () =>
+  client.get<Capability[]>('/capabilities/pipeline').then(r => r.data)

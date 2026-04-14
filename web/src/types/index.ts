@@ -50,12 +50,18 @@ export interface TestServer {
 export interface TestPipeline {
   id: number; productLineId: number; name: string; description: string
   stages: StageDefinition[]; serverRoles: Record<string, { count: number }>
-  schedule: string; enabled: boolean; createdAt: string; updatedAt: string
+  schedule: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
 }
 
 export interface StageDefinition {
-  name: string; type: string; targetRoles: string[]; parallel: boolean
-  timeoutSeconds: number; retryCount: number; params: Record<string, unknown>
+  name: string
+  capabilityKey: string
+  type?: string
+  targetRoles: string[]
+  parallel: boolean
+  timeoutSeconds: number
+  retryCount: number
+  params: Record<string, unknown>
   onFailure: 'stop' | 'continue'
 }
 
