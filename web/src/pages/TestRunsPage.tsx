@@ -102,7 +102,12 @@ export default function TestRunsPage() {
                 <div>
                   <strong>{s.name}</strong> <Tag color={stageStatusColors[s.status]}>{s.status}</Tag>
                   {s.durationMs !== undefined && <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatDuration(s.durationMs)}</span>}
-                  {s.error && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4 }}>{s.error}</div>}
+                  {s.output && (
+                    <pre style={{ background: '#f5f5f5', border: '1px solid #e8e8e8', borderRadius: 4, padding: '8px 12px', marginTop: 6, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto' }}>
+                      {s.output}
+                    </pre>
+                  )}
+                  {s.error && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4, background: '#fff2f0', padding: '4px 8px', borderRadius: 4 }}>{s.error}</div>}
                 </div>
               ),
             }))} />
