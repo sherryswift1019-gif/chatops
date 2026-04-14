@@ -1,5 +1,5 @@
 import { mkdir } from 'fs/promises'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import { createTestRun, updateTestRunStage, finishTestRun } from '../db/repositories/test-runs.js'
 import { listTestServers, bulkSetServerStatus } from '../db/repositories/test-servers.js'
@@ -12,10 +12,12 @@ import { executeTest } from './stages/test.js'
 import { executeCustom } from './stages/custom.js'
 import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, CleanupParams, DownloadParams, InstallParams, HealthCheckParams, TestParams, CustomParams } from './types.js'
 import { getStageCapabilityKey } from './types.js'
-import { sshExecWithLog } from './ssh.js'
+import { sshExecWithLog, sshExec } from './ssh.js'
+import { writeFile } from 'fs/promises'
 import type { StageResult } from '../db/repositories/test-runs.js'
 
 // Execute new-format stages with { commands?, script? } params
+// Captures stdout/stderr both to log file and to output for UI display
 async function executeNewShellStage(params: Record<string, unknown>, servers: ServerInfo[], ctx: StageContext, label: string): Promise<StageExecutionResult> {
   const logFile = join(ctx.logDir, `${String(ctx.stageIndex + 1).padStart(2, '0')}-${label}.log`)
   const commands = (params.commands as string)?.trim() ?? ''
@@ -23,20 +25,36 @@ async function executeNewShellStage(params: Record<string, unknown>, servers: Se
   const cmd = [commands, script].filter(Boolean).join('\n')
   if (!cmd) return { status: 'success', output: 'No commands to execute' }
 
-  const outputs: string[] = []
+  const allLogs: string[] = []
+  let failed = false
+  let failError = ''
+
   for (const server of servers) {
     const sshCfg = { host: server.host, port: server.port, username: server.username, password: server.password }
+    allLogs.push(`=== ${server.host} ===`)
     try {
-      const result = await sshExecWithLog(sshCfg, cmd, logFile)
+      const result = await sshExec(sshCfg, cmd)
+      if (result.stdout) allLogs.push(`[stdout]\n${result.stdout.trimEnd()}`)
+      if (result.stderr) allLogs.push(`[stderr]\n${result.stderr.trimEnd()}`)
+      allLogs.push(`[exit code] ${result.code}`)
       if (result.code !== 0) {
-        return { status: 'failed', output: `Failed on ${server.host}`, error: `exit code ${result.code}` }
+        failed = true
+        failError = `exit code ${result.code} on ${server.host}`
       }
-      outputs.push(`${server.host}: ok`)
     } catch (err) {
-      return { status: 'failed', output: `Error on ${server.host}`, error: String(err) }
+      allLogs.push(`[error] ${String(err)}`)
+      failed = true
+      failError = String(err)
     }
   }
-  return { status: 'success', output: outputs.join('\n') }
+
+  // Write full log to file
+  await mkdir(dirname(logFile), { recursive: true }).catch(() => {})
+  await writeFile(logFile, allLogs.join('\n') + '\n').catch(() => {})
+
+  const output = allLogs.join('\n')
+  if (failed) return { status: 'failed', output, error: failError }
+  return { status: 'success', output }
 }
 
 const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
