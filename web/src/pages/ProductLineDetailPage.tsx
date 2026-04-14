@@ -56,6 +56,9 @@ function BasicInfoTab({ productLine, onUpdated }: { productLine: ProductLine; on
         <Form.Item name="description" label="描述">
           <Input.TextArea rows={4} />
         </Form.Item>
+        <Form.Item name="dingtalkGroupId" label="钉钉群ID" extra="绑定钉钉群后，群内可通过 AI 对话触发流水线">
+          <Input placeholder="钉钉群的 conversationId" />
+        </Form.Item>
         <Form.Item>
           <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
             保存

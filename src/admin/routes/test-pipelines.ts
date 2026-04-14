@@ -1,5 +1,31 @@
 import type { FastifyInstance } from 'fastify'
 import { listTestPipelines, getTestPipelineById, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../../db/repositories/test-pipelines.js'
+import { getPool } from '../../db/client.js'
+
+// Auto-register/update a pipeline as a capability + enable for its product line
+async function syncPipelineCapability(pipelineId: number, name: string, productLineId: number): Promise<void> {
+  const pool = getPool()
+  const key = `pipeline_${pipelineId}`
+  await pool.query(
+    `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, param_schema, is_system)
+     VALUES ($1, $2, $3, 'testing', '["autotest"]', false, '{}', false)
+     ON CONFLICT (key) DO UPDATE SET display_name = $2, description = $3`,
+    [key, `执行流水线: ${name}`, `触发测试流水线「${name}」`]
+  )
+  await pool.query(
+    `INSERT INTO product_line_capabilities (product_line_id, capability_key, env_name, enabled, allowed_roles)
+     VALUES ($1, $2, '*', true, '["developer","tester","ops","admin"]')
+     ON CONFLICT (product_line_id, capability_key, env_name) DO NOTHING`,
+    [productLineId, key]
+  )
+}
+
+async function removePipelineCapability(pipelineId: number): Promise<void> {
+  const pool = getPool()
+  const key = `pipeline_${pipelineId}`
+  await pool.query('DELETE FROM product_line_capabilities WHERE capability_key = $1', [key])
+  await pool.query('DELETE FROM capabilities WHERE key = $1', [key])
+}
 
 export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { product_line_id?: string } }>('/test-pipelines', async (req, reply) => {
@@ -23,16 +49,19 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
       return reply.status(400).send({ error: 'productLineId, name, stages, serverRoles required' })
     }
     const item = await createTestPipeline(req.body)
+    await syncPipelineCapability(item.id, item.name, item.productLineId)
     return reply.status(201).send(item)
   })
 
   app.put<{ Params: { id: string }; Body: Record<string, unknown> }>('/test-pipelines/:id', async (req, reply) => {
     const item = await updateTestPipeline(Number(req.params.id), req.body as any)
     if (!item) return reply.status(404).send({ error: 'not found' })
+    await syncPipelineCapability(item.id, item.name, item.productLineId)
     return reply.send(item)
   })
 
   app.delete<{ Params: { id: string } }>('/test-pipelines/:id', async (req, reply) => {
+    await removePipelineCapability(Number(req.params.id))
     const deleted = await deleteTestPipeline(Number(req.params.id))
     if (!deleted) return reply.status(404).send({ error: 'not found' })
     return reply.status(204).send()

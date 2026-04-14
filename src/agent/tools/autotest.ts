@@ -1,5 +1,5 @@
 import { registerTool } from './index.js'
-import { listTestPipelines } from '../../db/repositories/test-pipelines.js'
+import { listTestPipelines, getTestPipelineById } from '../../db/repositories/test-pipelines.js'
 import { listTestServers } from '../../db/repositories/test-servers.js'
 import { getTestRunById } from '../../db/repositories/test-runs.js'
 import { runPipeline } from '../../pipeline/executor.js'
@@ -56,10 +56,29 @@ const autotestTool: AgentTool = {
 
       case 'trigger_run': {
         if (!pipelineId) return { success: false, output: '请指定 pipelineId' }
-        if (!servers || Object.keys(servers).length === 0) return { success: false, output: '请指定 servers 角色分配' }
         try {
-          const id = await runPipeline(pipelineId, servers, 'manual', ctx.initiatorId)
-          return { success: true, output: `测试流水线已启动，执行ID: ${id}\n使用 get_status 查看进度，或使用 get_report 获取报告。` }
+          // Auto-assign servers if not provided
+          let serverMap = servers ?? {}
+          if (Object.keys(serverMap).length === 0) {
+            const pipeline = await getTestPipelineById(pipelineId)
+            if (!pipeline) return { success: false, output: `流水线 ${pipelineId} 不存在` }
+            const allServers = await listTestServers(pipeline.productLineId)
+            for (const role of Object.keys(pipeline.serverRoles ?? {})) {
+              const roleServers = allServers.filter(s => s.role === role && s.status === 'idle')
+              if (roleServers.length > 0) {
+                serverMap[role] = roleServers.map(s => s.host)
+              }
+            }
+            if (Object.keys(serverMap).length === 0) {
+              return { success: false, output: '没有可用的空闲服务器，无法自动分配' }
+            }
+          }
+          const id = await runPipeline(pipelineId, serverMap, 'manual', ctx.initiatorId, (result) => {
+            // Store completion result for later query - onComplete is fire-and-forget
+            console.log(`[autotest] Pipeline ${pipelineId} run #${result.runId} completed: ${result.status} in ${result.durationMs}ms`)
+          })
+          const assignInfo = Object.entries(serverMap).map(([role, hosts]) => `  ${role}: ${(hosts as string[]).join(', ')}`).join('\n')
+          return { success: true, output: `测试流水线已启动，执行ID: ${id}\n服务器分配:\n${assignInfo}\n\n流水线在后台执行中，使用 get_status 查看进度。` }
         } catch (err) {
           return { success: false, output: `启动失败: ${String(err)}` }
         }

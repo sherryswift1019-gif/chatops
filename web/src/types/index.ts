@@ -1,5 +1,5 @@
 export interface ProductLine {
-  id: number; name: string; displayName: string; description: string; createdAt: string; updatedAt: string
+  id: number; name: string; displayName: string; description: string; dingtalkGroupId: string; createdAt: string; updatedAt: string
 }
 
 export interface ProductLineMember {

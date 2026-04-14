@@ -12,6 +12,7 @@ import { ApprovalGate } from './approval/gate.js'
 import { ClaudeRunner } from './agent/claude-runner.js'
 import { setApprovalGateHandler } from './agent/tools/approval.js'
 import { adminPlugin } from './admin/index.js'
+import { getProductLineByGroupId } from './db/repositories/product-lines.js'
 import type { IMAdapter } from './adapters/im/types.js'
 import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
@@ -25,6 +26,13 @@ import './agent/tools/deploy.js'
 import './agent/tools/approval.js'
 import './agent/tools/role.js'
 import './agent/tools/autotest.js'
+
+async function resolveProductLineId(groupId: string): Promise<number | null> {
+  try {
+    const pl = await getProductLineByGroupId(groupId)
+    return pl?.id ?? null
+  } catch { return null }
+}
 
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
@@ -80,12 +88,14 @@ async function main(): Promise<void> {
         { initiatorId: msg.userId, intent: msg.text },
         async (task) => {
           const context = await sessionManager.buildTaskContext(msg, task.id)
+          const productLineId = await resolveProductLineId(msg.groupId)
           await runner.run({
             prompt: msg.text,
             context,
             groupId: msg.groupId,
             platform: msg.platform,
             adapter,
+            productLineId: productLineId ?? undefined,
           })
         }
       )

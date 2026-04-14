@@ -113,3 +113,17 @@ ALTER TABLE test_pipelines ADD COLUMN IF NOT EXISTS trigger_params JSONB DEFAULT
 UPDATE capabilities SET param_schema = jsonb_set(param_schema, '{properties,commands,x-ai-assist}', 'true')
 WHERE param_schema->'properties'->'commands' IS NOT NULL
   AND key IN ('env_init','env_cleanup','deploy','rollback','restart','custom_script');
+
+-- 7. Add dingtalk_group_id to product_lines for group-to-productline mapping
+ALTER TABLE product_lines ADD COLUMN IF NOT EXISTS dingtalk_group_id TEXT DEFAULT '';
+
+-- 8. Auto-register existing pipelines as capabilities
+INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, param_schema, is_system)
+SELECT 'pipeline_' || id, '执行流水线: ' || name, '触发测试流水线「' || name || '」', 'testing', '["autotest"]', false, '{}', false
+FROM test_pipelines
+ON CONFLICT (key) DO NOTHING;
+
+INSERT INTO product_line_capabilities (product_line_id, capability_key, env_name, enabled, allowed_roles)
+SELECT product_line_id, 'pipeline_' || id, '*', true, '["developer","tester","ops","admin"]'
+FROM test_pipelines
+ON CONFLICT (product_line_id, capability_key, env_name) DO NOTHING;

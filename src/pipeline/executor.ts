@@ -94,7 +94,23 @@ async function executeStage(stage: StageDefinition, servers: ServerInfo[], ctx: 
   return { status: 'failed', output: `Unknown capability: ${capKey}`, error: 'unsupported' }
 }
 
-export async function runPipeline(pipelineId: number, serverAssignment: Record<string, string[]>, triggerType: 'manual' | 'api' | 'scheduled', triggeredBy: string): Promise<number> {
+export interface PipelineRunResult {
+  runId: number
+  pipelineName: string
+  status: 'success' | 'failed'
+  errorMessage: string
+  stageResults: StageResult[]
+  durationMs: number
+}
+
+export async function runPipeline(
+  pipelineId: number,
+  serverAssignment: Record<string, string[]>,
+  triggerType: 'manual' | 'api' | 'scheduled',
+  triggeredBy: string,
+  onComplete?: (result: PipelineRunResult) => void
+): Promise<number> {
+  const pipelineStartTime = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
   if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)
 
@@ -219,6 +235,19 @@ export async function runPipeline(pipelineId: number, serverAssignment: Record<s
   } finally {
     // Release servers
     await bulkSetServerStatus(serverIds, 'idle')
+  }
+
+  if (onComplete) {
+    try {
+      onComplete({
+        runId: run.id,
+        pipelineName: pipeline.name,
+        status: finalStatus,
+        errorMessage,
+        stageResults,
+        durationMs: Date.now() - pipelineStartTime,
+      })
+    } catch { /* callback errors should not affect run result */ }
   }
 
   return run.id
