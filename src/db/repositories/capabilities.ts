@@ -40,14 +40,6 @@ export async function listCapabilities(): Promise<Capability[]> {
   return rows.map(mapRow)
 }
 
-export async function listPipelineCapabilities(): Promise<Capability[]> {
-  const pool = getPool()
-  const { rows } = await pool.query(
-    "SELECT * FROM capabilities WHERE category NOT IN ('query', 'admin') ORDER BY category, id"
-  )
-  return rows.map(mapRow)
-}
-
 export async function getCapabilityByKey(key: string): Promise<Capability | null> {
   const pool = getPool()
   const { rows } = await pool.query('SELECT * FROM capabilities WHERE key = $1', [key])

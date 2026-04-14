@@ -11,7 +11,7 @@ import { executeHealthCheck } from './stages/health-check.js'
 import { executeTest } from './stages/test.js'
 import { executeCustom } from './stages/custom.js'
 import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, CleanupParams, DownloadParams, InstallParams, HealthCheckParams, TestParams, CustomParams } from './types.js'
-import { getStageCapabilityKey } from './types.js'
+import { getStageOperationKey } from './types.js'
 import { sshExecWithLog, sshExec } from './ssh.js'
 import { writeFile } from 'fs/promises'
 import type { StageResult } from '../db/repositories/test-runs.js'
@@ -61,7 +61,7 @@ const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
 async function executeStage(stage: StageDefinition, servers: ServerInfo[], ctx: StageContext): Promise<StageExecutionResult> {
   const params = stage.params as unknown
-  const capKey = getStageCapabilityKey(stage)
+  const capKey = getStageOperationKey(stage)
   // Map capabilityKey to executor (supports both new capabilityKey and legacy type)
   const EXECUTOR_MAP: Record<string, () => Promise<StageExecutionResult>> = {
     env_cleanup: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'cleanup'),
@@ -137,7 +137,7 @@ export async function runPipeline(
   await bulkSetServerStatus(serverIds, 'in_use')
 
   const stages = pipeline.stages as StageDefinition[]
-  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: getStageCapabilityKey(s), status: 'pending' as const }))
+  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: getStageOperationKey(s), status: 'pending' as const }))
 
   let finalStatus: 'success' | 'failed' = 'success'
   let errorMessage = ''
@@ -145,7 +145,7 @@ export async function runPipeline(
   try {
     for (let i = 0; i < stages.length; i++) {
       const stage = stages[i]
-      const capKey = getStageCapabilityKey(stage)
+      const capKey = getStageOperationKey(stage)
       if (capKey === 'report' || capKey === 'report_gen') continue // Report is generated at the end
 
       // Determine target servers

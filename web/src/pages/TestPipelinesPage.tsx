@@ -3,11 +3,11 @@ import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Sp
 import { PlusOutlined, DeleteOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
 import { getProductLines } from '../api/product-lines'
-import { getPipelineCapabilities } from '../api/capabilities'
+import { getStageOperations } from '../api/capabilities'
 import { getTestServers } from '../api/test-servers'
 import { triggerTestRun } from '../api/test-runs'
 import type { TestPipeline, ProductLine, TestServer } from '../types'
-import type { Capability } from '../api/capabilities'
+import type { StageOperation } from '../api/capabilities'
 import StageParamsForm from '../components/StageParamsForm'
 
 const CATEGORY_ORDER = ['env_prep', 'action', 'verify', 'testing', 'result']
@@ -23,7 +23,7 @@ const LEGACY_TYPE_MAP: Record<string, string> = {
 export default function TestPipelinesPage() {
   const [data, setData] = useState<TestPipeline[]>([])
   const [productLines, setProductLines] = useState<ProductLine[]>([])
-  const [capabilities, setCapabilities] = useState<Capability[]>([])
+  const [capabilities, setCapabilities] = useState<StageOperation[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<TestPipeline | null>(null)
@@ -45,7 +45,7 @@ export default function TestPipelinesPage() {
     try { setProductLines(await getProductLines()) } catch { /* */ }
   }
   async function loadCapabilities() {
-    try { setCapabilities(await getPipelineCapabilities()) } catch { /* */ }
+    try { setCapabilities(await getStageOperations()) } catch { /* */ }
   }
 
   async function loadServerRoles(productLineId: number) {
@@ -57,7 +57,7 @@ export default function TestPipelinesPage() {
   }
 
   const capabilityMap = useMemo(() => {
-    const m = new Map<string, Capability>()
+    const m = new Map<string, StageOperation>()
     capabilities.forEach(c => m.set(c.key, c))
     return m
   }, [capabilities])
@@ -291,7 +291,7 @@ export default function TestPipelinesPage() {
 }
 
 function StageParamsFormWrapper({ stageIndex, form, capabilityMap }: {
-  stageIndex: number; form: any; capabilityMap: Map<string, Capability>
+  stageIndex: number; form: any; capabilityMap: Map<string, StageOperation>
 }) {
   const capabilityKey = Form.useWatch(['stages', stageIndex, 'capabilityKey'], form)
   const targetRoles = Form.useWatch(['stages', stageIndex, 'targetRoles'], form) as string[] | undefined

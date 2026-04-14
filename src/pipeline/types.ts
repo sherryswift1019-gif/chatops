@@ -18,7 +18,7 @@ const LEGACY_TYPE_MAP: Record<string, string> = {
   report: 'report_gen', custom: 'custom_script',
 }
 
-export function getStageCapabilityKey(stage: StageDefinition): string {
+export function getStageOperationKey(stage: StageDefinition): string {
   if (stage.capabilityKey) return stage.capabilityKey
   return LEGACY_TYPE_MAP[stage.type ?? ''] ?? stage.type ?? 'custom_script'
 }

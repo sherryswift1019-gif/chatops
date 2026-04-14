@@ -684,6 +684,11 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     } finally { setLoading(false) }
   }
 
+  // A 类：系统能力（非 pipeline_ 开头）
+  const systemCaps = capabilities.filter(c => !c.key.startsWith('pipeline_'))
+  // C 类：流水线能力（pipeline_ 开头，自动生成）
+  const pipelineCaps = capabilities.filter(c => c.key.startsWith('pipeline_'))
+
   function openEdit(cap: Capability) {
     setEditingCap(cap)
     const configs: Record<string, { enabled: boolean; allowedRoles: string[] }> = {}
@@ -725,8 +730,8 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     finally { setSaving(false) }
   }
 
-  const categoryColors: Record<string, string> = { query: 'blue', action: 'orange', admin: 'red' }
-  const categoryLabels: Record<string, string> = { query: '查询', action: '操作', admin: '管理' }
+  const categoryColors: Record<string, string> = { query: 'blue', action: 'orange', admin: 'red', testing: 'purple' }
+  const categoryLabels: Record<string, string> = { query: '查询', action: '操作', admin: '管理', testing: '测试' }
   const roleOptions = [
     { label: '开发', value: 'developer' },
     { label: '测试', value: 'tester' },
@@ -741,7 +746,7 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     return `已配置 ${configs.length} 条规则，${enabledCount} 条启用`
   }
 
-  const columns = [
+  const systemColumns = [
     { title: '能力名称', dataIndex: 'displayName', width: 140 },
     { title: '标识', dataIndex: 'key', width: 140 },
     { title: '描述', dataIndex: 'description', ellipsis: true },
@@ -757,9 +762,28 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
       render: (_: unknown, record: Capability) => <a onClick={() => openEdit(record)}>编辑配置</a> },
   ]
 
+  const pipelineColumns = [
+    { title: '流水线名称', dataIndex: 'displayName', width: 200 },
+    { title: '描述', dataIndex: 'description', ellipsis: true },
+    { title: '当前配置', key: 'config', width: 200,
+      render: (_: unknown, record: Capability) => (
+        <span style={{ color: '#999' }}>{getConfigSummary(record.key)}</span>
+      ) },
+    { title: '操作', key: 'action', width: 100,
+      render: (_: unknown, record: Capability) => <a onClick={() => openEdit(record)}>编辑配置</a> },
+  ]
+
   return (
     <>
-      <Table rowKey="id" columns={columns} dataSource={capabilities} loading={loading} pagination={false} size="middle" />
+      <Title level={5} style={{ marginBottom: 12 }}>系统能力</Title>
+      <Table rowKey="id" columns={systemColumns} dataSource={systemCaps} loading={loading} pagination={false} size="middle" />
+
+      {pipelineCaps.length > 0 && (
+        <>
+          <Title level={5} style={{ marginTop: 24, marginBottom: 12 }}>流水线能力</Title>
+          <Table rowKey="id" columns={pipelineColumns} dataSource={pipelineCaps} loading={loading} pagination={false} size="middle" />
+        </>
+      )}
 
       <Modal
         title={editingCap ? `配置能力：${editingCap.displayName}` : ''}

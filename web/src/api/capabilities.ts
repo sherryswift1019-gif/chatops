@@ -35,5 +35,17 @@ export const getProductLineCapabilities = (plId: number) =>
 export const setProductLineCapabilities = (plId: number, caps: Array<{ capabilityKey: string; envName: string; enabled: boolean; allowedRoles: string[] }>) =>
   client.put<ProductLineCapability[]>(`/product-lines/${plId}/capabilities`, caps).then(r => r.data)
 
-export const getPipelineCapabilities = () =>
-  client.get<Capability[]>('/capabilities/pipeline').then(r => r.data)
+export interface StageOperation {
+  id: number
+  key: string
+  displayName: string
+  description: string
+  category: string
+  toolNames: string[]
+  paramSchema: Record<string, unknown>
+  playbook: unknown[]
+  createdAt: string
+}
+
+export const getStageOperations = () =>
+  client.get<StageOperation[]>('/stage-operations').then(r => r.data)
