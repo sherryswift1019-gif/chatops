@@ -11,22 +11,43 @@ import { executeHealthCheck } from './stages/health-check.js'
 import { executeTest } from './stages/test.js'
 import { executeCustom } from './stages/custom.js'
 import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, CleanupParams, DownloadParams, InstallParams, HealthCheckParams, TestParams, CustomParams } from './types.js'
+import { getStageCapabilityKey } from './types.js'
 import type { StageResult } from '../db/repositories/test-runs.js'
 
 const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
 async function executeStage(stage: StageDefinition, servers: ServerInfo[], ctx: StageContext): Promise<StageExecutionResult> {
   const params = stage.params as unknown
-  switch (stage.type) {
-    case 'cleanup': return executeCleanup(params as CleanupParams, servers, ctx)
-    case 'download': return executeDownload(params as DownloadParams, servers, ctx)
-    case 'install': return executeInstall(params as InstallParams, servers, ctx)
-    case 'health_check': return executeHealthCheck(params as HealthCheckParams, servers, ctx)
-    case 'test': return executeTest(params as TestParams, servers, ctx)
-    case 'custom': return executeCustom(params as CustomParams, servers, ctx)
-    case 'report': return { status: 'success', output: 'Report generated at pipeline completion' }
-    default: return { status: 'failed', output: `Unknown stage type: ${stage.type}`, error: 'unsupported' }
+  const capKey = getStageCapabilityKey(stage)
+  // Map capabilityKey to executor (supports both new capabilityKey and legacy type)
+  const EXECUTOR_MAP: Record<string, () => Promise<StageExecutionResult>> = {
+    env_cleanup: () => executeCleanup(params as CleanupParams, servers, ctx),
+    env_init: () => executeCleanup(params as CleanupParams, servers, ctx),
+    deploy: () => {
+      const p = params as Record<string, unknown>
+      if (p.deployType === 'container') return executeCustom({ command: p.commands as string ?? '' } as CustomParams, servers, ctx)
+      // package deploy: download then install
+      if (p.packageUrl) {
+        return executeDownload({ sourceUrl: p.packageUrl as string, destPath: p.downloadDir as string ?? '/tmp', checksum: p.checksum as string, extract: p.extract as boolean ?? true } as DownloadParams, servers, ctx)
+      }
+      return executeCustom({ command: p.commands as string ?? '' } as CustomParams, servers, ctx)
+    },
+    health_check: () => executeHealthCheck(params as HealthCheckParams, servers, ctx),
+    auto_test: () => executeTest(params as TestParams, servers, ctx),
+    custom_script: () => executeCustom({ command: (params as Record<string, unknown>).commands as string ?? (params as Record<string, unknown>).script as string ?? '' } as CustomParams, servers, ctx),
+    report_gen: () => Promise.resolve({ status: 'success' as const, output: 'Report generated at pipeline completion' }),
+    log_collect: () => executeCustom({ command: '' } as CustomParams, servers, ctx),
+    // Legacy type mappings
+    cleanup: () => executeCleanup(params as CleanupParams, servers, ctx),
+    download: () => executeDownload(params as DownloadParams, servers, ctx),
+    install: () => executeInstall(params as InstallParams, servers, ctx),
+    test: () => executeTest(params as TestParams, servers, ctx),
+    custom: () => executeCustom(params as CustomParams, servers, ctx),
+    report: () => Promise.resolve({ status: 'success' as const, output: 'Report generated at pipeline completion' }),
   }
+  const executor = EXECUTOR_MAP[capKey]
+  if (executor) return executor()
+  return { status: 'failed', output: `Unknown capability: ${capKey}`, error: 'unsupported' }
 }
 
 export async function runPipeline(pipelineId: number, serverAssignment: Record<string, string[]>, triggerType: 'manual' | 'api' | 'scheduled', triggeredBy: string): Promise<number> {
@@ -56,7 +77,7 @@ export async function runPipeline(pipelineId: number, serverAssignment: Record<s
   await bulkSetServerStatus(serverIds, 'in_use')
 
   const stages = pipeline.stages as StageDefinition[]
-  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: s.type ?? 'custom', status: 'pending' as const }))
+  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: getStageCapabilityKey(s), status: 'pending' as const }))
 
   let finalStatus: 'success' | 'failed' = 'success'
   let errorMessage = ''
@@ -64,7 +85,8 @@ export async function runPipeline(pipelineId: number, serverAssignment: Record<s
   try {
     for (let i = 0; i < stages.length; i++) {
       const stage = stages[i]
-      if (stage.type === 'report') continue // Report is generated at the end
+      const capKey = getStageCapabilityKey(stage)
+      if (capKey === 'report' || capKey === 'report_gen') continue // Report is generated at the end
 
       // Determine target servers
       const targetServers = stage.targetRoles.length > 0
