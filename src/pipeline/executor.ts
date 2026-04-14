@@ -56,7 +56,7 @@ export async function runPipeline(pipelineId: number, serverAssignment: Record<s
   await bulkSetServerStatus(serverIds, 'in_use')
 
   const stages = pipeline.stages as StageDefinition[]
-  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: s.type, status: 'pending' as const }))
+  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: s.type ?? 'custom', status: 'pending' as const }))
 
   let finalStatus: 'success' | 'failed' = 'success'
   let errorMessage = ''
