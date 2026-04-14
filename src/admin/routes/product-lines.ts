@@ -3,6 +3,7 @@ import {
   listProductLines, createProductLine, updateProductLine, deleteProductLine,
 } from '../../db/repositories/product-lines.js'
 import { listMembers, addMember, updateMemberRole, removeMember } from '../../db/repositories/product-line-members.js'
+import { getPool } from '../../db/client.js'
 import { listProductLineEnvs, batchSetProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { getProductLineCapabilities, batchSetProductLineCapabilities } from '../../db/repositories/product-line-capabilities.js'
 
@@ -16,6 +17,15 @@ export async function registerProductLineRoutes(app: FastifyInstance): Promise<v
       const { name, displayName, description } = req.body
       if (!name || !displayName) return reply.status(400).send({ error: 'name and displayName are required' })
       const item = await createProductLine({ name, displayName, description: description ?? '' })
+      // Auto-enable all capabilities for the new product line
+      const pool = getPool()
+      await pool.query(
+        `INSERT INTO product_line_capabilities (product_line_id, capability_key, env_name, enabled, allowed_roles)
+         SELECT $1, key, '*', true, '["developer","tester","ops","admin"]'
+         FROM capabilities
+         ON CONFLICT (product_line_id, capability_key, env_name) DO NOTHING`,
+        [item.id]
+      )
       return reply.status(201).send(item)
     }
   )

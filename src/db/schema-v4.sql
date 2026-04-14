@@ -119,12 +119,13 @@ INSERT INTO capabilities (key, display_name, description, category, tool_names, 
 SELECT
   'pipeline_' || id,
   '执行流水线: ' || name,
-  '执行「' || name || '」流水线。使用autotest工具，参数: action=trigger_run, pipelineId=' || id || '。当用户说"执行' || name || '"、"运行' || name || '流水线"、"触发' || name || '测试"时匹配此能力。',
+  '执行「' || name || '」流水线。使用autotest工具，参数: action=trigger_run, pipelineId=' || id || '。当用户说"执行' || name || '"、"运行' || name || '流水线"、"触发' || name || '"时匹配此能力。',
   'testing', '["autotest"]', false, '{}', false
 FROM test_pipelines
 ON CONFLICT (key) DO NOTHING;
 
+-- 8. Auto-enable ALL capabilities for ALL product lines
 INSERT INTO product_line_capabilities (product_line_id, capability_key, env_name, enabled, allowed_roles)
-SELECT product_line_id, 'pipeline_' || id, '*', true, '["developer","tester","ops","admin"]'
-FROM test_pipelines
+SELECT pl.id, c.key, '*', true, '["developer","tester","ops","admin"]'
+FROM product_lines pl CROSS JOIN capabilities c
 ON CONFLICT (product_line_id, capability_key, env_name) DO NOTHING;
