@@ -12,7 +12,32 @@ import { executeTest } from './stages/test.js'
 import { executeCustom } from './stages/custom.js'
 import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, CleanupParams, DownloadParams, InstallParams, HealthCheckParams, TestParams, CustomParams } from './types.js'
 import { getStageCapabilityKey } from './types.js'
+import { sshExecWithLog } from './ssh.js'
 import type { StageResult } from '../db/repositories/test-runs.js'
+
+// Execute new-format stages with { commands?, script? } params
+async function executeNewShellStage(params: Record<string, unknown>, servers: ServerInfo[], ctx: StageContext, label: string): Promise<StageExecutionResult> {
+  const logFile = join(ctx.logDir, `${String(ctx.stageIndex + 1).padStart(2, '0')}-${label}.log`)
+  const commands = (params.commands as string)?.trim() ?? ''
+  const script = (params.script as string)?.trim() ?? ''
+  const cmd = [commands, script].filter(Boolean).join('\n')
+  if (!cmd) return { status: 'success', output: 'No commands to execute' }
+
+  const outputs: string[] = []
+  for (const server of servers) {
+    const sshCfg = { host: server.host, port: server.port, username: server.username, password: server.password }
+    try {
+      const result = await sshExecWithLog(sshCfg, cmd, logFile)
+      if (result.code !== 0) {
+        return { status: 'failed', output: `Failed on ${server.host}`, error: `exit code ${result.code}` }
+      }
+      outputs.push(`${server.host}: ok`)
+    } catch (err) {
+      return { status: 'failed', output: `Error on ${server.host}`, error: String(err) }
+    }
+  }
+  return { status: 'success', output: outputs.join('\n') }
+}
 
 const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
@@ -21,22 +46,23 @@ async function executeStage(stage: StageDefinition, servers: ServerInfo[], ctx: 
   const capKey = getStageCapabilityKey(stage)
   // Map capabilityKey to executor (supports both new capabilityKey and legacy type)
   const EXECUTOR_MAP: Record<string, () => Promise<StageExecutionResult>> = {
-    env_cleanup: () => executeCleanup(params as CleanupParams, servers, ctx),
-    env_init: () => executeCleanup(params as CleanupParams, servers, ctx),
+    env_cleanup: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'cleanup'),
+    env_init: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'init'),
     deploy: () => {
       const p = params as Record<string, unknown>
-      if (p.deployType === 'container') return executeCustom({ command: p.commands as string ?? '' } as CustomParams, servers, ctx)
-      // package deploy: download then install
+      if (p.deployType === 'container') return executeNewShellStage(p, servers, ctx, 'deploy')
       if (p.packageUrl) {
         return executeDownload({ sourceUrl: p.packageUrl as string, destPath: p.downloadDir as string ?? '/tmp', checksum: p.checksum as string, extract: p.extract as boolean ?? true } as DownloadParams, servers, ctx)
       }
-      return executeCustom({ command: p.commands as string ?? '' } as CustomParams, servers, ctx)
+      return executeNewShellStage(p, servers, ctx, 'deploy')
     },
     health_check: () => executeHealthCheck(params as HealthCheckParams, servers, ctx),
     auto_test: () => executeTest(params as TestParams, servers, ctx),
-    custom_script: () => executeCustom({ command: (params as Record<string, unknown>).commands as string ?? (params as Record<string, unknown>).script as string ?? '' } as CustomParams, servers, ctx),
+    custom_script: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'custom'),
     report_gen: () => Promise.resolve({ status: 'success' as const, output: 'Report generated at pipeline completion' }),
-    log_collect: () => executeCustom({ command: '' } as CustomParams, servers, ctx),
+    log_collect: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'log-collect'),
+    rollback: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'rollback'),
+    restart: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'restart'),
     // Legacy type mappings
     cleanup: () => executeCleanup(params as CleanupParams, servers, ctx),
     download: () => executeDownload(params as DownloadParams, servers, ctx),
