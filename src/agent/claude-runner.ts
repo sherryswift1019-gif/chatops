@@ -160,6 +160,10 @@ ${capList}
 
 用户请求: ${prompt}
 
+重要规则:
+1. 如果用户提到"执行"、"运行"、"触发"某个流水线名称，优先匹配 pipeline_ 开头的能力
+2. 流水线名称可能是产品名、项目名等，如"执行Windows流水线"应匹配 pipeline_X 而非 view_deployments
+
 返回 JSON（不要代码块）：
 {"capability":"能力key","project":"项目名(如有)","env":"环境名(如有)","summary":"一句话总结"}
 

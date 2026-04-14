@@ -116,7 +116,11 @@ WHERE param_schema->'properties'->'commands' IS NOT NULL
 
 -- 7. Auto-register existing pipelines as capabilities
 INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, param_schema, is_system)
-SELECT 'pipeline_' || id, '执行流水线: ' || name, '触发测试流水线「' || name || '」', 'testing', '["autotest"]', false, '{}', false
+SELECT
+  'pipeline_' || id,
+  '执行流水线: ' || name,
+  '执行「' || name || '」测试流水线。使用autotest工具，参数: action=trigger_run, pipelineId=' || id || '。当用户说"执行' || name || '"、"运行' || name || '流水线"、"触发' || name || '测试"时匹配此能力。',
+  'testing', '["autotest"]', false, '{}', false
 FROM test_pipelines
 ON CONFLICT (key) DO NOTHING;
 
