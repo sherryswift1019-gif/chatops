@@ -42,16 +42,16 @@ export default function TestRunsPage() {
   const triggerLabels: Record<string, string> = { manual: '手动', api: 'API', scheduled: '定时' }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id', width: 50 },
     { title: '流水线', dataIndex: 'pipelineId', render: (v: number) => pipelines.find(p => p.id === v)?.name ?? `#${v}` },
-    { title: '触发', dataIndex: 'triggerType', width: 80, render: (v: string) => triggerLabels[v] ?? v },
-    { title: '触发人', dataIndex: 'triggeredBy', width: 120, ellipsis: true },
-    { title: '状态', dataIndex: 'status', width: 90, render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
-    { title: '进度', width: 80, render: (_: unknown, r: TestRun) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
-    { title: '开始时间', dataIndex: 'startedAt', width: 170, render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
-    { title: '结束时间', dataIndex: 'finishedAt', width: 170, render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+    { title: '触发', dataIndex: 'triggerType', render: (v: string) => triggerLabels[v] ?? v },
+    { title: '触发人', dataIndex: 'triggeredBy', ellipsis: true },
+    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
+    { title: '进度', render: (_: unknown, r: TestRun) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
+    { title: '开始时间', dataIndex: 'startedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+    { title: '结束时间', dataIndex: 'finishedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
     {
-      title: '操作', width: 120,
+      title: '操作',
       render: (_: unknown, r: TestRun) => (
         <Space>
           <a onClick={() => showDetail(r.id)}>详情</a>

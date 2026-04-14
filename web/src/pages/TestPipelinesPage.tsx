@@ -1,11 +1,12 @@
 import { useEffect, useState, useMemo } from 'react'
 import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, Checkbox, message } from 'antd'
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
 import { getProductLines } from '../api/product-lines'
 import { getPipelineCapabilities } from '../api/capabilities'
 import { getTestServers } from '../api/test-servers'
-import type { TestPipeline, ProductLine } from '../types'
+import { triggerTestRun } from '../api/test-runs'
+import type { TestPipeline, ProductLine, TestServer } from '../types'
 import type { Capability } from '../api/capabilities'
 import StageParamsForm from '../components/StageParamsForm'
 
@@ -28,6 +29,10 @@ export default function TestPipelinesPage() {
   const [editing, setEditing] = useState<TestPipeline | null>(null)
   const [availableRoles, setAvailableRoles] = useState<string[]>([])
   const [serverRolesConfig, setServerRolesConfig] = useState<Record<string, { enabled: boolean; count: number }>>({})
+  const [triggerModalOpen, setTriggerModalOpen] = useState(false)
+  const [triggerPipeline, setTriggerPipeline] = useState<TestPipeline | null>(null)
+  const [triggerServers, setTriggerServers] = useState<TestServer[]>([])
+  const [triggerServerMap, setTriggerServerMap] = useState<Record<string, string[]>>({})
   const [form] = Form.useForm()
 
   useEffect(() => { load(); loadProductLines(); loadCapabilities() }, [])
@@ -141,17 +146,43 @@ export default function TestPipelinesPage() {
     await deleteTestPipeline(id); message.success('删除成功'); await load()
   }
 
+  async function openTrigger(r: TestPipeline) {
+    setTriggerPipeline(r)
+    setTriggerServerMap({})
+    try {
+      const servers = await getTestServers(r.productLineId)
+      setTriggerServers(servers)
+    } catch { setTriggerServers([]) }
+    setTriggerModalOpen(true)
+  }
+
+  async function handleTrigger() {
+    if (!triggerPipeline) return
+    const roles = Object.keys(triggerPipeline.serverRoles ?? {})
+    for (const role of roles) {
+      if (!triggerServerMap[role]?.length) {
+        message.warning(`请为角色「${role}」选择服务器`); return
+      }
+    }
+    try {
+      const res = await triggerTestRun({ pipelineId: triggerPipeline.id, servers: triggerServerMap, triggeredBy: 'manual' })
+      message.success(`流水线已触发，执行 ID: ${res.runId}`)
+      setTriggerModalOpen(false)
+    } catch { message.error('触发失败') }
+  }
+
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id', width: 50 },
     { title: '名称', dataIndex: 'name' },
-    { title: '产线', dataIndex: 'productLineId', width: 100, render: (v: number) => productLines.find(p => p.id === v)?.displayName ?? v },
-    { title: '阶段数', width: 80, render: (_: unknown, r: TestPipeline) => (r.stages as any[]).length },
-    { title: '定时', dataIndex: 'schedule', width: 120, render: (v: string) => v || '-' },
-    { title: '状态', dataIndex: 'enabled', width: 80, render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '禁用'}</Tag> },
+    { title: '产线', dataIndex: 'productLineId', render: (v: number) => productLines.find(p => p.id === v)?.displayName ?? v },
+    { title: '阶段数', render: (_: unknown, r: TestPipeline) => (r.stages as any[]).length },
+    { title: '定时', dataIndex: 'schedule', render: (v: string) => v || '-' },
+    { title: '状态', dataIndex: 'enabled', render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '禁用'}</Tag> },
     {
-      title: '操作', width: 150,
+      title: '操作',
       render: (_: unknown, r: TestPipeline) => (
         <Space>
+          <a onClick={() => openTrigger(r)}><PlayCircleOutlined /> 执行</a>
           <a onClick={() => openEdit(r)}>编辑</a>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}><a style={{ color: 'red' }}>删除</a></Popconfirm>
         </Space>
@@ -236,6 +267,24 @@ export default function TestPipelinesPage() {
             )}
           </Form.List>
         </Form>
+      </Modal>
+      <Modal title={`触发执行: ${triggerPipeline?.name ?? ''}`} open={triggerModalOpen} onOk={handleTrigger} onCancel={() => setTriggerModalOpen(false)} destroyOnClose width={500}>
+        {triggerPipeline && Object.entries(triggerPipeline.serverRoles ?? {}).map(([role, cfg]) => (
+          <div key={role} style={{ marginBottom: 12 }}>
+            <div style={{ marginBottom: 4, fontWeight: 500 }}>{role} <span style={{ fontWeight: 'normal', color: '#999' }}>（需要 {(cfg as any).count} 台）</span></div>
+            <Select
+              mode="multiple"
+              value={triggerServerMap[role] ?? []}
+              style={{ width: '100%' }}
+              placeholder={`选择 ${role} 服务器`}
+              onChange={(hosts: string[]) => setTriggerServerMap(prev => ({ ...prev, [role]: hosts }))}
+              options={triggerServers.filter(s => s.role === role || !s.role).map(s => ({ value: s.host, label: `${s.name} (${s.host})` }))}
+            />
+          </div>
+        ))}
+        {triggerPipeline && Object.keys(triggerPipeline.serverRoles ?? {}).length === 0 && (
+          <div style={{ color: '#999' }}>此流水线未配置服务器角色</div>
+        )}
       </Modal>
     </Card>
   )
