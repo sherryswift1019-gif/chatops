@@ -8,6 +8,7 @@ import { registerDingTalkUserRoutes } from './routes/dingtalk-users.js'
 import { registerToolPermissionRoutes } from './routes/tool-permissions.js'
 import { registerCapabilityRoutes } from './routes/capabilities.js'
 import { registerPipelineToolRoutes } from './routes/pipeline-tools.js'
+import { registerAiRoutes } from './routes/ai.js'
 import { registerTestServerRoutes } from './routes/test-servers.js'
 import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
 import { registerTestRunRoutes } from './routes/test-runs.js'
@@ -25,4 +26,5 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerTestServerRoutes(app)
   await registerTestPipelineRoutes(app)
   await registerTestRunRoutes(app)
+  await registerAiRoutes(app)
 }

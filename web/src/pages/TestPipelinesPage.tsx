@@ -245,6 +245,7 @@ function StageParamsFormWrapper({ stageIndex, form, capabilityMap }: {
   stageIndex: number; form: any; capabilityMap: Map<string, Capability>
 }) {
   const capabilityKey = Form.useWatch(['stages', stageIndex, 'capabilityKey'], form)
+  const targetRoles = Form.useWatch(['stages', stageIndex, 'targetRoles'], form) as string[] | undefined
   const capability = capabilityKey ? capabilityMap.get(capabilityKey) : null
   if (!capability?.paramSchema || !Object.keys(capability.paramSchema).length) return null
   return (
@@ -252,7 +253,8 @@ function StageParamsFormWrapper({ stageIndex, form, capabilityMap }: {
       <div style={{ fontSize: 12, fontWeight: 500, color: '#fa8c16', marginBottom: 10 }}>
         {capability.displayName} 能力参数
       </div>
-      <StageParamsForm paramSchema={capability.paramSchema} parentFieldName={stageIndex} form={form} />
+      <StageParamsForm paramSchema={capability.paramSchema} parentFieldName={stageIndex} form={form}
+        capabilityName={capability.displayName} targetRoles={targetRoles ?? []} />
     </div>
   )
 }

@@ -108,3 +108,8 @@ WHERE key IN ('view_deployments','view_images','view_logs','view_commits','manag
 
 -- 5. Add trigger_params to test_pipelines
 ALTER TABLE test_pipelines ADD COLUMN IF NOT EXISTS trigger_params JSONB DEFAULT '{}';
+
+-- 6. Add x-ai-assist to commands fields for AI command generation
+UPDATE capabilities SET param_schema = jsonb_set(param_schema, '{properties,commands,x-ai-assist}', 'true')
+WHERE param_schema->'properties'->'commands' IS NOT NULL
+  AND key IN ('env_init','env_cleanup','deploy','rollback','restart','custom_script');
