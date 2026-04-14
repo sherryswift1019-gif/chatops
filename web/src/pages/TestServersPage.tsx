@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import { Card, Table, Button, Modal, Form, Input, InputNumber, Select, Popconfirm, Space, Tag, message } from 'antd'
 import { PlusOutlined, ApiOutlined } from '@ant-design/icons'
 import { getTestServers, createTestServer, updateTestServer, deleteTestServer, testServerConnection } from '../api/test-servers'
-import { getProductLines } from '../api/product-lines'
-import type { TestServer, ProductLine } from '../types'
+import { getProductLines, getProductLineEnvs } from '../api/product-lines'
+import { getEnvironments } from '../api/environments'
+import type { TestServer, ProductLine, Environment } from '../types'
 
 export default function TestServersPage() {
   const [data, setData] = useState<TestServer[]>([])
   const [productLines, setProductLines] = useState<ProductLine[]>([])
+  const [serverEnvMap, setServerEnvMap] = useState<Map<number, string[]>>(new Map())
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<TestServer | null>(null)
@@ -20,7 +22,28 @@ export default function TestServersPage() {
     try { setData(await getTestServers()) } finally { setLoading(false) }
   }
   async function loadProductLines() {
-    try { setProductLines(await getProductLines()) } catch { /* */ }
+    try {
+      const [pls, envs] = await Promise.all([getProductLines(), getEnvironments()])
+      setProductLines(pls)
+      // Build reverse map: serverId → [env labels]
+      const envNameMap = new Map<number, string>(envs.map(e => [e.id, e.displayName]))
+      const plNameMap = new Map<number, string>(pls.map(p => [p.id, p.displayName]))
+      const map = new Map<number, string[]>()
+      await Promise.all(pls.map(async pl => {
+        const plEnvs = await getProductLineEnvs(pl.id)
+        for (const pe of plEnvs) {
+          if (pe.runtime !== 'docker' || !pe.connectionConfig) continue
+          const cfg = pe.connectionConfig as Record<string, unknown>
+          const ids = (cfg.serverIds as number[]) ?? []
+          const label = `${plNameMap.get(pl.id) ?? pl.id} / ${envNameMap.get(pe.envId) ?? pe.envId}`
+          for (const sid of ids) {
+            if (!map.has(sid)) map.set(sid, [])
+            map.get(sid)!.push(label)
+          }
+        }
+      }))
+      setServerEnvMap(map)
+    } catch { /* */ }
   }
 
   function openCreate() { setEditing(null); form.resetFields(); setModalOpen(true) }
@@ -63,6 +86,14 @@ export default function TestServersPage() {
     { title: '角色', dataIndex: 'role', width: 100, render: (v: string) => v ? <Tag>{v}</Tag> : '-' },
     { title: '状态', dataIndex: 'status', width: 90, render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
     { title: '产线', dataIndex: 'productLineId', width: 100, render: (v: number) => productLines.find(p => p.id === v)?.displayName ?? v },
+    {
+      title: '关联环境', key: 'envs', width: 180,
+      render: (_: unknown, r: TestServer) => {
+        const envLabels = serverEnvMap.get(r.id)
+        if (!envLabels?.length) return <span style={{ color: '#999' }}>-</span>
+        return envLabels.map((label, i) => <Tag key={i} color="blue">{label}</Tag>)
+      },
+    },
     {
       title: '操作', width: 200,
       render: (_: unknown, r: TestServer) => (
