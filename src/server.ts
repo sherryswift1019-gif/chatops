@@ -12,7 +12,7 @@ import { ApprovalGate } from './approval/gate.js'
 import { ClaudeRunner } from './agent/claude-runner.js'
 import { setApprovalGateHandler } from './agent/tools/approval.js'
 import { adminPlugin } from './admin/index.js'
-import { getProductLineByGroupId } from './db/repositories/product-lines.js'
+import { getMembershipsByUserId } from './db/repositories/product-line-members.js'
 import type { IMAdapter } from './adapters/im/types.js'
 import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
@@ -27,10 +27,12 @@ import './agent/tools/approval.js'
 import './agent/tools/role.js'
 import './agent/tools/autotest.js'
 
-async function resolveProductLineId(groupId: string): Promise<number | null> {
+async function resolveProductLineId(userId: string): Promise<{ productLineId: number; role: string } | null> {
   try {
-    const pl = await getProductLineByGroupId(groupId)
-    return pl?.id ?? null
+    const memberships = await getMembershipsByUserId(userId)
+    if (memberships.length === 0) return null
+    // Use the first product line membership (user's primary product line)
+    return { productLineId: memberships[0].productLineId, role: memberships[0].role }
   } catch { return null }
 }
 
@@ -88,14 +90,17 @@ async function main(): Promise<void> {
         { initiatorId: msg.userId, intent: msg.text },
         async (task) => {
           const context = await sessionManager.buildTaskContext(msg, task.id)
-          const productLineId = await resolveProductLineId(msg.groupId)
+          const membership = await resolveProductLineId(msg.userId)
+          if (membership) {
+            context.initiatorRole = membership.role as any
+          }
           await runner.run({
             prompt: msg.text,
             context,
             groupId: msg.groupId,
             platform: msg.platform,
             adapter,
-            productLineId: productLineId ?? undefined,
+            productLineId: membership?.productLineId,
           })
         }
       )

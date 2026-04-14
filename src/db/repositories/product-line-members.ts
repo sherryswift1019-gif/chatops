@@ -50,3 +50,11 @@ export async function removeMember(id: number): Promise<boolean> {
   const { rowCount } = await pool.query('DELETE FROM product_line_members WHERE id = $1', [id])
   return (rowCount ?? 0) > 0
 }
+
+export async function getMembershipsByUserId(userId: string): Promise<ProductLineMember[]> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    'SELECT * FROM product_line_members WHERE user_id = $1 ORDER BY product_line_id', [userId]
+  )
+  return rows.map(mapRow)
+}

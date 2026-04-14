@@ -114,10 +114,7 @@ UPDATE capabilities SET param_schema = jsonb_set(param_schema, '{properties,comm
 WHERE param_schema->'properties'->'commands' IS NOT NULL
   AND key IN ('env_init','env_cleanup','deploy','rollback','restart','custom_script');
 
--- 7. Add dingtalk_group_id to product_lines for group-to-productline mapping
-ALTER TABLE product_lines ADD COLUMN IF NOT EXISTS dingtalk_group_id TEXT DEFAULT '';
-
--- 8. Auto-register existing pipelines as capabilities
+-- 7. Auto-register existing pipelines as capabilities
 INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, param_schema, is_system)
 SELECT 'pipeline_' || id, '执行流水线: ' || name, '触发测试流水线「' || name || '」', 'testing', '["autotest"]', false, '{}', false
 FROM test_pipelines
