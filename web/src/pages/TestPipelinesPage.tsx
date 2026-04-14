@@ -1,9 +1,10 @@
 import { useEffect, useState, useMemo } from 'react'
-import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, message } from 'antd'
+import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, Checkbox, message } from 'antd'
 import { PlusOutlined, DeleteOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
 import { getProductLines } from '../api/product-lines'
 import { getPipelineCapabilities } from '../api/capabilities'
+import { getTestServers } from '../api/test-servers'
 import type { TestPipeline, ProductLine } from '../types'
 import type { Capability } from '../api/capabilities'
 import StageParamsForm from '../components/StageParamsForm'
@@ -25,6 +26,8 @@ export default function TestPipelinesPage() {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<TestPipeline | null>(null)
+  const [availableRoles, setAvailableRoles] = useState<string[]>([])
+  const [serverRolesConfig, setServerRolesConfig] = useState<Record<string, { enabled: boolean; count: number }>>({})
   const [form] = Form.useForm()
 
   useEffect(() => { load(); loadProductLines(); loadCapabilities() }, [])
@@ -38,6 +41,14 @@ export default function TestPipelinesPage() {
   }
   async function loadCapabilities() {
     try { setCapabilities(await getPipelineCapabilities()) } catch { /* */ }
+  }
+
+  async function loadServerRoles(productLineId: number) {
+    try {
+      const servers = await getTestServers(productLineId)
+      const roles = [...new Set(servers.map(s => s.role).filter(Boolean))]
+      setAvailableRoles(roles)
+    } catch { setAvailableRoles([]) }
   }
 
   const capabilityMap = useMemo(() => {
@@ -61,6 +72,8 @@ export default function TestPipelinesPage() {
 
   function openCreate() {
     setEditing(null); form.resetFields()
+    setServerRolesConfig({})
+    setAvailableRoles([])
     form.setFieldsValue({
       enabled: true,
       stages: [{
@@ -74,6 +87,13 @@ export default function TestPipelinesPage() {
 
   function openEdit(r: TestPipeline) {
     setEditing(r)
+    // Populate serverRolesConfig from existing serverRoles
+    const rolesConfig: Record<string, { enabled: boolean; count: number }> = {}
+    for (const [role, cfg] of Object.entries(r.serverRoles ?? {})) {
+      rolesConfig[role] = { enabled: true, count: (cfg as any).count ?? 1 }
+    }
+    setServerRolesConfig(rolesConfig)
+    loadServerRoles(r.productLineId)
     const stages = (r.stages as any[]).map((s: any) => ({
       ...s,
       capabilityKey: s.capabilityKey || LEGACY_TYPE_MAP[s.type] || s.type,
@@ -81,15 +101,21 @@ export default function TestPipelinesPage() {
       parallel: s.parallel ?? false,
       params: s.params ?? {},
     }))
-    form.setFieldsValue({ ...r, stages, serverRolesJson: JSON.stringify(r.serverRoles, null, 2) })
+    form.setFieldsValue({ ...r, stages })
     setModalOpen(true)
   }
 
   async function handleSubmit() {
     const values = await form.validateFields()
+    const serverRoles: Record<string, { count: number }> = {}
+    for (const [role, cfg] of Object.entries(serverRolesConfig)) {
+      if (cfg.enabled && cfg.count > 0) {
+        serverRoles[role] = { count: cfg.count }
+      }
+    }
     const payload = {
       ...values,
-      serverRoles: values.serverRolesJson ? JSON.parse(values.serverRolesJson) : {},
+      serverRoles,
       stages: values.stages.map((s: any) => ({
         name: s.name,
         capabilityKey: s.capabilityKey,
@@ -101,7 +127,6 @@ export default function TestPipelinesPage() {
         onFailure: s.onFailure ?? 'stop',
       })),
     }
-    delete payload.serverRolesJson
     if (editing) {
       await updateTestPipeline(editing.id, payload)
       message.success('更新成功')
@@ -140,7 +165,8 @@ export default function TestPipelinesPage() {
       <Modal title={editing ? '编辑流水线' : '新增流水线'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} destroyOnClose width={900}>
         <Form form={form} layout="vertical">
           <Form.Item name="productLineId" label="所属产线" rules={[{ required: true }]}>
-            <Select options={productLines.map(p => ({ value: p.id, label: p.displayName }))} placeholder="选择产线" />
+            <Select options={productLines.map(p => ({ value: p.id, label: p.displayName }))} placeholder="选择产线"
+              onChange={(v: number) => loadServerRoles(v)} />
           </Form.Item>
           <Space style={{ display: 'flex' }}>
             <Form.Item name="name" label="名称" rules={[{ required: true }]} style={{ flex: 1 }}><Input placeholder="如: 回归测试" /></Form.Item>
@@ -148,9 +174,24 @@ export default function TestPipelinesPage() {
             <Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item>
           </Space>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
-          <Form.Item name="serverRolesJson" label="服务器角色定义 (JSON)" rules={[{ required: true }]}>
-            <Input.TextArea rows={3} placeholder='{"db": {"count": 1}, "app": {"count": 1}}' />
-          </Form.Item>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>服务器角色配置 {availableRoles.length === 0 && <span style={{ fontWeight: 'normal', color: '#999', fontSize: 12 }}>（请先选择产线）</span>}</div>
+            {availableRoles.map(role => {
+              const cfg = serverRolesConfig[role] ?? { enabled: false, count: 1 }
+              return (
+                <div key={role} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
+                  <Checkbox checked={cfg.enabled} onChange={e => setServerRolesConfig(prev => ({
+                    ...prev, [role]: { ...prev[role], enabled: e.target.checked, count: prev[role]?.count ?? 1 }
+                  }))}>{role}</Checkbox>
+                  <InputNumber size="small" min={1} max={10} value={cfg.count} disabled={!cfg.enabled}
+                    onChange={v => setServerRolesConfig(prev => ({
+                      ...prev, [role]: { ...prev[role], count: v ?? 1 }
+                    }))} style={{ width: 70 }} />
+                  <span style={{ color: '#999', fontSize: 12 }}>台</span>
+                </div>
+              )
+            })}
+          </div>
 
           <div style={{ marginBottom: 8, fontWeight: 500 }}>阶段配置</div>
           <Form.List name="stages">
