@@ -16,5 +16,8 @@ await pool.query(schemaV2)
 const schemaV3 = readFileSync(join(__dirname, 'schema-v3.sql'), 'utf8')
 await pool.query(schemaV3)
 
+const schemaV4 = readFileSync(join(__dirname, 'schema-v4.sql'), 'utf8')
+await pool.query(schemaV4)
+
 await pool.end()
-console.log('✅ Database schema applied (v1 + v2 + v3)')
+console.log('✅ Database schema applied (v1 + v2 + v3 + v4)')
