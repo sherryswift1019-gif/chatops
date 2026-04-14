@@ -4,8 +4,14 @@ import { PlusOutlined } from '@ant-design/icons'
 import { getCapabilities, createCapability, updateCapability } from '../api/capabilities'
 import type { Capability } from '../api/capabilities'
 
-const categoryColors: Record<string, string> = { query: 'blue', action: 'orange', admin: 'red' }
-const categoryLabels: Record<string, string> = { query: '查询', action: '操作', admin: '管理' }
+const categoryColors: Record<string, string> = {
+  query: 'blue', action: 'orange', admin: 'red',
+  env_prep: 'cyan', verify: 'green', testing: 'purple', result: 'magenta',
+}
+const categoryLabels: Record<string, string> = {
+  query: '查询', action: '操作', admin: '管理',
+  env_prep: '环境准备', verify: '验证', testing: '测试', result: '结果处理',
+}
 
 export default function CapabilitiesPage() {
   const [data, setData] = useState<Capability[]>([])
@@ -59,6 +65,8 @@ export default function CapabilitiesPage() {
       title: '分类', dataIndex: 'category', width: 80,
       render: (v: string) => <Tag color={categoryColors[v]}>{categoryLabels[v] ?? v}</Tag>,
     },
+    { title: '类型', dataIndex: 'isSystem', width: 80,
+      render: (v: boolean) => <Tag color={v ? 'default' : 'blue'}>{v ? '系统' : '自定义'}</Tag> },
     {
       title: '关联工具', dataIndex: 'toolNames', width: 220,
       render: (names: string[]) => (
@@ -107,6 +115,10 @@ export default function CapabilitiesPage() {
               <Select.Option value="query">查询</Select.Option>
               <Select.Option value="action">操作</Select.Option>
               <Select.Option value="admin">管理</Select.Option>
+              <Select.Option value="env_prep">环境准备</Select.Option>
+              <Select.Option value="verify">验证</Select.Option>
+              <Select.Option value="testing">测试</Select.Option>
+              <Select.Option value="result">结果处理</Select.Option>
             </Select>
           </Form.Item>
           <Form.Item name="toolNames" label="关联工具 (逗号分隔)" getValueFromEvent={(e) => e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean)} getValueProps={(v) => ({ value: Array.isArray(v) ? v.join(', ') : v })}>
