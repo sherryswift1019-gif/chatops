@@ -79,15 +79,15 @@ export default function TestServersPage() {
   const statusLabels: Record<string, string> = { idle: '空闲', in_use: '使用中', offline: '离线' }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id', width: 50 },
     { title: '名称', dataIndex: 'name' },
     { title: '地址', render: (_: unknown, r: TestServer) => `${r.host}:${r.port}` },
-    { title: '用户', dataIndex: 'username', width: 100 },
-    { title: '角色', dataIndex: 'role', width: 100, render: (v: string) => v ? <Tag>{v}</Tag> : '-' },
-    { title: '状态', dataIndex: 'status', width: 90, render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
-    { title: '产线', dataIndex: 'productLineId', width: 100, render: (v: number) => productLines.find(p => p.id === v)?.displayName ?? v },
+    { title: '用户', dataIndex: 'username' },
+    { title: '角色', dataIndex: 'role', render: (v: string) => v ? <Tag>{v}</Tag> : '-' },
+    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
+    { title: '产线', dataIndex: 'productLineId', render: (v: number) => productLines.find(p => p.id === v)?.displayName ?? v },
     {
-      title: '关联环境', key: 'envs', width: 180,
+      title: '关联环境', key: 'envs',
       render: (_: unknown, r: TestServer) => {
         const envLabels = serverEnvMap.get(r.id)
         if (!envLabels?.length) return <span style={{ color: '#999' }}>-</span>
@@ -95,7 +95,7 @@ export default function TestServersPage() {
       },
     },
     {
-      title: '操作', width: 200,
+      title: '操作',
       render: (_: unknown, r: TestServer) => (
         <Space>
           <a onClick={() => handleTestConnection(r.id)}><ApiOutlined /> 测试</a>
