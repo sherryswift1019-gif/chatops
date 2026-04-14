@@ -211,7 +211,8 @@ export default function TestPipelinesPage() {
                         />
                       </Form.Item>
                       <Form.Item {...rest} name={[name, 'targetRoles']} label="目标角色">
-                        <Select mode="tags" style={{ width: 160 }} placeholder="输入角色名" />
+                        <Select mode="multiple" style={{ width: 160 }} placeholder="选择角色"
+                          options={Object.entries(serverRolesConfig).filter(([, c]) => c.enabled).map(([r]) => ({ value: r, label: r }))} />
                       </Form.Item>
                       <Form.Item {...rest} name={[name, 'timeoutSeconds']} label="超时(秒)"><InputNumber min={10} style={{ width: 100 }} /></Form.Item>
                       <Form.Item {...rest} name={[name, 'retryCount']} label="重试次数"><InputNumber min={0} max={5} style={{ width: 80 }} /></Form.Item>
