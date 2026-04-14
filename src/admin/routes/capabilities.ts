@@ -1,9 +1,13 @@
 import type { FastifyInstance } from 'fastify'
-import { listCapabilities, createCapability, updateCapability } from '../../db/repositories/capabilities.js'
+import { listCapabilities, listPipelineCapabilities, createCapability, updateCapability } from '../../db/repositories/capabilities.js'
 
 export async function registerCapabilityRoutes(app: FastifyInstance): Promise<void> {
   app.get('/capabilities', async (_req, reply) => {
     return reply.send(await listCapabilities())
+  })
+
+  app.get('/capabilities/pipeline', async (_req, reply) => {
+    return reply.send(await listPipelineCapabilities())
   })
 
   app.post<{ Body: { key: string; displayName: string; description?: string; category?: string; toolNames?: string[]; needsApproval?: boolean } }>(
