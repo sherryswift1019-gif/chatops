@@ -2,13 +2,25 @@ export type StageType = 'cleanup' | 'download' | 'install' | 'health_check' | 't
 
 export interface StageDefinition {
   name: string
-  type: StageType
+  type?: StageType
+  capabilityKey?: string
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
   retryCount: number
   params: Record<string, unknown>
   onFailure: 'stop' | 'continue'
+}
+
+const LEGACY_TYPE_MAP: Record<string, string> = {
+  cleanup: 'env_cleanup', download: 'deploy', install: 'deploy',
+  health_check: 'health_check', test: 'auto_test',
+  report: 'report_gen', custom: 'custom_script',
+}
+
+export function getStageCapabilityKey(stage: StageDefinition): string {
+  if (stage.capabilityKey) return stage.capabilityKey
+  return LEGACY_TYPE_MAP[stage.type ?? ''] ?? stage.type ?? 'custom_script'
 }
 
 export interface CleanupParams {
