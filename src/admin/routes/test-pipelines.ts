@@ -6,7 +6,7 @@ import { getPool } from '../../db/client.js'
 async function syncPipelineCapability(pipelineId: number, name: string, productLineId: number): Promise<void> {
   const pool = getPool()
   const key = `pipeline_${pipelineId}`
-  const desc = `执行「${name}」测试流水线。使用autotest工具，参数: action=trigger_run, pipelineId=${pipelineId}。当用户说"执行${name}"、"运行${name}流水线"、"触发${name}测试"时匹配此能力。`
+  const desc = `执行「${name}」流水线。使用autotest工具，参数: action=trigger_run, pipelineId=${pipelineId}。当用户说"执行${name}"、"运行${name}流水线"、"触发${name}测试"时匹配此能力。`
   await pool.query(
     `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, param_schema, is_system)
      VALUES ($1, $2, $3, 'testing', '["autotest"]', false, '{}', false)

@@ -7,7 +7,7 @@ import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
 const autotestTool: AgentTool = {
   name: 'autotest',
-  description: '自动化测试：查看测试流水线、触发执行、查看执行状态和测试报告。支持完整的环境部署+测试+报告流程。',
+  description: '自动化测试：查看流水线、触发执行、查看执行状态和测试报告。支持完整的环境部署+测试+报告流程。',
   riskLevel: 'high',
   requiredRole: 'tester',
   inputSchema: {
@@ -15,7 +15,7 @@ const autotestTool: AgentTool = {
     properties: {
       action: {
         type: 'string',
-        description: '操作类型: list_pipelines(查看流水线) | list_servers(查看测试服务器) | trigger_run(触发执行) | get_status(查看状态) | get_report(获取报告链接)',
+        description: '操作类型: list_pipelines(查看流水线) | list_servers(查看服务器) | trigger_run(触发执行) | get_status(查看状态) | get_report(获取报告链接)',
         enum: ['list_pipelines', 'list_servers', 'trigger_run', 'get_status', 'get_report'],
       },
       pipelineId: { type: 'number', description: '流水线ID (trigger_run 必填)' },
@@ -38,20 +38,20 @@ const autotestTool: AgentTool = {
     switch (action) {
       case 'list_pipelines': {
         const pipelines = await listTestPipelines(productLineId)
-        if (pipelines.length === 0) return { success: true, output: '当前没有配置测试流水线。' }
+        if (pipelines.length === 0) return { success: true, output: '当前没有配置流水线。' }
         const list = pipelines.map(p =>
           `- [${p.id}] ${p.name}${p.description ? ` — ${p.description}` : ''}${p.schedule ? ` (定时: ${p.schedule})` : ''}${p.enabled ? '' : ' [已禁用]'}`
         ).join('\n')
-        return { success: true, output: `测试流水线列表:\n${list}` }
+        return { success: true, output: `流水线列表:\n${list}` }
       }
 
       case 'list_servers': {
         const svrs = await listTestServers(productLineId)
-        if (svrs.length === 0) return { success: true, output: '当前没有配置测试服务器。' }
+        if (svrs.length === 0) return { success: true, output: '当前没有配置服务器。' }
         const list = svrs.map(s =>
           `- [${s.id}] ${s.name} (${s.host}:${s.port}) 角色:${s.role} 状态:${s.status}`
         ).join('\n')
-        return { success: true, output: `测试服务器列表:\n${list}` }
+        return { success: true, output: `服务器列表:\n${list}` }
       }
 
       case 'trigger_run': {
@@ -78,7 +78,7 @@ const autotestTool: AgentTool = {
             console.log(`[autotest] Pipeline ${pipelineId} run #${result.runId} completed: ${result.status} in ${result.durationMs}ms`)
           })
           const assignInfo = Object.entries(serverMap).map(([role, hosts]) => `  ${role}: ${(hosts as string[]).join(', ')}`).join('\n')
-          return { success: true, output: `测试流水线已启动，执行ID: ${id}\n服务器分配:\n${assignInfo}\n\n流水线在后台执行中，使用 get_status 查看进度。` }
+          return { success: true, output: `流水线已启动，执行ID: ${id}\n服务器分配:\n${assignInfo}\n\n流水线在后台执行中，使用 get_status 查看进度。` }
         } catch (err) {
           return { success: false, output: `启动失败: ${String(err)}` }
         }

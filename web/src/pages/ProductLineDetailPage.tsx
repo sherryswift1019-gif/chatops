@@ -508,7 +508,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
             mode="multiple"
             value={serverIds}
             style={{ width: '100%' }}
-            placeholder={servers.length > 0 ? '选择服务器' : '请先在测试服务器页面添加服务器'}
+            placeholder={servers.length > 0 ? '选择服务器' : '请先在服务器页面添加服务器'}
             onChange={(ids: number[]) => updateRow(record.envId, {
               connectionConfig: { serverIds: ids },
             })}

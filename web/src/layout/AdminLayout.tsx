@@ -18,9 +18,9 @@ const menuItems = [
   { key: '/dingtalk-users', icon: <TeamOutlined />, label: '钉钉用户' },
   { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
   { key: '/system-config', icon: <SettingOutlined />, label: '系统配置' },
-  { key: '/test-servers', icon: <CloudServerOutlined />, label: '测试服务器' },
-  { key: '/test-pipelines', icon: <ExperimentOutlined />, label: '测试流水线' },
-  { key: '/test-runs', icon: <ExperimentOutlined />, label: '测试执行' },
+  { key: '/test-servers', icon: <CloudServerOutlined />, label: '服务器' },
+  { key: '/test-pipelines', icon: <ExperimentOutlined />, label: '流水线' },
+  { key: '/test-runs', icon: <ExperimentOutlined />, label: '执行记录' },
 ]
 
 export default function AdminLayout() {

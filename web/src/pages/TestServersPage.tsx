@@ -107,7 +107,7 @@ export default function TestServersPage() {
   ]
 
   return (
-    <Card title="测试服务器管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增服务器</Button>}>
+    <Card title="服务器管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增服务器</Button>}>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal title={editing ? '编辑服务器' : '新增服务器'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} destroyOnClose width={600}>
         <Form form={form} layout="vertical">

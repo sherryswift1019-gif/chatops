@@ -191,7 +191,7 @@ export default function TestPipelinesPage() {
   ]
 
   return (
-    <Card title="测试流水线管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增流水线</Button>}>
+    <Card title="流水线管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增流水线</Button>}>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal title={editing ? '编辑流水线' : '新增流水线'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} destroyOnClose width={900}>
         <Form form={form} layout="vertical">

@@ -67,7 +67,7 @@ export default function TestRunsPage() {
 
   return (
     <>
-      <Card title="测试执行历史" extra={<Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>}>
+      <Card title="执行记录" extra={<Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>}>
         <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={{ pageSize: 20 }} />
       </Card>
 
