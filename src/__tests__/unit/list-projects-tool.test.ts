@@ -4,28 +4,28 @@ vi.mock('../../db/repositories/projects-repo.js', () => ({
   listProjects: vi.fn(),
 }))
 vi.mock('../../db/repositories/product-lines.js', () => ({
-  listProductLines: vi.fn(),
+  getProductLineById: vi.fn(),
 }))
 
 import { listProjects } from '../../db/repositories/projects-repo.js'
-import { listProductLines } from '../../db/repositories/product-lines.js'
+import { getProductLineById } from '../../db/repositories/product-lines.js'
 import { listProductLineProjectsTool } from '../../agent/tools/list-projects.js'
 import type { TaskContext } from '../../agent/tools/types.js'
 
 const mockListProjects = vi.mocked(listProjects)
-const mockListProductLines = vi.mocked(listProductLines)
+const mockGetProductLineById = vi.mocked(getProductLineById)
 
 function ctx(productLineId: number | null): TaskContext {
   return {
     taskId: 't1', groupId: 'g1', platform: 'dingtalk',
     initiatorId: 'u1', initiatorRole: 'developer',
     productLineId: productLineId ?? undefined,
-  } as unknown as TaskContext
+  } as TaskContext
 }
 
 beforeEach(() => {
   mockListProjects.mockReset()
-  mockListProductLines.mockReset()
+  mockGetProductLineById.mockReset()
 })
 
 describe('list_product_line_projects tool', () => {
@@ -37,9 +37,9 @@ describe('list_product_line_projects tool', () => {
   })
 
   it('returns "no modules" message when product line has no projects', async () => {
-    mockListProductLines.mockResolvedValue([
+    mockGetProductLineById.mockResolvedValue(
       { id: 1, name: 'PAM', displayName: 'PAM平台', description: '', createdAt: new Date(), updatedAt: new Date() },
-    ])
+    )
     mockListProjects.mockResolvedValue([])
     const res = await listProductLineProjectsTool.execute({}, ctx(1))
     expect(res.success).toBe(true)
@@ -48,9 +48,9 @@ describe('list_product_line_projects tool', () => {
   })
 
   it('renders markdown list when projects exist', async () => {
-    mockListProductLines.mockResolvedValue([
+    mockGetProductLineById.mockResolvedValue(
       { id: 1, name: 'PAM', displayName: 'PAM平台', description: '', createdAt: new Date(), updatedAt: new Date() },
-    ])
+    )
     mockListProjects.mockResolvedValue([
       {
         id: 1, productLineId: 1, name: 'ssh-proxy', displayName: 'SSH 代理',
@@ -81,9 +81,9 @@ describe('list_product_line_projects tool', () => {
   })
 
   it('shows placeholder when owner_name is empty', async () => {
-    mockListProductLines.mockResolvedValue([
+    mockGetProductLineById.mockResolvedValue(
       { id: 1, name: 'PAM', displayName: 'PAM平台', description: '', createdAt: new Date(), updatedAt: new Date() },
-    ])
+    )
     mockListProjects.mockResolvedValue([
       {
         id: 1, productLineId: 1, name: 'orphan', displayName: '孤儿模块',
@@ -99,9 +99,9 @@ describe('list_product_line_projects tool', () => {
   })
 
   it('omits GitLab/Harbor fields when empty', async () => {
-    mockListProductLines.mockResolvedValue([
+    mockGetProductLineById.mockResolvedValue(
       { id: 1, name: 'PAM', displayName: 'PAM平台', description: '', createdAt: new Date(), updatedAt: new Date() },
-    ])
+    )
     mockListProjects.mockResolvedValue([
       {
         id: 1, productLineId: 1, name: 'legacy', displayName: '遗留模块',

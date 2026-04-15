@@ -98,6 +98,7 @@ async function main(): Promise<void> {
           const membership = await resolveProductLineId(msg.userId)
           if (membership) {
             context.initiatorRole = membership.role as any
+            context.productLineId = membership.productLineId
           }
           await runner.run({
             prompt: msg.text,

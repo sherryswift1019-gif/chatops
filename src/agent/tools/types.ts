@@ -7,6 +7,7 @@ export interface TaskContext {
   platform: string
   initiatorId: string
   initiatorRole: Role | null
+  productLineId?: number
 }
 
 export interface ToolResult {

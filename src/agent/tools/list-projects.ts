@@ -1,6 +1,6 @@
 import { registerTool } from './index.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
-import { listProductLines } from '../../db/repositories/product-lines.js'
+import { getProductLineById } from '../../db/repositories/product-lines.js'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
 function renderModule(p: {
@@ -20,16 +20,15 @@ export const listProductLineProjectsTool: AgentTool = {
   riskLevel: 'low',
   inputSchema: { type: 'object', properties: {} },
   async execute(_params: unknown, ctx: TaskContext): Promise<ToolResult> {
-    const productLineId = (ctx as unknown as { productLineId?: number }).productLineId
+    const productLineId = ctx.productLineId
     if (!productLineId) {
       return { success: true, output: '你还没绑定产线，请联系管理员添加你到产线。' }
     }
 
-    const [allLines, projects] = await Promise.all([
-      listProductLines(),
+    const [line, projects] = await Promise.all([
+      getProductLineById(productLineId),
       listProjects(productLineId),
     ])
-    const line = allLines.find(l => l.id === productLineId)
     const lineName = line?.displayName ?? `产线 #${productLineId}`
 
     if (projects.length === 0) {
