@@ -2,6 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ConfigProvider } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import AdminLayout from './layout/AdminLayout'
+import AuthGuard from './components/AuthGuard'
+import LoginPage from './pages/LoginPage'
+import ChangePasswordPage from './pages/ChangePasswordPage'
 import SystemConfigPage from './pages/SystemConfigPage'
 import EnvironmentListPage from './pages/EnvironmentListPage'
 import ProductLineListPage from './pages/ProductLineListPage'
@@ -17,7 +20,9 @@ export default function App() {
     <ConfigProvider locale={zhCN}>
       <BrowserRouter>
         <Routes>
-          <Route element={<AdminLayout />}>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/change-password" element={<AuthGuard><ChangePasswordPage /></AuthGuard>} />
+          <Route element={<AuthGuard><AdminLayout /></AuthGuard>}>
             <Route index element={<Navigate to="/product-lines" replace />} />
             <Route path="/product-lines" element={<ProductLineListPage />} />
             <Route path="/product-lines/:id" element={<ProductLineDetailPage />} />

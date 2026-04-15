@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu } from 'antd'
+import { Layout, Menu, Button, Space } from 'antd'
 import {
   AppstoreOutlined,
   CloudServerOutlined,
@@ -8,7 +8,9 @@ import {
   ThunderboltOutlined,
   SettingOutlined,
   ExperimentOutlined,
+  LogoutOutlined,
 } from '@ant-design/icons'
+import { me, logout, type MeResponse } from '../api/auth'
 
 const { Sider, Content, Header } = Layout
 
@@ -25,8 +27,16 @@ const menuItems = [
 
 export default function AdminLayout() {
   const [collapsed, setCollapsed] = useState(false)
+  const [user, setUser] = useState<MeResponse | null>(null)
   const navigate = useNavigate()
   const location = useLocation()
+
+  useEffect(() => { me().then(setUser).catch(() => {}) }, [])
+
+  const onLogout = async () => {
+    await logout()
+    navigate('/login', { replace: true })
+  }
 
   const selectedKey = location.pathname === '/' ? '/product-lines' : location.pathname.split('/').slice(0, 2).join('/')
 
@@ -39,8 +49,12 @@ export default function AdminLayout() {
         <Menu theme="dark" mode="inline" selectedKeys={[selectedKey]} items={menuItems} onClick={({ key }) => navigate(key)} />
       </Sider>
       <Layout>
-        <Header style={{ background: '#fff', padding: '0 24px', fontSize: 16, fontWeight: 500, borderBottom: '1px solid #f0f0f0' }}>
-          ChatOps 管理控制台
+        <Header style={{ background: '#fff', padding: '0 24px', fontSize: 16, fontWeight: 500, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>ChatOps 管理控制台</span>
+          <Space>
+            {user && <span>{user.username}</span>}
+            <Button type="text" icon={<LogoutOutlined />} onClick={onLogout}>登出</Button>
+          </Space>
         </Header>
         <Content style={{ margin: 24 }}>
           <Outlet />
