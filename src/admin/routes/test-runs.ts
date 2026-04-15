@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { listTestRuns, getTestRunById } from '../../db/repositories/test-runs.js'
+import { getDingTalkUserById, getDingTalkUsersByIds } from '../../db/repositories/dingtalk-users.js'
 import { runPipeline } from '../../pipeline/executor.js'
 import { readFile, stat } from 'fs/promises'
 import { join } from 'path'
@@ -12,14 +13,21 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
   app.get<{ Querystring: { pipeline_id?: string; limit?: string } }>('/test-runs', async (req, reply) => {
     const pipelineId = req.query.pipeline_id ? Number(req.query.pipeline_id) : undefined
     const limit = req.query.limit ? Number(req.query.limit) : 50
-    return reply.send(await listTestRuns(pipelineId, limit))
+    const runs = await listTestRuns(pipelineId, limit)
+    const userIds = [...new Set(runs.map(r => r.triggeredBy).filter(Boolean))]
+    const userMap = await getDingTalkUsersByIds(userIds)
+    return reply.send(runs.map(r => {
+      const u = userMap.get(r.triggeredBy)
+      return { ...r, triggeredByName: u?.name, triggeredByAvatar: u?.avatar }
+    }))
   })
 
   // Get run details
   app.get<{ Params: { id: string } }>('/test-runs/:id', async (req, reply) => {
     const run = await getTestRunById(Number(req.params.id))
     if (!run) return reply.status(404).send({ error: 'not found' })
-    return reply.send(run)
+    const u = await getDingTalkUserById(run.triggeredBy).catch(() => null)
+    return reply.send({ ...run, triggeredByName: u?.name, triggeredByAvatar: u?.avatar })
   })
 
   // Trigger a pipeline run

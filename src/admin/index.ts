@@ -13,6 +13,7 @@ import { registerTestServerRoutes } from './routes/test-servers.js'
 import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
 import { registerTestRunRoutes } from './routes/test-runs.js'
 import { registerStageOperationRoutes } from './routes/stage-operations.js'
+import { registerPipelineVariableRoutes } from './routes/pipeline-variables.js'
 
 export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerSystemConfigRoutes(app)
@@ -28,5 +29,6 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerTestPipelineRoutes(app)
   await registerTestRunRoutes(app)
   await registerStageOperationRoutes(app)
+  await registerPipelineVariableRoutes(app)
   await registerAiRoutes(app)
 }

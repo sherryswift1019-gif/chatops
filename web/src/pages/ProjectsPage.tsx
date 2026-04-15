@@ -123,9 +123,9 @@ export default function ProjectsPage() {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id' },
     {
-      title: '产线', dataIndex: 'productLineId', width: 140,
+      title: '产线', dataIndex: 'productLineId',
       render: (v: number) => {
         const name = productLineMap.get(v)
         return name ? <Tag color="blue">{name}</Tag> : <Tag>ID:{v}</Tag>
@@ -140,7 +140,7 @@ export default function ProjectsPage() {
       render: (v: string, r: Project) => v || r.ownerId,
     },
     {
-      title: '操作', width: 120,
+      title: '操作',
       render: (_: unknown, record: Project) => (
         <Space>
           <a onClick={() => openEdit(record)}>编辑</a>

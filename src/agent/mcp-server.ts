@@ -28,6 +28,7 @@ import './tools/get-logs.js'
 import './tools/deploy.js'
 import './tools/approval.js'
 import './tools/role.js'
+import './tools/autotest.js'
 
 const server = new Server(
   { name: 'chatops-tools', version: '1.0.0' },

@@ -3,37 +3,64 @@ import { join, dirname } from 'path'
 import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import { createTestRun, updateTestRunStage, finishTestRun } from '../db/repositories/test-runs.js'
 import { listTestServers, bulkSetServerStatus } from '../db/repositories/test-servers.js'
+import { getProductLineById } from '../db/repositories/product-lines.js'
 import { generateHtmlReport, generateZipArchive } from './report-generator.js'
-import { executeCleanup } from './stages/cleanup.js'
-import { executeDownload } from './stages/download.js'
-import { executeInstall } from './stages/install.js'
-import { executeHealthCheck } from './stages/health-check.js'
-import { executeTest } from './stages/test.js'
-import { executeCustom } from './stages/custom.js'
-import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, CleanupParams, DownloadParams, InstallParams, HealthCheckParams, TestParams, CustomParams } from './types.js'
-import { getStageOperationKey } from './types.js'
-import { sshExecWithLog, sshExec } from './ssh.js'
+import { resolveVariables, type VariableContext } from './variables.js'
+import { analyzeFailure } from './failure-analyzer.js'
+import { PipelineApprovalManager } from './approval-manager.js'
+import { getStageType } from './types.js'
+import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult } from './types.js'
+import { sshExec } from './ssh.js'
 import { writeFile } from 'fs/promises'
+import { getDingTalkUserById } from '../db/repositories/dingtalk-users.js'
 import type { StageResult } from '../db/repositories/test-runs.js'
 
-// Execute new-format stages with { commands?, script? } params
-// Captures stdout/stderr both to log file and to output for UI display
-async function executeNewShellStage(params: Record<string, unknown>, servers: ServerInfo[], ctx: StageContext, label: string): Promise<StageExecutionResult> {
-  const logFile = join(ctx.logDir, `${String(ctx.stageIndex + 1).padStart(2, '0')}-${label}.log`)
-  const commands = (params.commands as string)?.trim() ?? ''
-  const script = (params.script as string)?.trim() ?? ''
-  const cmd = [commands, script].filter(Boolean).join('\n')
-  if (!cmd) return { status: 'success', output: 'No commands to execute' }
+const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
+async function executeApprovalStage(stage: StageDefinition): Promise<StageExecutionResult> {
+  const approverIds = stage.approverIds ?? []
+  if (approverIds.length === 0) return { status: 'failed', output: '未配置审批人', error: 'no approvers' }
+  const description = stage.approvalDescription ?? stage.name
+  const timeoutMs = (stage.timeoutSeconds ?? 3600) * 1000
+  try {
+    const mgr = PipelineApprovalManager.getInstance()
+    const decision = await mgr.requestApproval(approverIds, description, timeoutMs)
+    if (decision === 'approved') return { status: 'success', output: '审批通过' }
+    if (decision === 'timeout') return { status: 'failed', output: '审批超时', error: 'timeout' }
+    return { status: 'failed', output: '审批被拒绝', error: 'rejected' }
+  } catch (err) {
+    return { status: 'failed', output: `审批流程错误: ${String(err)}`, error: String(err) }
+  }
+}
+
+async function executeStage(stage: StageDefinition, servers: ServerInfo[], ctx: StageContext): Promise<StageExecutionResult> {
+  if (getStageType(stage) === 'approval') {
+    return executeApprovalStage(stage)
+  }
+
+  // script stage — resolve variables per server, then execute via SSH
+  const script = stage.script ?? ''
+  if (!script.trim()) return { status: 'success', output: 'No script to execute' }
+
+  const logFile = join(ctx.logDir, `${String(ctx.stageIndex + 1).padStart(2, '0')}-script.log`)
   const allLogs: string[] = []
   let failed = false
   let failError = ''
 
   for (const server of servers) {
+    const varCtx: VariableContext = {
+      productLine: ctx.productLine ?? { name: '', displayName: '' },
+      pipeline: ctx.pipeline ?? { id: 0, name: '' },
+      run: ctx.run ?? { id: ctx.runId, triggeredBy: '', triggerType: '' },
+      stage: { name: stage.name, index: ctx.stageIndex },
+      server: { host: server.host, port: server.port, username: server.username, name: '', role: server.role },
+      vars: ctx.variables ?? {},
+    }
+    const resolved = resolveVariables(script, varCtx)
     const sshCfg = { host: server.host, port: server.port, username: server.username, password: server.password }
     allLogs.push(`=== ${server.host} ===`)
     try {
-      const result = await sshExec(sshCfg, cmd)
+      const result = await sshExec(sshCfg, resolved)
       if (result.stdout) allLogs.push(`[stdout]\n${result.stdout.trimEnd()}`)
       if (result.stderr) allLogs.push(`[stderr]\n${result.stderr.trimEnd()}`)
       allLogs.push(`[exit code] ${result.code}`)
@@ -48,50 +75,12 @@ async function executeNewShellStage(params: Record<string, unknown>, servers: Se
     }
   }
 
-  // Write full log to file
   await mkdir(dirname(logFile), { recursive: true }).catch(() => {})
   await writeFile(logFile, allLogs.join('\n') + '\n').catch(() => {})
 
   const output = allLogs.join('\n')
   if (failed) return { status: 'failed', output, error: failError }
   return { status: 'success', output }
-}
-
-const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
-
-async function executeStage(stage: StageDefinition, servers: ServerInfo[], ctx: StageContext): Promise<StageExecutionResult> {
-  const params = stage.params as unknown
-  const capKey = getStageOperationKey(stage)
-  // Map capabilityKey to executor (supports both new capabilityKey and legacy type)
-  const EXECUTOR_MAP: Record<string, () => Promise<StageExecutionResult>> = {
-    env_cleanup: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'cleanup'),
-    env_init: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'init'),
-    deploy: () => {
-      const p = params as Record<string, unknown>
-      if (p.deployType === 'container') return executeNewShellStage(p, servers, ctx, 'deploy')
-      if (p.packageUrl) {
-        return executeDownload({ sourceUrl: p.packageUrl as string, destPath: p.downloadDir as string ?? '/tmp', checksum: p.checksum as string, extract: p.extract as boolean ?? true } as DownloadParams, servers, ctx)
-      }
-      return executeNewShellStage(p, servers, ctx, 'deploy')
-    },
-    health_check: () => executeHealthCheck(params as HealthCheckParams, servers, ctx),
-    auto_test: () => executeTest(params as TestParams, servers, ctx),
-    custom_script: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'custom'),
-    report_gen: () => Promise.resolve({ status: 'success' as const, output: 'Report generated at pipeline completion' }),
-    log_collect: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'log-collect'),
-    rollback: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'rollback'),
-    restart: () => executeNewShellStage(params as Record<string, unknown>, servers, ctx, 'restart'),
-    // Legacy type mappings
-    cleanup: () => executeCleanup(params as CleanupParams, servers, ctx),
-    download: () => executeDownload(params as DownloadParams, servers, ctx),
-    install: () => executeInstall(params as InstallParams, servers, ctx),
-    test: () => executeTest(params as TestParams, servers, ctx),
-    custom: () => executeCustom(params as CustomParams, servers, ctx),
-    report: () => Promise.resolve({ status: 'success' as const, output: 'Report generated at pipeline completion' }),
-  }
-  const executor = EXECUTOR_MAP[capKey]
-  if (executor) return executor()
-  return { status: 'failed', output: `Unknown capability: ${capKey}`, error: 'unsupported' }
 }
 
 export interface PipelineRunResult {
@@ -113,6 +102,8 @@ export async function runPipeline(
   const pipelineStartTime = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
   if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)
+
+  const productLine = await getProductLineById(pipeline.productLineId)
 
   // Create run record
   const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment })
@@ -137,7 +128,7 @@ export async function runPipeline(
   await bulkSetServerStatus(serverIds, 'in_use')
 
   const stages = pipeline.stages as StageDefinition[]
-  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: getStageOperationKey(s), status: 'pending' as const }))
+  const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: getStageType(s), status: 'pending' as const }))
 
   let finalStatus: 'success' | 'failed' = 'success'
   let errorMessage = ''
@@ -145,10 +136,35 @@ export async function runPipeline(
   try {
     for (let i = 0; i < stages.length; i++) {
       const stage = stages[i]
-      const capKey = getStageOperationKey(stage)
-      if (capKey === 'report' || capKey === 'report_gen') continue // Report is generated at the end
 
-      // Determine target servers
+      // Approval stages don't need target servers
+      if (getStageType(stage) === 'approval') {
+        const startTime = Date.now()
+        stageResults[i] = { ...stageResults[i], status: 'running', startedAt: new Date().toISOString() }
+        await updateTestRunStage(run.id, i, stageResults)
+
+        const result = await executeApprovalStage(stage)
+        stageResults[i] = {
+          ...stageResults[i], status: result.status, finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - startTime, output: result.output, error: result.error,
+        }
+        await updateTestRunStage(run.id, i, stageResults)
+
+        if (result.status === 'failed') {
+          if (stage.onFailure === 'stop') {
+            finalStatus = 'failed'
+            errorMessage = `Stage "${stage.name}" failed: ${result.error ?? result.output}`
+            for (let j = i + 1; j < stages.length; j++) stageResults[j] = { ...stageResults[j], status: 'skipped' }
+            await updateTestRunStage(run.id, i, stageResults)
+            break
+          }
+          finalStatus = 'failed'
+          errorMessage = `Stage "${stage.name}" failed but continued`
+        }
+        continue
+      }
+
+      // Script stages need target servers
       const targetServers = stage.targetRoles.length > 0
         ? stage.targetRoles.flatMap(role => serverMap[role] ?? [])
         : Object.values(serverMap).flat()
@@ -159,7 +175,6 @@ export async function runPipeline(
         continue
       }
 
-      // Update stage to running
       const startTime = Date.now()
       stageResults[i] = { ...stageResults[i], status: 'running', startedAt: new Date().toISOString() }
       await updateTestRunStage(run.id, i, stageResults)
@@ -167,10 +182,15 @@ export async function runPipeline(
       // Execute with retry
       let result: StageExecutionResult = { status: 'failed', output: 'Not executed' }
       for (let attempt = 0; attempt <= stage.retryCount; attempt++) {
-        const ctx: StageContext = { runId: run.id, stageIndex: i, servers: serverMap, logDir }
+        const ctx: StageContext = {
+          runId: run.id, stageIndex: i, servers: serverMap, logDir,
+          productLine: productLine ? { name: productLine.name, displayName: productLine.displayName } : undefined,
+          pipeline: { id: pipeline.id, name: pipeline.name },
+          run: { id: run.id, triggeredBy, triggerType },
+          variables: pipeline.variables ?? {},
+        }
 
         if (stage.parallel && targetServers.length > 1) {
-          // Parallel execution on all target servers simultaneously
           const promises = targetServers.map(server => executeStage(stage, [server], ctx))
           const results = await Promise.all(promises)
           const failed = results.find(r => r.status === 'failed')
@@ -188,23 +208,23 @@ export async function runPipeline(
 
       const durationMs = Date.now() - startTime
       stageResults[i] = {
-        ...stageResults[i],
-        status: result.status,
-        finishedAt: new Date().toISOString(),
-        durationMs,
-        output: result.output,
-        error: result.error,
+        ...stageResults[i], status: result.status, finishedAt: new Date().toISOString(),
+        durationMs, output: result.output, error: result.error,
       }
       await updateTestRunStage(run.id, i, stageResults)
 
+      // AI failure analysis for script stages
       if (result.status === 'failed') {
+        try {
+          const analysis = await analyzeFailure(stage.script ?? '', result.output ?? '', targetServers.map(s => s.host).join(','))
+          stageResults[i] = { ...stageResults[i], aiAnalysis: analysis }
+          await updateTestRunStage(run.id, i, stageResults)
+        } catch { /* AI analysis is best-effort */ }
+
         if (stage.onFailure === 'stop') {
           finalStatus = 'failed'
           errorMessage = `Stage "${stage.name}" failed: ${result.error ?? result.output}`
-          // Mark remaining stages as skipped
-          for (let j = i + 1; j < stages.length; j++) {
-            stageResults[j] = { ...stageResults[j], status: 'skipped' }
-          }
+          for (let j = i + 1; j < stages.length; j++) stageResults[j] = { ...stageResults[j], status: 'skipped' }
           await updateTestRunStage(run.id, i, stageResults)
           break
         }
@@ -213,12 +233,17 @@ export async function runPipeline(
       }
     }
 
+    // Resolve triggeredBy user info
+    const dtUser = await getDingTalkUserById(triggeredBy).catch(() => null)
+
     // Generate report
     const reportData = {
       runId: run.id,
       pipelineName: pipeline.name,
       triggerType,
       triggeredBy,
+      triggeredByName: dtUser?.name,
+      triggeredByAvatar: dtUser?.avatar,
       status: finalStatus,
       servers: serverAssignment,
       startedAt: run.startedAt?.toISOString() ?? new Date().toISOString(),
@@ -233,19 +258,14 @@ export async function runPipeline(
     await finishTestRun(run.id, 'failed', logDir, String(err))
     finalStatus = 'failed'
   } finally {
-    // Release servers
     await bulkSetServerStatus(serverIds, 'idle')
   }
 
   if (onComplete) {
     try {
       onComplete({
-        runId: run.id,
-        pipelineName: pipeline.name,
-        status: finalStatus,
-        errorMessage,
-        stageResults,
-        durationMs: Date.now() - pipelineStartTime,
+        runId: run.id, pipelineName: pipeline.name, status: finalStatus,
+        errorMessage, stageResults, durationMs: Date.now() - pipelineStartTime,
       })
     } catch { /* callback errors should not affect run result */ }
   }

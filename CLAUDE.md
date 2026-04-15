@@ -1,0 +1,98 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project Overview
+
+ChatOps 是一个 DevOps 自动化平台，通过 IM（钉钉/飞书）群聊接入 Claude AI Agent，使团队成员能以对话方式执行部署、日志查看、回滚等运维操作。后端同时提供管理后台 API 和前端 SPA。
+
+## Commands
+
+```bash
+# 后端开发（热重载）
+pnpm dev
+
+# 前端开发（Vite dev server，端口 5173，代理 /admin → localhost:3000）
+cd web && pnpm dev
+
+# 测试
+pnpm test              # 单次运行
+pnpm test:watch        # watch 模式
+npx vitest run src/__tests__/unit/approval-router.test.ts  # 单个测试文件
+
+# 前端构建
+cd web && pnpm build   # TypeScript 类型检查 + Vite 产物输出到 web/dist
+
+# 数据库迁移
+pnpm migrate           # 顺序执行 schema.sql → schema-v7.sql
+
+# Docker 镜像构建
+./build.sh             # 多阶段构建，含前端编译 + 后端类型检查（IMAGE_NAME / IMAGE_TAG 可选）
+
+# Docker 部署
+./deploy.sh up         # 启动全栈（postgres + migrate + chatops），自动 --build
+./deploy.sh down | restart | logs | status | migrate
+```
+
+## Architecture
+
+### 请求流
+
+```
+IM 消息 → Adapter(DingTalk/Feishu) → SessionManager → ClaudeRunner → MCP Server → Tools → DB
+                                                                                         ↓
+                                                                              IM 回复 ← Adapter
+```
+
+### 后端 (`src/`)
+
+- **server.ts** — Fastify 入口，注册适配器、审批网关、管理 API、静态文件服务
+- **config.ts** — Zod 校验环境变量，必需：`DATABASE_URL`、`ANTHROPIC_API_KEY`
+- **adapters/im/** — IM 平台适配层（`IMAdapter` 接口），钉钉用 Stream 模式、飞书用 Webhook 模式
+- **agent/** — AI Agent 核心
+  - `claude-runner.ts` — 通过 Porygon (`@snack-kit/porygon`) 调用 Claude CLI
+  - `mcp-server.ts` — stdio MCP Server，作为子进程被 Porygon 启动，暴露自定义工具给 Claude
+  - `session-manager.ts` — 按 (platform, groupId) 管理会话，8 小时 TTL
+  - `task-queue.ts` — 任务队列
+- **agent/tools/** — MCP 工具，通过 `registerTool()` 自注册到全局 registry（见下方模式说明）
+- **approval/** — 审批工作流：Gate（请求入口）→ Router（规则路由）→ Escalation（超时升级）
+- **pipeline/** — 流水线执行引擎：Scheduler（cron）、Executor、SSH 远程执行、变量插值
+- **db/** — PostgreSQL 数据层，纯 SQL + Repository 模式（无 ORM）
+
+### 前端 (`web/`)
+
+React 18 + Ant Design 5 + React Router v6 SPA。组件级 state（无全局状态管理）。API 层在 `web/src/api/`，使用 axios。
+
+### 数据库
+
+PostgreSQL，pg 驱动直连。Schema 通过 `src/db/schema.sql` 至 `schema-v7.sql` 顺序迁移，每个版本使用 `IF NOT EXISTS` / `ALTER TABLE IF` 保证幂等。Repository 文件在 `src/db/repositories/`。
+
+## Key Patterns
+
+### Tool 自注册
+
+新增 MCP 工具需要：
+1. 在 `src/agent/tools/` 创建文件，实现 `AgentTool` 接口并调用 `registerTool()`
+2. 在 `src/server.ts` 和 `src/agent/mcp-server.ts` 中添加 `import './tools/<name>.js'`
+3. 如需 RBAC 默认角色配置，在 `src/agent/tools/types.ts` 的 `DEFAULT_TOOL_ROLES` 中添加
+
+### DB Repository 约定
+
+- 直接写参数化 SQL（`$1, $2...`），无 ORM
+- 数据库字段 snake_case，TypeScript camelCase，repository 中 `mapRow()` 做转换
+- 新增迁移：创建 `src/db/schema-vN.sql`，然后在 `src/db/migrate.ts` 中追加执行
+
+### Admin API 路由
+
+所有管理端点在 `/admin` 前缀下，路由文件在 `src/admin/routes/`，通过 `src/admin/index.ts` 注册为 Fastify 插件。
+
+## Tech Stack
+
+- **Runtime**: Node.js + TypeScript (ES2022, NodeNext modules, strict mode)
+- **Backend**: Fastify 5
+- **Frontend**: React 18 + Vite + Ant Design 5
+- **Database**: PostgreSQL 16 (pg driver, raw SQL)
+- **AI**: Claude via `@snack-kit/porygon` + `@modelcontextprotocol/sdk`
+- **IM**: dingtalk-stream-sdk, feishu SDK
+- **Package Manager**: pnpm
+- **Test**: Vitest

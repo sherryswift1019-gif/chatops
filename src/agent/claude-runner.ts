@@ -3,8 +3,12 @@ import type { IMAdapter } from '../adapters/im/types.js'
 import { getTool, getAllTools } from './tools/index.js'
 import type { AgentTool, TaskContext } from './tools/types.js'
 import { getRecentTasks } from '../db/repositories/tasks.js'
-import { listCapabilities, getCapabilityByKey } from '../db/repositories/capabilities.js'
+import { listCapabilities, getCapabilityByKey, type Capability } from '../db/repositories/capabilities.js'
 import { checkCapabilityAccess } from '../db/repositories/product-line-capabilities.js'
+import { getProductLineById } from '../db/repositories/product-lines.js'
+import { listProjects } from '../db/repositories/projects-repo.js'
+import { listTestServers } from '../db/repositories/test-servers.js'
+import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -35,6 +39,55 @@ interface GroupSession {
 }
 
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000 // 8 hours
+
+function interpolatePrompt(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`)
+}
+
+async function buildProjectContext(productLineId: number): Promise<string> {
+  const [pl, projects, servers, envs] = await Promise.all([
+    getProductLineById(productLineId),
+    listProjects(productLineId),
+    listTestServers(productLineId),
+    listProductLineEnvs(productLineId),
+  ])
+
+  const lines: string[] = ['', '--- 当前上下文 ---']
+
+  if (pl) {
+    lines.push(`产品线: ${pl.displayName} (${pl.name})`)
+  }
+
+  if (projects.length > 0) {
+    lines.push('项目:')
+    for (const p of projects) {
+      const parts = [p.displayName || p.name]
+      if (p.gitlabPath) parts.push(`GitLab=${p.gitlabPath}`)
+      if (p.composePath) parts.push(`Compose=${p.composePath}`)
+      if (p.dockerContainerName) parts.push(`容器=${p.dockerContainerName}`)
+      if (p.k8sProjectName) parts.push(`K8s=${p.k8sProjectName}`)
+      if (p.harborProject) parts.push(`Harbor=${p.harborProject}`)
+      lines.push(`- ${parts.join(', ')}`)
+    }
+  }
+
+  if (servers.length > 0) {
+    lines.push('服务器:')
+    for (const s of servers) {
+      lines.push(`- ${s.name} (${s.role}): ${s.host}:${s.port}`)
+    }
+  }
+
+  if (envs.length > 0) {
+    const summary = new Map<string, number>()
+    for (const e of envs) {
+      summary.set(e.runtime, (summary.get(e.runtime) ?? 0) + 1)
+    }
+    lines.push(`环境: ${[...summary.entries()].map(([r, n]) => `${r} x${n}`).join(', ')}`)
+  }
+
+  return lines.join('\n')
+}
 
 export class ClaudeRunner {
   private porygon: Porygon
@@ -135,7 +188,7 @@ export class ClaudeRunner {
       }
 
       // Step 5: Execute with session context
-      await this.executeWithPorygon(opts, capabilityTools)
+      await this.executeWithPorygon(opts, capabilityTools, capability)
 
     } catch (err) {
       console.error('[Runner] Error:', err)
@@ -187,22 +240,30 @@ ${capList}
     }
   }
 
-  private async executeWithPorygon(opts: RunOptions, tools: AgentTool[]): Promise<void> {
+  private async executeWithPorygon(opts: RunOptions, tools: AgentTool[], capability?: Capability): Promise<void> {
     const { prompt, context, adapter, executionMode = false, groupId } = opts
 
-    const systemPrompt = executionMode
-      ? '你是一个 DevOps 自动化 agent，正在执行已审批的操作。直接执行，无需再次确认。'
-      : `你是一个 DevOps 助手。用户通过群聊与你交互。你可以记住之前的对话内容。
+    const FALLBACK_PROMPT = '你是一个 DevOps 助手。用户通过群聊与你交互。只使用提供给你的 MCP 工具，不要使用 Bash 等内置工具。'
 
-当前用户角色: ${context.initiatorRole ?? 'developer'}
+    let systemPrompt: string
+    if (executionMode) {
+      systemPrompt = '你是一个 DevOps 自动化 agent，正在执行已审批的操作。直接执行，无需再次确认。'
+    } else if (capability?.systemPrompt) {
+      systemPrompt = interpolatePrompt(capability.systemPrompt, {
+        initiatorRole: context.initiatorRole ?? 'developer',
+      })
+    } else {
+      systemPrompt = FALLBACK_PROMPT
+    }
 
-规则:
-1. 部署到 staging/production 前，必须先调用 request_approval
-2. 调用 request_approval 后，告知用户已发起审批并结束回复
-3. 部署前确认镜像标签
-4. 分析日志时关注 ERROR/WARN 模式
-5. 只使用提供给你的 MCP 工具，不要使用 Bash 等内置工具
-6. 如果用户的请求引用了之前的对话内容，利用上下文理解用户意图`
+    // 注入项目上下文
+    if (opts.productLineId) {
+      try {
+        systemPrompt += await buildProjectContext(opts.productLineId)
+      } catch (err) {
+        console.error('[Runner] Failed to build project context:', err)
+      }
+    }
 
     const recentTasks = await getRecentTasks(context.groupId, 5)
     const contextNote = recentTasks.length
@@ -260,7 +321,6 @@ ${capList}
             break
 
           case 'result':
-            if (msg.text) textBuffer += msg.text
             // Capture sessionId from result
             if ('sessionId' in msg && msg.sessionId) {
               this.saveSessionId(groupId, msg.sessionId as string)

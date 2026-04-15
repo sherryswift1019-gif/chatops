@@ -33,13 +33,13 @@ export default function ProductLineListPage() {
   async function handleDelete(id: number) { await deleteProductLine(id); message.success('删除成功'); await load() }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
     { title: '显示名', dataIndex: 'displayName' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
     {
-      title: '操作', width: 200,
+      title: '操作',
       render: (_: unknown, record: ProductLine) => (
         <Space>
           <a onClick={() => navigate(`/product-lines/${record.id}`)}>详情</a>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message } from 'antd'
-import { ReloadOutlined, FileTextOutlined, DownloadOutlined } from '@ant-design/icons'
+import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar } from 'antd'
+import { ReloadOutlined, FileTextOutlined, DownloadOutlined, UserOutlined } from '@ant-design/icons'
 import { getTestRuns, getTestRun } from '../api/test-runs'
 import { getTestPipelines } from '../api/test-pipelines'
 import type { TestRun, TestPipeline } from '../types'
@@ -42,10 +42,10 @@ export default function TestRunsPage() {
   const triggerLabels: Record<string, string> = { manual: '手动', api: 'API', scheduled: '定时' }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 50 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '流水线', dataIndex: 'pipelineId', render: (v: number) => pipelines.find(p => p.id === v)?.name ?? `#${v}` },
     { title: '触发', dataIndex: 'triggerType', render: (v: string) => triggerLabels[v] ?? v },
-    { title: '触发人', dataIndex: 'triggeredBy', ellipsis: true },
+    { title: '触发人', dataIndex: 'triggeredByName', render: (_: unknown, r: TestRun) => r.triggeredByName ? <span><Avatar size={20} src={r.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{r.triggeredByName}</span> : (r.triggeredBy || '-') },
     { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
     { title: '进度', render: (_: unknown, r: TestRun) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
     { title: '开始时间', dataIndex: 'startedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
@@ -77,7 +77,7 @@ export default function TestRunsPage() {
             <Descriptions column={2} size="small" style={{ marginBottom: 16 }}>
               <Descriptions.Item label="状态"><Tag color={statusColors[selectedRun.status]}>{statusLabels[selectedRun.status]}</Tag></Descriptions.Item>
               <Descriptions.Item label="触发方式">{triggerLabels[selectedRun.triggerType]}</Descriptions.Item>
-              <Descriptions.Item label="触发人">{selectedRun.triggeredBy || '-'}</Descriptions.Item>
+              <Descriptions.Item label="触发人">{selectedRun.triggeredByName ? <span><Avatar size={20} src={selectedRun.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{selectedRun.triggeredByName}</span> : (selectedRun.triggeredBy || '-')}</Descriptions.Item>
               <Descriptions.Item label="开始时间">{selectedRun.startedAt ? new Date(selectedRun.startedAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
               <Descriptions.Item label="结束时间">{selectedRun.finishedAt ? new Date(selectedRun.finishedAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
             </Descriptions>
@@ -108,6 +108,12 @@ export default function TestRunsPage() {
                     </pre>
                   )}
                   {s.error && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4, background: '#fff2f0', padding: '4px 8px', borderRadius: 4 }}>{s.error}</div>}
+                  {s.aiAnalysis && (
+                    <div style={{ background: '#f0f5ff', border: '1px solid #adc6ff', borderRadius: 4, padding: '8px 12px', marginTop: 6, fontSize: 12 }}>
+                      <strong>🤖 AI 分析：</strong>
+                      <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{s.aiAnalysis}</div>
+                    </div>
+                  )}
                 </div>
               ),
             }))} />

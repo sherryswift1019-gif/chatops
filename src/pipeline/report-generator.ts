@@ -9,6 +9,8 @@ interface ReportData {
   pipelineName: string
   triggerType: string
   triggeredBy: string
+  triggeredByName?: string
+  triggeredByAvatar?: string
   status: string
   servers: Record<string, string[]>
   startedAt: string
@@ -88,6 +90,7 @@ export async function generateHtmlReport(data: ReportData, logDir: string): Prom
           ${sr.durationMs ? `<span class="duration">${formatDuration(sr.durationMs)}</span>` : ''}
         </div>
         ${sr.error ? `<div class="error">Error: ${escapeHtml(sr.error)}</div>` : ''}
+        ${sr.aiAnalysis ? `<div style="background:#f0f5ff;border:1px solid #adc6ff;border-radius:4px;padding:8px 12px;margin-top:6px;font-size:12px"><strong>🤖 AI 分析：</strong><div style="white-space:pre-wrap;margin-top:4px">${escapeHtml(sr.aiAnalysis)}</div></div>` : ''}
         ${logContent ? `<details><summary>查看日志</summary><pre>${escapeHtml(logContent)}</pre></details>` : ''}
       </div>`
   }
@@ -146,7 +149,7 @@ export async function generateHtmlReport(data: ReportData, logDir: string): Prom
     <div class="meta">
       <span><strong>状态:</strong> <span class="badge ${statusClass}">${data.status}</span></span>
       <span><strong>触发方式:</strong> ${data.triggerType}</span>
-      <span><strong>触发人:</strong> ${data.triggeredBy || '-'}</span>
+      <span><strong>触发人:</strong> ${data.triggeredByAvatar ? `<img src="${escapeHtml(data.triggeredByAvatar)}" style="width:20px;height:20px;border-radius:50%;vertical-align:middle;margin-right:4px">` : ''}${escapeHtml(data.triggeredByName || data.triggeredBy || '-')}</span>
       <span><strong>开始时间:</strong> ${data.startedAt ? new Date(data.startedAt).toLocaleString('zh-CN') : '-'}</span>
       <span><strong>结束时间:</strong> ${data.finishedAt ? new Date(data.finishedAt).toLocaleString('zh-CN') : '-'}</span>
       <span><strong>总耗时:</strong> ${totalDuration}</span>

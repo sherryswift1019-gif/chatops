@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { createPorygon } from '@snack-kit/porygon'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { VARIABLE_CATALOG } from '../../pipeline/variables.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -31,7 +32,10 @@ export async function registerAiRoutes(app: FastifyInstance): Promise<void> {
 
       const prompt = `${userMessage}
 
-请生成对应的 shell 命令。每行一条命令，只输出可执行的 shell 命令，不要解释、不要注释、不要 markdown 格式。命令应该安全、幂等，适合自动化执行。`
+可用变量（请在脚本中使用这些变量代替硬编码值，使脚本更通用）：
+${VARIABLE_CATALOG.map(v => `{{${v.key}}} — ${v.description}`).join('\n')}
+
+请生成对应的 shell 脚本。使用上述 {{变量}} 模板代替硬编码的 IP、路径等值。只输出可执行的 shell 脚本，不要解释、不要注释、不要 markdown 格式。脚本应安全、幂等，适合自动化执行。`
 
       try {
         const result = await porygon.run({

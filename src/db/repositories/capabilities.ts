@@ -13,6 +13,8 @@ export interface Capability {
   paramSchema: Record<string, unknown>
   playbook: unknown[]
   isSystem: boolean
+  systemPrompt: string | null
+  defaultSystemPrompt: string | null
   updatedAt: Date | null
   createdAt: Date
 }
@@ -29,6 +31,8 @@ function mapRow(r: Record<string, unknown>): Capability {
     paramSchema: (r.param_schema ?? {}) as Record<string, unknown>,
     playbook: (r.playbook ?? []) as unknown[],
     isSystem: (r.is_system ?? true) as boolean,
+    systemPrompt: (r.system_prompt ?? null) as string | null,
+    defaultSystemPrompt: (r.default_system_prompt ?? null) as string | null,
     updatedAt: r.updated_at as Date | null,
     createdAt: r.created_at as Date,
   }
@@ -77,6 +81,24 @@ export async function updateCapability(
     [id, data.displayName ?? null, data.description ?? null, data.category ?? null,
      data.toolNames ? JSON.stringify(data.toolNames) : null, data.needsApproval ?? null,
      data.paramSchema ? JSON.stringify(data.paramSchema) : null]
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+export async function updateCapabilitySystemPrompt(id: number, systemPrompt: string): Promise<Capability | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `UPDATE capabilities SET system_prompt = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [id, systemPrompt]
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+export async function resetCapabilitySystemPrompt(id: number): Promise<Capability | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `UPDATE capabilities SET system_prompt = default_system_prompt, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [id]
   )
   return rows[0] ? mapRow(rows[0]) : null
 }

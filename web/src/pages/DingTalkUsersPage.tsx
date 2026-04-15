@@ -52,16 +52,16 @@ export default function DingTalkUsersPage() {
 
   const columns = [
     {
-      title: '头像', dataIndex: 'avatar', width: 64,
+      title: '头像', dataIndex: 'avatar',
       render: (src: string) => (
         <Avatar src={src || undefined} icon={!src ? <UserOutlined /> : undefined} />
       ),
     },
-    { title: '姓名', dataIndex: 'name', width: 120 },
-    { title: '用户ID', dataIndex: 'userId', width: 160 },
+    { title: '姓名', dataIndex: 'name' },
+    { title: '用户ID', dataIndex: 'userId' },
     { title: '部门', dataIndex: 'department', ellipsis: true },
     {
-      title: '同步时间', dataIndex: 'syncedAt', width: 180,
+      title: '同步时间', dataIndex: 'syncedAt',
       render: (v: string) => v ? new Date(v).toLocaleString() : '-',
     },
   ]
