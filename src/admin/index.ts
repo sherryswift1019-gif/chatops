@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify'
+import { sessionPlugin, requireAuth } from './auth/session-plugin.js'
+import { registerAuthRoutes } from './routes/auth.js'
 import { registerSystemConfigRoutes } from './routes/system-config.js'
 import { registerProductLineRoutes } from './routes/product-lines.js'
 import { registerProjectRoutes } from './routes/projects.js'
@@ -16,6 +18,16 @@ import { registerStageOperationRoutes } from './routes/stage-operations.js'
 import { registerPipelineVariableRoutes } from './routes/pipeline-variables.js'
 
 export async function adminPlugin(app: FastifyInstance): Promise<void> {
+  // Session middleware — must be registered before any route definition
+  await app.register(sessionPlugin)
+
+  // preHandler runs on every /admin/* request. Whitelist handled inside requireAuth.
+  app.addHook('preHandler', requireAuth)
+
+  // Auth routes (whitelisted, so preHandler lets them through)
+  await registerAuthRoutes(app)
+
+  // All other routes — require valid session
   await registerSystemConfigRoutes(app)
   await registerProductLineRoutes(app)
   await registerProjectRoutes(app)
