@@ -38,7 +38,9 @@ const server = new Server(
 
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const tools = getAllTools()
+  const ctx: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
+  const { filterToolsByRole } = await import('./mcp-server-utils.js')
+  const tools = await filterToolsByRole(getAllTools(), ctx.initiatorRole ?? null, ctx.productLineId)
   return {
     tools: tools.map(t => ({
       name: t.name,
@@ -58,8 +60,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   }
 
-  // TaskContext passed from claude-runner via env var
   const context: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
+
+  // Re-check permission to prevent bypass via direct tool-name call
+  const { filterToolsByRole } = await import('./mcp-server-utils.js')
+  const permitted = await filterToolsByRole([tool], context.initiatorRole ?? null, context.productLineId)
+  if (permitted.length === 0) {
+    mcpLog(`Denied tool call: ${request.params.name} role=${context.initiatorRole}`)
+    return {
+      content: [{ type: 'text' as const, text: `⛔ 无权限调用工具: ${request.params.name}` }],
+      isError: true,
+    }
+  }
 
   try {
     mcpLog(`Calling tool: ${request.params.name} args=${JSON.stringify(request.params.arguments)}`)
