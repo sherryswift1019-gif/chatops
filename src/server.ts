@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync } from 'fs'
 import { config } from './config.js'
+import { getConfig } from './db/repositories/system-config.js'
 import { DingTalkAdapter } from './adapters/im/dingtalk.js'
 import { FeishuAdapter } from './adapters/im/feishu.js'
 import { GitLabWebhookReceiver } from './adapters/gitlab/webhook-receiver.js'
@@ -40,23 +41,25 @@ async function resolveProductLineId(userId: string): Promise<{ productLineId: nu
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
 
-  // Build IM adapters (only create if credentials are configured)
+  // Build IM adapters (only create if credentials are configured in system_config)
   const adapters: IMAdapter[] = []
 
-  if (config.DINGTALK_CLIENT_ID && config.DINGTALK_CLIENT_SECRET) {
+  const dingtalkCfg = (await getConfig('dingtalk'))?.value as { clientId?: string; clientSecret?: string } | undefined
+  if (dingtalkCfg?.clientId && dingtalkCfg?.clientSecret) {
     const dingtalk = new DingTalkAdapter({
-      clientId: config.DINGTALK_CLIENT_ID,
-      clientSecret: config.DINGTALK_CLIENT_SECRET,
+      clientId: dingtalkCfg.clientId,
+      clientSecret: dingtalkCfg.clientSecret,
     })
     adapters.push(dingtalk)
     app.log.info('DingTalk adapter enabled (Stream mode)')
   }
 
-  if (config.FEISHU_APP_ID && config.FEISHU_APP_SECRET) {
+  const feishuCfg = (await getConfig('feishu'))?.value as { appId?: string; appSecret?: string; verificationToken?: string } | undefined
+  if (feishuCfg?.appId && feishuCfg?.appSecret) {
     const feishu = new FeishuAdapter({
-      appId: config.FEISHU_APP_ID,
-      appSecret: config.FEISHU_APP_SECRET,
-      verificationToken: config.FEISHU_VERIFICATION_TOKEN,
+      appId: feishuCfg.appId,
+      appSecret: feishuCfg.appSecret,
+      verificationToken: feishuCfg.verificationToken ?? '',
     })
     adapters.push(feishu)
     app.log.info('Feishu adapter enabled (Webhook mode)')
@@ -147,7 +150,8 @@ async function main(): Promise<void> {
     })
   }
 
-  const gitlabReceiver = new GitLabWebhookReceiver(config.GITLAB_WEBHOOK_SECRET)
+  const gitlabWebhookSecret = ((await getConfig('gitlab'))?.value as { webhookSecret?: string } | undefined)?.webhookSecret ?? ''
+  const gitlabReceiver = new GitLabWebhookReceiver(gitlabWebhookSecret)
   gitlabReceiver.onPipelineEvent(async (project, status, pipelineId) => {
     if (status === 'failed') {
       app.log.info({ project, pipelineId }, 'Pipeline failed')
