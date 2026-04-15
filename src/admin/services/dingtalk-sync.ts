@@ -20,23 +20,34 @@ async function getAccessToken(): Promise<string> {
   return res.data.accessToken
 }
 
-async function getDepartmentIds(token: string, parentId: number = 1): Promise<number[]> {
-  try {
-    const res = await axios.post<{ result: number[] }>(
-      'https://oapi.dingtalk.com/topapi/v2/department/listsubid',
-      { dept_id: parentId },
-      { params: { access_token: token } }
-    )
-    const subIds = res.data.result ?? []
-    const allIds = [parentId, ...subIds]
-    for (const subId of subIds) {
-      const nested = await getDepartmentIds(token, subId)
-      allIds.push(...nested.filter(id => !allIds.includes(id)))
-    }
-    return allIds
-  } catch {
-    return [parentId]
+interface DingTalkApiError {
+  errcode?: number
+  errmsg?: string
+  sub_code?: string
+  sub_msg?: string
+}
+
+function ensureOk(data: DingTalkApiError, api: string): void {
+  if (data.errcode && data.errcode !== 0) {
+    const sub = data.sub_msg ? ` (${data.sub_code}: ${data.sub_msg})` : ''
+    throw new Error(`DingTalk ${api} failed: errcode=${data.errcode} ${data.errmsg ?? ''}${sub}`)
   }
+}
+
+async function getDepartmentIds(token: string, parentId: number = 1): Promise<number[]> {
+  const res = await axios.post<DingTalkApiError & { result?: { dept_id_list?: number[] } }>(
+    'https://oapi.dingtalk.com/topapi/v2/department/listsubid',
+    { dept_id: parentId },
+    { params: { access_token: token } }
+  )
+  ensureOk(res.data, 'department/listsubid')
+  const subIds = res.data.result?.dept_id_list ?? []
+  const allIds = [parentId, ...subIds]
+  for (const subId of subIds) {
+    const nested = await getDepartmentIds(token, subId)
+    allIds.push(...nested.filter(id => !allIds.includes(id)))
+  }
+  return allIds
 }
 
 async function getDepartmentUsers(token: string, deptId: number): Promise<DingTalkUserInfo[]> {
@@ -44,11 +55,12 @@ async function getDepartmentUsers(token: string, deptId: number): Promise<DingTa
   let cursor = 0
   let hasMore = true
   while (hasMore) {
-    const res = await axios.post<{ result: { list: DingTalkUserInfo[]; has_more: boolean; next_cursor: number } }>(
+    const res = await axios.post<DingTalkApiError & { result?: { list: DingTalkUserInfo[]; has_more: boolean; next_cursor: number } }>(
       'https://oapi.dingtalk.com/topapi/v2/user/list',
       { dept_id: deptId, cursor, size: 100 },
       { params: { access_token: token } }
     )
+    ensureOk(res.data, 'user/list')
     const result = res.data.result
     if (result?.list) users.push(...result.list)
     hasMore = result?.has_more ?? false
