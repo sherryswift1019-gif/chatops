@@ -50,24 +50,27 @@ export interface TestServer {
 export interface TestPipeline {
   id: number; productLineId: number; name: string; description: string
   stages: StageDefinition[]; serverRoles: Record<string, { count: number }>
+  variables?: Record<string, string>
   schedule: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
 }
 
 export interface StageDefinition {
   name: string
-  capabilityKey: string
-  type?: string
+  stageType: 'script' | 'approval'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
   retryCount: number
-  params: Record<string, unknown>
   onFailure: 'stop' | 'continue'
+  script?: string
+  approverIds?: string[]
+  approvalDescription?: string
 }
 
 export interface TestRun {
   id: number; pipelineId: number; triggerType: 'manual' | 'api' | 'scheduled'
-  triggeredBy: string; status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
+  triggeredBy: string; triggeredByName?: string; triggeredByAvatar?: string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
   servers: Record<string, string[]>; currentStage: number
   stageResults: StageResult[]; reportPath: string
   startedAt: string | null; finishedAt: string | null; errorMessage: string; createdAt: string
@@ -76,4 +79,5 @@ export interface TestRun {
 export interface StageResult {
   name: string; type: string; status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
   startedAt?: string; finishedAt?: string; durationMs?: number; output?: string; error?: string
+  aiAnalysis?: string
 }

@@ -62,17 +62,17 @@ export default function ApprovalRulesPage() {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id' },
     {
-      title: '产线', dataIndex: 'productLineId', width: 140,
+      title: '产线', dataIndex: 'productLineId',
       render: (v: number | null) => {
         if (v == null) return <Tag>全局</Tag>
         const name = productLineMap.get(v)
         return name ? <Tag color="blue">{name}</Tag> : <Tag>ID:{v}</Tag>
       },
     },
-    { title: '操作类型', dataIndex: 'action', width: 120 },
-    { title: '环境', dataIndex: 'env', width: 100 },
+    { title: '操作类型', dataIndex: 'action' },
+    { title: '环境', dataIndex: 'env' },
     {
       title: '主审批人', dataIndex: 'primaryApprovers',
       render: (ids: string[]) => (
@@ -89,10 +89,10 @@ export default function ApprovalRulesPage() {
         </Space>
       ),
     },
-    { title: '主超时(分钟)', dataIndex: 'primaryTimeoutMin', width: 120 },
-    { title: '总超时(分钟)', dataIndex: 'totalTimeoutMin', width: 120 },
+    { title: '主超时(分钟)', dataIndex: 'primaryTimeoutMin' },
+    { title: '总超时(分钟)', dataIndex: 'totalTimeoutMin' },
     {
-      title: '操作', width: 120,
+      title: '操作',
       render: (_: unknown, record: ApprovalRule) => (
         <Space>
           <a onClick={() => openEdit(record)}>编辑</a>

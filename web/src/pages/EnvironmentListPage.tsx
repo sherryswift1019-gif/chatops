@@ -50,13 +50,13 @@ export default function EnvironmentListPage() {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
     { title: '显示名', dataIndex: 'displayName' },
-    { title: '排序', dataIndex: 'sortOrder', width: 80 },
+    { title: '排序', dataIndex: 'sortOrder' },
     { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
     {
-      title: '操作', width: 150,
+      title: '操作',
       render: (_: unknown, record: Environment) => (
         <Space>
           <a onClick={() => openEdit(record)}>编辑</a>

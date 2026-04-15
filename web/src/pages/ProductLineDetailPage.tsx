@@ -133,7 +133,7 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
     { title: '显示名', dataIndex: 'displayName' },
     { title: 'GitLab 路径', dataIndex: 'gitlabPath', ellipsis: true },
@@ -149,7 +149,7 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
     { title: 'Docker 容器名', dataIndex: 'dockerContainerName', ellipsis: true },
     { title: 'K8s 项目名', dataIndex: 'k8sProjectName', ellipsis: true },
     {
-      title: '操作', width: 150,
+      title: '操作',
       render: (_: unknown, record: Project) => (
         <Space>
           <a onClick={() => openEdit(record)}>编辑</a>
@@ -296,7 +296,7 @@ function MembersTab({ productLineId }: { productLineId: number }) {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '成员', key: 'user',
       render: (_: unknown, record: ProductLineMember) => (
         <Space>
@@ -312,7 +312,7 @@ function MembersTab({ productLineId }: { productLineId: number }) {
     },
     { title: '加入时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
     {
-      title: '操作', width: 150,
+      title: '操作',
       render: (_: unknown, record: ProductLineMember) => (
         <Space>
           <a onClick={() => openEditRole(record)}>修改角色</a>
@@ -440,16 +440,16 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
   }
 
   const columns = [
-    { title: '环境', dataIndex: 'envDisplayName', width: 120 },
-    { title: '标识', dataIndex: 'envName', width: 100 },
+    { title: '环境', dataIndex: 'envDisplayName' },
+    { title: '标识', dataIndex: 'envName' },
     {
-      title: '启用', dataIndex: 'enabled', width: 80,
+      title: '启用', dataIndex: 'enabled',
       render: (v: boolean, record: EnvRow) => (
         <Switch checked={v} onChange={(checked) => updateRow(record.envId, { enabled: checked })} />
       ),
     },
     {
-      title: '运行时', dataIndex: 'runtime', width: 140,
+      title: '运行时', dataIndex: 'runtime',
       render: (v: string, record: EnvRow) => (
         <Select
           value={v}
@@ -465,7 +465,6 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
     {
       title: '连接配置',
       key: 'connection',
-      width: 360,
       render: (_: unknown, record: EnvRow) => {
         const cfg = record.connectionConfig as Record<string, string>
         if (record.runtime === 'kubernetes') {
@@ -594,7 +593,7 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
   )
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '操作类型', dataIndex: 'action' },
     { title: '环境', dataIndex: 'env' },
     {
@@ -607,10 +606,10 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
       dataIndex: 'backupApprovers',
       render: renderApprovers,
     },
-    { title: '主超时(分钟)', dataIndex: 'primaryTimeoutMin', width: 120 },
-    { title: '总超时(分钟)', dataIndex: 'totalTimeoutMin', width: 120 },
+    { title: '主超时(分钟)', dataIndex: 'primaryTimeoutMin' },
+    { title: '总超时(分钟)', dataIndex: 'totalTimeoutMin' },
     {
-      title: '操作', width: 150,
+      title: '操作',
       render: (_: unknown, record: ApprovalRule) => (
         <Space>
           <a onClick={() => openEdit(record)}>编辑</a>
@@ -747,29 +746,29 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
   }
 
   const systemColumns = [
-    { title: '能力名称', dataIndex: 'displayName', width: 140 },
-    { title: '标识', dataIndex: 'key', width: 140 },
+    { title: '能力名称', dataIndex: 'displayName' },
+    { title: '标识', dataIndex: 'key' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
-    { title: '分类', dataIndex: 'category', width: 80,
+    { title: '分类', dataIndex: 'category',
       render: (v: string) => <Tag color={categoryColors[v]}>{categoryLabels[v] ?? v}</Tag> },
-    { title: '需审批', dataIndex: 'needsApproval', width: 80,
+    { title: '需审批', dataIndex: 'needsApproval',
       render: (v: boolean) => v ? <Tag color="red">是</Tag> : <Tag>否</Tag> },
-    { title: '当前配置', key: 'config', width: 200,
+    { title: '当前配置', key: 'config',
       render: (_: unknown, record: Capability) => (
         <span style={{ color: '#999' }}>{getConfigSummary(record.key)}</span>
       ) },
-    { title: '操作', key: 'action', width: 100,
+    { title: '操作', key: 'action',
       render: (_: unknown, record: Capability) => <a onClick={() => openEdit(record)}>编辑配置</a> },
   ]
 
   const pipelineColumns = [
-    { title: '流水线名称', dataIndex: 'displayName', width: 200 },
+    { title: '流水线名称', dataIndex: 'displayName' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
-    { title: '当前配置', key: 'config', width: 200,
+    { title: '当前配置', key: 'config',
       render: (_: unknown, record: Capability) => (
         <span style={{ color: '#999' }}>{getConfigSummary(record.key)}</span>
       ) },
-    { title: '操作', key: 'action', width: 100,
+    { title: '操作', key: 'action',
       render: (_: unknown, record: Capability) => <a onClick={() => openEdit(record)}>编辑配置</a> },
   ]
 

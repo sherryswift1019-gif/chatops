@@ -1,29 +1,21 @@
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, Checkbox, message } from 'antd'
-import { PlusOutlined, DeleteOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, PlayCircleOutlined, RobotOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
 import { getProductLines } from '../api/product-lines'
-import { getStageOperations } from '../api/capabilities'
 import { getTestServers } from '../api/test-servers'
 import { triggerTestRun } from '../api/test-runs'
+import { getDingTalkUsers } from '../api/dingtalk-users'
+import { getPipelineVariables } from '../api/pipeline-variables'
+import AiCommandModal from '../components/AiCommandModal'
 import type { TestPipeline, ProductLine, TestServer } from '../types'
-import type { StageOperation } from '../api/capabilities'
-import StageParamsForm from '../components/StageParamsForm'
 
-const CATEGORY_ORDER = ['env_prep', 'action', 'verify', 'testing', 'result']
-const CATEGORY_LABELS: Record<string, string> = {
-  env_prep: '环境准备', action: '操作', verify: '验证', testing: '测试', result: '结果处理',
-}
-
-const LEGACY_TYPE_MAP: Record<string, string> = {
-  cleanup: 'env_cleanup', download: 'deploy', install: 'deploy',
-  health_check: 'health_check', test: 'auto_test', report: 'report_gen', custom: 'custom_script',
-}
 
 export default function TestPipelinesPage() {
   const [data, setData] = useState<TestPipeline[]>([])
   const [productLines, setProductLines] = useState<ProductLine[]>([])
-  const [capabilities, setCapabilities] = useState<StageOperation[]>([])
+  const [dingtalkUsers, setDingtalkUsers] = useState<{userId: string; name: string}[]>([])
+  const [variableCatalog, setVariableCatalog] = useState<{key: string; description: string; category: string}[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<TestPipeline | null>(null)
@@ -35,7 +27,7 @@ export default function TestPipelinesPage() {
   const [triggerServerMap, setTriggerServerMap] = useState<Record<string, string[]>>({})
   const [form] = Form.useForm()
 
-  useEffect(() => { load(); loadProductLines(); loadCapabilities() }, [])
+  useEffect(() => { load(); loadProductLines(); loadDingtalkUsers(); loadVariableCatalog() }, [])
 
   async function load() {
     setLoading(true)
@@ -44,8 +36,14 @@ export default function TestPipelinesPage() {
   async function loadProductLines() {
     try { setProductLines(await getProductLines()) } catch { /* */ }
   }
-  async function loadCapabilities() {
-    try { setCapabilities(await getStageOperations()) } catch { /* */ }
+  async function loadDingtalkUsers() {
+    try {
+      const res = await getDingTalkUsers()
+      setDingtalkUsers(res.users.map(u => ({ userId: u.userId, name: u.name })))
+    } catch { /* */ }
+  }
+  async function loadVariableCatalog() {
+    try { setVariableCatalog(await getPipelineVariables()) } catch { /* */ }
   }
 
   async function loadServerRoles(productLineId: number) {
@@ -56,24 +54,6 @@ export default function TestPipelinesPage() {
     } catch { setAvailableRoles([]) }
   }
 
-  const capabilityMap = useMemo(() => {
-    const m = new Map<string, StageOperation>()
-    capabilities.forEach(c => m.set(c.key, c))
-    return m
-  }, [capabilities])
-
-  const capabilityOptions = useMemo(() => {
-    return CATEGORY_ORDER
-      .map(cat => {
-        const items = capabilities.filter(c => c.category === cat)
-        if (items.length === 0) return null
-        return {
-          label: CATEGORY_LABELS[cat] ?? cat,
-          options: items.map(c => ({ value: c.key, label: c.displayName })),
-        }
-      })
-      .filter(Boolean)
-  }, [capabilities])
 
   function openCreate() {
     setEditing(null); form.resetFields()
@@ -82,9 +62,9 @@ export default function TestPipelinesPage() {
     form.setFieldsValue({
       enabled: true,
       stages: [{
-        capabilityKey: 'env_cleanup', name: '环境清理',
+        stageType: 'script', name: '',
         parallel: false, timeoutSeconds: 300, retryCount: 0, onFailure: 'stop',
-        targetRoles: [], params: {},
+        targetRoles: [], script: '',
       }],
     })
     setModalOpen(true)
@@ -101,12 +81,13 @@ export default function TestPipelinesPage() {
     loadServerRoles(r.productLineId)
     const stages = (r.stages as any[]).map((s: any) => ({
       ...s,
-      capabilityKey: s.capabilityKey || LEGACY_TYPE_MAP[s.type] || s.type,
+      stageType: s.stageType ?? 'script',  // backward compat
+      script: s.script ?? s.params?.commands ?? s.params?.script ?? '',
       targetRoles: s.targetRoles ?? [],
       parallel: s.parallel ?? false,
-      params: s.params ?? {},
     }))
-    form.setFieldsValue({ ...r, stages })
+    const variableEntries = Object.entries(r.variables ?? {}).map(([key, value]) => ({ key, value }))
+    form.setFieldsValue({ ...r, stages, variableEntries })
     setModalOpen(true)
   }
 
@@ -118,13 +99,20 @@ export default function TestPipelinesPage() {
         serverRoles[role] = { count: cfg.count }
       }
     }
+    const variables: Record<string, string> = {}
+    for (const entry of values.variableEntries ?? []) {
+      if (entry.key) variables[entry.key] = entry.value ?? ''
+    }
     const payload = {
       ...values,
       serverRoles,
+      variables,
       stages: values.stages.map((s: any) => ({
         name: s.name,
-        capabilityKey: s.capabilityKey,
-        params: s.params ?? {},
+        stageType: s.stageType ?? 'script',
+        script: s.stageType === 'script' ? (s.script ?? '') : undefined,
+        approverIds: s.stageType === 'approval' ? (s.approverIds ?? []) : undefined,
+        approvalDescription: s.stageType === 'approval' ? (s.approvalDescription ?? '') : undefined,
         targetRoles: s.targetRoles ?? [],
         parallel: s.parallel ?? false,
         timeoutSeconds: s.timeoutSeconds ?? 300,
@@ -132,6 +120,7 @@ export default function TestPipelinesPage() {
         onFailure: s.onFailure ?? 'stop',
       })),
     }
+    delete (payload as any).variableEntries
     if (editing) {
       await updateTestPipeline(editing.id, payload)
       message.success('更新成功')
@@ -172,7 +161,7 @@ export default function TestPipelinesPage() {
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 50 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
     { title: '产线', dataIndex: 'productLineId', render: (v: number) => productLines.find(p => p.id === v)?.displayName ?? v },
     { title: '阶段数', render: (_: unknown, r: TestPipeline) => (r.stages as any[]).length },
@@ -206,6 +195,29 @@ export default function TestPipelinesPage() {
           </Space>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
           <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>自定义变量</div>
+            <Form.List name="variableEntries">
+              {(fields, { add: addVar, remove: removeVar }) => (
+                <>
+                  {fields.map(({ key, name: vName }) => (
+                    <Space key={key} style={{ display: 'flex', marginBottom: 4 }}>
+                      <Form.Item name={[vName, 'key']} rules={[{ required: true, message: '变量名' }]} style={{ marginBottom: 0 }}>
+                        <Input placeholder="变量名" style={{ width: 150 }} addonBefore="vars." />
+                      </Form.Item>
+                      <Form.Item name={[vName, 'value']} style={{ marginBottom: 0 }}>
+                        <Input placeholder="默认值" style={{ width: 200 }} />
+                      </Form.Item>
+                      <DeleteOutlined onClick={() => removeVar(vName)} style={{ color: 'red' }} />
+                    </Space>
+                  ))}
+                  <Button type="dashed" size="small" onClick={() => addVar({ key: '', value: '' })} icon={<PlusOutlined />}>
+                    添加变量
+                  </Button>
+                </>
+              )}
+            </Form.List>
+          </div>
+          <div style={{ marginBottom: 16 }}>
             <div style={{ marginBottom: 8, fontWeight: 500 }}>服务器角色配置 {availableRoles.length === 0 && <span style={{ fontWeight: 'normal', color: '#999', fontSize: 12 }}>（请先选择产线）</span>}</div>
             {availableRoles.map(role => {
               const cfg = serverRolesConfig[role] ?? { enabled: false, count: 1 }
@@ -234,12 +246,11 @@ export default function TestPipelinesPage() {
                       <Form.Item {...rest} name={[name, 'name']} label="阶段名称" rules={[{ required: true }]}>
                         <Input style={{ width: 150 }} />
                       </Form.Item>
-                      <Form.Item {...rest} name={[name, 'capabilityKey']} label="选择能力" rules={[{ required: true }]}>
-                        <Select
-                          options={capabilityOptions as any}
-                          style={{ width: 160 }}
-                          onChange={() => form.setFieldValue(['stages', name, 'params'], {})}
-                        />
+                      <Form.Item {...rest} name={[name, 'stageType']} label="类型" rules={[{ required: true }]}>
+                        <Select style={{ width: 130 }} options={[
+                          { value: 'script', label: '运行脚本' },
+                          { value: 'approval', label: '人员审批' },
+                        ]} />
                       </Form.Item>
                       <Form.Item {...rest} name={[name, 'targetRoles']} label="目标角色">
                         <Select mode="multiple" style={{ width: 160 }} placeholder="选择角色"
@@ -254,12 +265,12 @@ export default function TestPipelinesPage() {
                         <Switch />
                       </Form.Item>
                     </Space>
-                    <StageParamsFormWrapper stageIndex={name} form={form} capabilityMap={capabilityMap} />
+                    <StageTypeFields stageIndex={name} form={form} variableCatalog={variableCatalog} dingtalkUsers={dingtalkUsers} />
                   </Card>
                 ))}
                 <Button type="dashed" onClick={() => add({
-                  capabilityKey: 'custom_script', name: '', parallel: false,
-                  timeoutSeconds: 300, retryCount: 0, onFailure: 'stop', targetRoles: [], params: {},
+                  stageType: 'script', name: '', parallel: false,
+                  timeoutSeconds: 300, retryCount: 0, onFailure: 'stop', targetRoles: [], script: '',
                 })} block icon={<PlusOutlined />}>
                   添加阶段
                 </Button>
@@ -290,20 +301,54 @@ export default function TestPipelinesPage() {
   )
 }
 
-function StageParamsFormWrapper({ stageIndex, form, capabilityMap }: {
-  stageIndex: number; form: any; capabilityMap: Map<string, StageOperation>
+function StageTypeFields({ stageIndex, form, variableCatalog, dingtalkUsers }: {
+  stageIndex: number; form: any;
+  variableCatalog: { key: string; description: string; category: string }[];
+  dingtalkUsers: { userId: string; name: string }[];
 }) {
-  const capabilityKey = Form.useWatch(['stages', stageIndex, 'capabilityKey'], form)
-  const targetRoles = Form.useWatch(['stages', stageIndex, 'targetRoles'], form) as string[] | undefined
-  const capability = capabilityKey ? capabilityMap.get(capabilityKey) : null
-  if (!capability?.paramSchema || !Object.keys(capability.paramSchema).length) return null
-  return (
-    <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 6, padding: 12, marginTop: 8 }}>
-      <div style={{ fontSize: 12, fontWeight: 500, color: '#fa8c16', marginBottom: 10 }}>
-        {capability.displayName} 能力参数
+  const stageType = Form.useWatch(['stages', stageIndex, 'stageType'], form)
+  const [aiModalOpen, setAiModalOpen] = useState(false)
+  const textAreaRef = useRef<any>(null)
+
+  function insertVariable(varKey: string) {
+    const fieldPath = ['stages', stageIndex, 'script']
+    const current = form.getFieldValue(fieldPath) ?? ''
+    form.setFieldValue(fieldPath, current + `{{${varKey}}}`)
+  }
+
+  if (stageType === 'approval') {
+    return (
+      <div style={{ marginTop: 8 }}>
+        <Form.Item name={[stageIndex, 'approverIds']} label="审批人">
+          <Select mode="multiple" placeholder="选择审批人" options={dingtalkUsers.map(u => ({ value: u.userId, label: u.name }))} />
+        </Form.Item>
+        <Form.Item name={[stageIndex, 'approvalDescription']} label="审批描述">
+          <Input placeholder="审批时展示的操作描述" />
+        </Form.Item>
       </div>
-      <StageParamsForm paramSchema={capability.paramSchema} parentFieldName={stageIndex} form={form}
-        capabilityName={capability.displayName} targetRoles={targetRoles ?? []} />
+    )
+  }
+
+  // script type
+  return (
+    <div style={{ marginTop: 8 }}>
+      <Form.Item name={[stageIndex, 'script']} label={
+        <span>脚本 <Button type="link" size="small" icon={<RobotOutlined />} onClick={() => setAiModalOpen(true)}>AI 生成</Button></span>
+      }>
+        <Input.TextArea ref={textAreaRef} rows={5} placeholder="输入要执行的 shell 脚本" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+      </Form.Item>
+      <div style={{ marginBottom: 8 }}>
+        <span style={{ fontSize: 12, color: '#999', marginRight: 8 }}>可用变量（点击插入）：</span>
+        {variableCatalog.map(v => (
+          <Tag key={v.key} color="blue" style={{ cursor: 'pointer', marginBottom: 4 }}
+            onClick={() => insertVariable(v.key)} title={v.description}>
+            {'{{' + v.key + '}}'}
+          </Tag>
+        ))}
+      </div>
+      <AiCommandModal open={aiModalOpen} capabilityName="脚本" targetRoles={[]}
+        onConfirm={(cmd) => { form.setFieldValue(['stages', stageIndex, 'script'], cmd); setAiModalOpen(false) }}
+        onCancel={() => setAiModalOpen(false)} />
     </div>
   )
 }

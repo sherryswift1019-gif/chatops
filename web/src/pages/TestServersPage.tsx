@@ -79,7 +79,7 @@ export default function TestServersPage() {
   const statusLabels: Record<string, string> = { idle: '空闲', in_use: '使用中', offline: '离线' }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 50 },
+    { title: 'ID', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
     { title: '地址', render: (_: unknown, r: TestServer) => `${r.host}:${r.port}` },
     { title: '用户', dataIndex: 'username' },
