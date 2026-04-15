@@ -42,7 +42,8 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; lab
   claude: {
     label: 'Claude 配置',
     fields: [
-      { name: 'apiKey', label: 'API Key', secret: true },
+      { name: 'CLAUDE_CODE_OAUTH_TOKEN', label: 'CLAUDE_CODE_OAUTH_TOKEN', secret: true },
+      { name: 'ANTHROPIC_BASE_URL', label: 'ANTHROPIC_BASE_URL（可选）' },
       { name: 'model', label: '模型' },
     ],
   },
