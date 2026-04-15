@@ -16,6 +16,7 @@ import { getMembershipsByUserId } from './db/repositories/product-line-members.j
 import type { IMAdapter } from './adapters/im/types.js'
 import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
+import { PipelineApprovalManager } from './pipeline/approval-manager.js'
 
 // Register all tools by importing them
 import './agent/tools/query-deployments.js'
@@ -108,9 +109,18 @@ async function main(): Promise<void> {
   )
   sessionManager.start()
 
+  // Initialize pipeline approval manager
+  PipelineApprovalManager.initialize(adapters)
+
   // Card action (approval responses)
   for (const adapter of adapters) {
     adapter.onCardAction(async (taskId, action, approverId) => {
+      // Route pipeline approval callbacks
+      try {
+        const mgr = PipelineApprovalManager.getInstance()
+        mgr.handleCallback(taskId, action as 'approved' | 'rejected', approverId)
+      } catch { /* not a pipeline approval */ }
+
       if (action === 'approved' || action === 'rejected') {
         await gate.respond(taskId, approverId, action)
       }
