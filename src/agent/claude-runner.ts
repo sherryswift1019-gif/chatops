@@ -143,10 +143,16 @@ export class ClaudeRunner {
       // Greeting or unknown
       if (!intent || intent.capability === 'greet') {
         const caps = await listCapabilities()
-        const capsList = caps.map(c => `• ${c.displayName} — ${c.description}`).join('\n')
+        const capsList = caps.map(c => `- **${c.displayName}** — ${c.description}`).join('\n')
+        const text = [
+          '## 你好！我是 ChatOps 助手 🤖',
+          '**我目前支持以下能力：**',
+          capsList,
+          '你可以直接用自然语言告诉我你想做什么，比如「查看日志」「部署到开发环境」等。',
+        ].join('\n\n')
         await adapter.sendMessage(
           { type: 'group', id: opts.groupId },
-          { text: `你好！我是 ChatOps 助手 🤖\n\n我目前支持以下能力：\n${capsList}\n\n你可以直接用自然语言告诉我你想做什么，比如「查看日志」「部署到开发环境」等。` }
+          { text }
         )
         return
       }
