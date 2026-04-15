@@ -47,7 +47,7 @@ IM 消息 → Adapter(DingTalk/Feishu) → SessionManager → ClaudeRunner → M
 ### 后端 (`src/`)
 
 - **server.ts** — Fastify 入口，注册适配器、审批网关、管理 API、静态文件服务
-- **config.ts** — Zod 校验环境变量，必需：`DATABASE_URL`、`ANTHROPIC_API_KEY`
+- **config.ts** — Zod 校验环境变量，必需：`DATABASE_URL`。可选：`CLAUDE_CODE_OAUTH_TOKEN`（未设置时从系统配置页面 Claude 标签读取）
 - **adapters/im/** — IM 平台适配层（`IMAdapter` 接口），钉钉用 Stream 模式、飞书用 Webhook 模式
 - **agent/** — AI Agent 核心
   - `claude-runner.ts` — 通过 Porygon (`@snack-kit/porygon`) 调用 Claude CLI
