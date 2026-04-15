@@ -5,6 +5,7 @@ import { listProjects } from '../../db/repositories/projects-repo.js'
 import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
 import { getConfig } from '../../db/repositories/system-config.js'
+import { resolveSSHConfig } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
@@ -59,8 +60,9 @@ async function lookupProjectAndEnv(projectName: string, envName: string) {
 
   const harborCfg = await getConfig('harbor')
   const harbor = harborCfg?.value as Record<string, string> | undefined
+  const sshConfig = await resolveSSHConfig(plEnv.connectionConfig)
 
-  return { project, env, plEnv, harbor }
+  return { project, env, plEnv, harbor, sshConfig }
 }
 
 function buildImageFullPath(harborUrl: string, harborProject: string, imageTag: string): string {
@@ -89,10 +91,9 @@ const deployTool: AgentTool = {
     deployLog(`execute_deploy: project=${projectName} env=${envName} tag=${imageTag}`)
 
     try {
-      const { project, plEnv, harbor } = await lookupProjectAndEnv(projectName, envName)
-      const conn = plEnv.connectionConfig as { host?: string; username?: string; password?: string }
+      const { project, plEnv, harbor, sshConfig } = await lookupProjectAndEnv(projectName, envName)
 
-      if (!conn.host || !conn.username || !conn.password) {
+      if (!sshConfig) {
         return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息（IP/用户名/密码）。请在管理后台 → 产线详情 → 环境配置中设置。` }
       }
 
@@ -108,7 +109,7 @@ const deployTool: AgentTool = {
         const fullImage = buildImageFullPath(harborUrl, harborProject, imageTag)
         const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
         const composePath = project.composePath
-        deployLog(`SSH to ${conn.host}, container=${containerName}, image=${fullImage}, composePath=${composePath}`)
+        deployLog(`SSH to ${sshConfig.host}, container=${containerName}, image=${fullImage}, composePath=${composePath}`)
 
         const latestImage = `${registryHost}/${harborProject}:latest`
         let commands: string
@@ -139,7 +140,7 @@ const deployTool: AgentTool = {
           ].join(' && ')
         }
 
-        const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, commands)
+        const result = await sshExec({ host: sshConfig.host, port: sshConfig.port, username: sshConfig.username, password: sshConfig.password }, commands)
         deployLog(`SSH result: code=${result.code} stdout=${result.stdout.slice(0, 200)}`)
 
         if (result.code !== 0) {
@@ -148,7 +149,7 @@ const deployTool: AgentTool = {
         }
 
         await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'success' })
-        return { success: true, output: `✅ 部署成功\n服务器: ${conn.host}\n容器: ${containerName}\n镜像: ${fullImage}` }
+        return { success: true, output: `✅ 部署成功\n服务器: ${sshConfig.host}\n容器: ${containerName}\n镜像: ${fullImage}` }
 
       } else {
         // Kubernetes
@@ -163,7 +164,7 @@ const deployTool: AgentTool = {
           `kubectl rollout status deployment/${deploymentName} --namespace=${namespace} --timeout=5m`,
         ].join(' && ')
 
-        const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, commands)
+        const result = await sshExec({ host: sshConfig.host, port: sshConfig.port, username: sshConfig.username, password: sshConfig.password }, commands)
         if (result.code !== 0) {
           await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'failed' })
           return { success: false, output: `K8s 部署失败:\n${result.stderr || result.stdout}` }
@@ -200,9 +201,8 @@ const rollbackTool: AgentTool = {
     deployLog(`execute_rollback: project=${projectName} env=${envName} tag=${imageTag ?? 'auto'}`)
 
     try {
-      const { project, plEnv } = await lookupProjectAndEnv(projectName, envName)
-      const conn = plEnv.connectionConfig as { host?: string; username?: string; password?: string }
-      if (!conn.host || !conn.username || !conn.password) {
+      const { project, plEnv, sshConfig } = await lookupProjectAndEnv(projectName, envName)
+      if (!sshConfig) {
         return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息` }
       }
 
@@ -210,7 +210,7 @@ const rollbackTool: AgentTool = {
         const deploymentName = project.k8sProjectName || project.name
         const namespace = plEnv.namespace || envName
         const result = await sshExec(
-          { host: conn.host, username: conn.username, password: conn.password },
+          { host: sshConfig.host, port: sshConfig.port, username: sshConfig.username, password: sshConfig.password },
           `kubectl rollout undo deployment/${deploymentName} --namespace=${namespace}`
         )
         if (result.code !== 0) return { success: false, output: `回滚失败:\n${result.stderr || result.stdout}` }
@@ -245,9 +245,8 @@ const restartTool: AgentTool = {
     deployLog(`execute_restart: project=${projectName} env=${envName}`)
 
     try {
-      const { project, plEnv } = await lookupProjectAndEnv(projectName, envName)
-      const conn = plEnv.connectionConfig as { host?: string; username?: string; password?: string }
-      if (!conn.host || !conn.username || !conn.password) {
+      const { project, plEnv, sshConfig } = await lookupProjectAndEnv(projectName, envName)
+      if (!sshConfig) {
         return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息` }
       }
 
@@ -266,7 +265,7 @@ const restartTool: AgentTool = {
         command = `kubectl rollout restart deployment/${deploymentName} --namespace=${namespace}`
       }
 
-      const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, command)
+      const result = await sshExec({ host: sshConfig.host, port: sshConfig.port, username: sshConfig.username, password: sshConfig.password }, command)
       if (result.code !== 0) return { success: false, output: `重启失败:\n${result.stderr || result.stdout}` }
       return { success: true, output: `✅ 重启成功: ${projectName} (${envName})\n${result.stdout}` }
     } catch (err) {

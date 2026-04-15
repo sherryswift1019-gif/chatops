@@ -11,7 +11,11 @@ export interface K8sConnectionConfig {
   namespace: string
 }
 
-export type ConnectionConfig = DockerConnectionConfig | K8sConnectionConfig | Record<string, unknown>
+export interface ServerRefConnectionConfig {
+  serverIds: number[]
+}
+
+export type ConnectionConfig = DockerConnectionConfig | K8sConnectionConfig | ServerRefConnectionConfig | Record<string, unknown>
 
 export interface ProductLineEnv {
   id: number

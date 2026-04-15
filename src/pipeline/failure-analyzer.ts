@@ -1,6 +1,7 @@
 import { createPorygon } from '@snack-kit/porygon'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
+import { buildClaudeAuthEnv } from '../agent/claude-auth.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -38,7 +39,7 @@ ${errorOutput}
       prompt,
       maxTurns: 1,
       disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
-      envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
+      envVars: buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
     })
     return result.trim()
   } catch (err) {

@@ -3,6 +3,7 @@ import { Client } from 'ssh2'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
+import { resolveSSHConfig } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
@@ -61,8 +62,8 @@ const getLogsTool: AgentTool = {
       const plEnv = plEnvs.find(e => e.envId === env.id)
       if (!plEnv) return { success: false, output: `项目所属产线未配置 "${envName}" 环境` }
 
-      const conn = plEnv.connectionConfig as { host?: string; username?: string; password?: string }
-      if (!conn.host || !conn.username || !conn.password) {
+      const sshConfig = await resolveSSHConfig(plEnv.connectionConfig)
+      if (!sshConfig) {
         return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息` }
       }
 
@@ -81,8 +82,8 @@ const getLogsTool: AgentTool = {
         command = `kubectl logs deployment/${deploymentName} --namespace=${namespace} --tail=${tail} 2>&1`
       }
 
-      toolLog(`SSH to ${conn.host}, command: ${command}`)
-      const result = await sshExec({ host: conn.host, username: conn.username, password: conn.password }, command)
+      toolLog(`SSH to ${sshConfig.host}, command: ${command}`)
+      const result = await sshExec({ host: sshConfig.host, port: sshConfig.port, username: sshConfig.username, password: sshConfig.password }, command)
 
       const logs = result.stdout || result.stderr
       if (result.code !== 0 && !logs) {
