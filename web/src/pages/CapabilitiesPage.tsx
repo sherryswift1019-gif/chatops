@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message } from 'antd'
+import { Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message, Tooltip } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { getCapabilities, createCapability, updateCapability } from '../api/capabilities'
+import { getCapabilities, createCapability, updateCapability, updateCapabilitySystemPrompt, resetCapabilitySystemPrompt } from '../api/capabilities'
 import type { Capability } from '../api/capabilities'
 
 const categoryColors: Record<string, string> = {
@@ -19,6 +19,8 @@ export default function CapabilitiesPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Capability | null>(null)
   const [form] = Form.useForm()
+  const [promptValue, setPromptValue] = useState('')
+  const [promptModified, setPromptModified] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -30,12 +32,16 @@ export default function CapabilitiesPage() {
   function openCreate() {
     setEditing(null)
     form.resetFields()
+    setPromptValue('')
+    setPromptModified(false)
     setModalOpen(true)
   }
 
   function openEdit(record: Capability) {
     setEditing(record)
     form.setFieldsValue({ ...record })
+    setPromptValue(record.systemPrompt ?? '')
+    setPromptModified(false)
     setModalOpen(true)
   }
 
@@ -44,6 +50,9 @@ export default function CapabilitiesPage() {
     try {
       if (editing) {
         await updateCapability(editing.id, values)
+        if (promptModified) {
+          await updateCapabilitySystemPrompt(editing.id, promptValue)
+        }
         message.success('更新成功')
       } else {
         await createCapability(values)
@@ -56,19 +65,31 @@ export default function CapabilitiesPage() {
     }
   }
 
+  async function handleResetPrompt() {
+    if (!editing) return
+    try {
+      const updated = await resetCapabilitySystemPrompt(editing.id)
+      setPromptValue(updated.systemPrompt ?? '')
+      setPromptModified(false)
+      message.success('已恢复默认提示词')
+    } catch {
+      message.error('恢复失败')
+    }
+  }
+
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: '标识', dataIndex: 'key', width: 160 },
-    { title: '能力名称', dataIndex: 'displayName', width: 140 },
+    { title: 'ID', dataIndex: 'id' },
+    { title: '标识', dataIndex: 'key' },
+    { title: '能力名称', dataIndex: 'displayName' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     {
-      title: '分类', dataIndex: 'category', width: 80,
+      title: '分类', dataIndex: 'category',
       render: (v: string) => <Tag color={categoryColors[v]}>{categoryLabels[v] ?? v}</Tag>,
     },
-    { title: '类型', dataIndex: 'isSystem', width: 80,
+    { title: '类型', dataIndex: 'isSystem',
       render: (v: boolean) => <Tag color={v ? 'default' : 'blue'}>{v ? '系统' : '自定义'}</Tag> },
     {
-      title: '关联工具', dataIndex: 'toolNames', width: 220,
+      title: '关联工具', dataIndex: 'toolNames',
       render: (names: string[]) => (
         <Space size={[4, 4]} wrap>
           {names.map(n => <Tag key={n}>{n}</Tag>)}
@@ -76,12 +97,19 @@ export default function CapabilitiesPage() {
       ),
     },
     {
-      title: '需审批', dataIndex: 'needsApproval', width: 80,
+      title: '提示词', dataIndex: 'systemPrompt',
+      render: (v: string | null, record: Capability) => {
+        const isCustom = v !== null && v !== record.defaultSystemPrompt
+        return <Tag color={isCustom ? 'orange' : 'default'}>{isCustom ? '自定义' : '默认'}</Tag>
+      },
+    },
+    {
+      title: '需审批', dataIndex: 'needsApproval',
       render: (v: boolean) => v ? <Tag color="red">是</Tag> : <Tag>否</Tag>,
     },
-    { title: '创建时间', dataIndex: 'createdAt', width: 170, render: (v: string) => new Date(v).toLocaleString() },
+    { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
     {
-      title: '操作', key: 'action', width: 80,
+      title: '操作', key: 'action',
       render: (_: unknown, record: Capability) => (
         <a onClick={() => openEdit(record)}>编辑</a>
       ),
@@ -98,7 +126,7 @@ export default function CapabilitiesPage() {
         onOk={handleSubmit}
         onCancel={() => setModalOpen(false)}
         destroyOnClose
-        width={600}
+        width={720}
       >
         <Form form={form} layout="vertical">
           <Form.Item name="key" label="标识 (key)" rules={[{ required: true, message: '请输入能力标识' }]}>
@@ -127,6 +155,32 @@ export default function CapabilitiesPage() {
           <Form.Item name="needsApproval" label="需审批" valuePropName="checked" initialValue={false}>
             <Switch checkedChildren="是" unCheckedChildren="否" />
           </Form.Item>
+          {editing && (
+            <Form.Item label={
+              <Space>
+                <span>系统提示词</span>
+                {editing.systemPrompt !== editing.defaultSystemPrompt
+                  ? <Tag color="orange">自定义</Tag>
+                  : <Tag>默认</Tag>
+                }
+              </Space>
+            }>
+              <Input.TextArea
+                rows={8}
+                value={promptValue}
+                onChange={e => { setPromptValue(e.target.value); setPromptModified(true) }}
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Button size="small" onClick={handleResetPrompt} disabled={editing.systemPrompt === editing.defaultSystemPrompt}>
+                  恢复默认
+                </Button>
+                <span style={{ color: '#888', fontSize: 12 }}>
+                  支持变量: {'{{initiatorRole}}'} | 项目/服务器信息会自动注入
+                </span>
+              </div>
+            </Form.Item>
+          )}
         </Form>
       </Modal>
     </Card>
