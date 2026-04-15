@@ -184,7 +184,7 @@ export class DingTalkAdapter implements IMAdapter {
     const normalized: NormalizedMessage = {
       platform: 'dingtalk',
       groupId: msg.conversationId,
-      userId: msg.senderId,
+      userId: msg.senderStaffId,
       userName: msg.senderNick,
       text,
       timestamp: msg.createAt ?? Date.now(),
