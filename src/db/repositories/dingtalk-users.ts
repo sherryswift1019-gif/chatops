@@ -42,6 +42,24 @@ export async function upsertDingTalkUser(
   )
 }
 
+export async function getDingTalkUserById(userId: string): Promise<DingTalkUser | null> {
+  const pool = getPool()
+  const { rows } = await pool.query('SELECT * FROM dingtalk_users WHERE user_id = $1', [userId])
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+export async function getDingTalkUsersByIds(userIds: string[]): Promise<Map<string, DingTalkUser>> {
+  if (userIds.length === 0) return new Map()
+  const pool = getPool()
+  const { rows } = await pool.query('SELECT * FROM dingtalk_users WHERE user_id = ANY($1)', [userIds])
+  const map = new Map<string, DingTalkUser>()
+  for (const r of rows) {
+    const u = mapRow(r)
+    map.set(u.userId, u)
+  }
+  return map
+}
+
 export async function getDingTalkUserCount(): Promise<number> {
   const pool = getPool()
   const { rows } = await pool.query('SELECT COUNT(*) AS count FROM dingtalk_users')

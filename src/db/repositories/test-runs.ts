@@ -25,6 +25,7 @@ export interface StageResult {
   durationMs?: number
   output?: string
   error?: string
+  aiAnalysis?: string
 }
 
 function mapRow(r: Record<string, unknown>): TestRun {
