@@ -9,6 +9,7 @@ import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
 import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
+import { buildClaudeAuthEnv } from './claude-auth.js'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -227,7 +228,7 @@ ${capList}
 {"capability":"unknown","summary":"无法识别"}`,
         maxTurns: 1,
         disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'],
-        envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
+        envVars: buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
       })
 
       console.log('[Runner] Porygon raw result:', result)
@@ -295,14 +296,16 @@ ${capList}
             command: 'node',
             args: ['--import', 'tsx/esm', mcpServerPath],
             env: {
+              // 继承父进程环境（PATH/HOME/ANTHROPIC_API_KEY 等），否则子进程找不到 node 且 config 校验失败
+              ...(process.env as Record<string, string>),
               CHATOPS_TASK_CONTEXT: JSON.stringify(context),
               DATABASE_URL: process.env.DATABASE_URL ?? '',
-              ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '',
+              ...buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
             },
           },
         },
         disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
-        envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
+        envVars: buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
       })) {
         console.log(`[Runner] Porygon msg: type=${msg.type}`, msg.type === 'error' ? msg.message : '')
 

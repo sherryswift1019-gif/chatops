@@ -3,6 +3,7 @@ import { createPorygon } from '@snack-kit/porygon'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { VARIABLE_CATALOG } from '../../pipeline/variables.js'
+import { buildClaudeAuthEnv } from '../../agent/claude-auth.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -42,7 +43,7 @@ ${VARIABLE_CATALOG.map(v => `{{${v.key}}} — ${v.description}`).join('\n')}
           prompt,
           maxTurns: 1,
           disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
-          envVars: { ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? '' },
+          envVars: buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
         })
 
         const commands = result.replace(/```[\s\S]*?```/g, m => m.replace(/```\w*\n?|```/g, '')).trim()
