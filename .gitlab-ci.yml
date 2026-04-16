@@ -59,7 +59,8 @@ build-base:
       docker push "${FULL_BASE_DEPS}"
       echo "==> [$(( $(date +%s) - T1 ))s] docker push done"
   rules:
-    - changes:
+    - if: '$CI_COMMIT_BRANCH == "master"'
+      changes:
         - pnpm-lock.yaml
         - package.json
         - Dockerfile.base
