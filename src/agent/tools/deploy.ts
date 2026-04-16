@@ -85,6 +85,22 @@ async function getGitLabConfig(): Promise<{ url: string; token: string; skipTlsV
   }
 }
 
+async function listGitLabBranches(gitlabPath: string): Promise<string[]> {
+  const gitlab = await getGitLabConfig()
+  if (!gitlab.url || !gitlab.token) return []
+  const encodedProject = encodeURIComponent(gitlabPath)
+  const agent = gitlab.skipTlsVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined
+  try {
+    const res = await axios.get<Array<{ name: string }>>(
+      `${gitlab.url}/api/v4/projects/${encodedProject}/repository/branches`,
+      { headers: { 'PRIVATE-TOKEN': gitlab.token }, httpsAgent: agent, timeout: 10000, params: { per_page: 50 } }
+    )
+    return res.data.map(b => b.name)
+  } catch {
+    return []
+  }
+}
+
 async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ tag: string; commitId: string; shortId: string }> {
   const gitlab = await getGitLabConfig()
   if (!gitlab.url || !gitlab.token) throw new Error('GitLab 未配置（url/token）。请在系统配置中设置。')
@@ -104,7 +120,14 @@ async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ ta
     return { tag, commitId: res.data.commit.id, shortId }
   } catch (err: unknown) {
     const status = (err as { response?: { status?: number } })?.response?.status
-    if (status === 404) throw new Error(`GitLab 分支 "${branch}" 不存在（项目: ${gitlabPath}）`)
+    if (status === 404) {
+      // 查询该项目所有分支，帮用户找到正确分支名
+      const branchList = await listGitLabBranches(gitlabPath)
+      const hint = branchList.length > 0
+        ? `\n\n该项目可用分支:\n${branchList.map(b => `- ${b}`).join('\n')}`
+        : ''
+      throw new Error(`GitLab 分支 "${branch}" 不存在（项目: ${gitlabPath}）${hint}`)
+    }
     throw new Error(`GitLab 查询失败: ${String(err)}`)
   }
 }
