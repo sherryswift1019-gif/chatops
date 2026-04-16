@@ -70,20 +70,57 @@ async function main(): Promise<void> {
   const gate = new ApprovalGate(adapters)
   await gate.initialize()
 
+  // Claude runner
+  const runner = new ClaudeRunner()
+
+  // Pending approval contexts — keyed by taskId
+  const pendingApprovals = new Map<string, { groupId: string; platform: string; initiatorId: string; initiatorRole?: string; productLineId?: number; originalPrompt: string }>()
+
   // Wire ApprovalTool to gate
-  setApprovalGateHandler(async (taskId, action, env, description) => {
+  setApprovalGateHandler(async (taskId, action, env, description, meta) => {
+    // 保存执行上下文以便审批通过后恢复
+    pendingApprovals.set(taskId, meta)
+
     await gate.request(
-      { taskId, action, env, description, initiatorName: 'user', groupId: '' },
+      { taskId, action, env, description, initiatorName: meta.initiatorId, groupId: meta.groupId },
       async (tid, decision, approverId) => {
+        const pending = pendingApprovals.get(tid)
+        pendingApprovals.delete(tid)
+        if (!pending) return
+
+        const adapter = adapters.find(a => a.platform === pending.platform) ?? adapters[0]
         if (decision === 'approved') {
-          // Trigger execution session via queue
+          console.log(`[Server] Approval granted for task ${tid}, triggering execution`)
+          await adapter.sendMessage(
+            { type: 'group', id: pending.groupId },
+            { text: `✅ 审批通过（审批人: ${approverId}），正在执行...` }
+          )
+          // 以 executionMode 重新执行（此时 request_approval 被过滤，只暴露执行工具）
+          await runner.run({
+            prompt: pending.originalPrompt,
+            context: {
+              taskId: tid,
+              groupId: pending.groupId,
+              platform: pending.platform,
+              initiatorId: pending.initiatorId,
+              initiatorRole: (pending.initiatorRole as any) ?? null,
+              productLineId: pending.productLineId,
+            },
+            groupId: pending.groupId,
+            platform: pending.platform,
+            adapter,
+            executionMode: true,
+            productLineId: pending.productLineId,
+          })
+        } else {
+          await adapter.sendMessage(
+            { type: 'group', id: pending.groupId },
+            { text: `❌ 审批被拒绝（审批人: ${approverId}），操作已取消。` }
+          )
         }
       }
     )
   })
-
-  // Claude runner
-  const runner = new ClaudeRunner()
 
   // Session manager — processes each message
   const sessionManager = new SessionManager(

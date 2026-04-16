@@ -8,6 +8,7 @@ export interface TaskContext {
   initiatorId: string
   initiatorRole: Role | null
   productLineId?: number
+  originalPrompt?: string
 }
 
 export interface ToolResult {

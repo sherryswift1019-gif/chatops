@@ -204,12 +204,8 @@ const deployTool: AgentTool = {
 
       if (plEnv.runtime === 'docker') {
         const containerName = project.dockerContainerName || project.name
-        const harborUrl = harbor?.url ?? ''
         const harborUser = harbor?.username ?? ''
         const harborPass = harbor?.password ?? ''
-        const harborProject = project.harborProject || project.name
-
-        if (!harborUrl) return { success: false, output: 'Harbor URL 未配置。请在系统配置中设置。' }
 
         const fullImage = buildImageFullPath(harborUrl, harborProject, imageTag)
         const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
@@ -315,7 +311,7 @@ const rollbackTool: AgentTool = {
     deployLog(`execute_rollback: project=${projectName} env=${envName} tag=${imageTag ?? 'auto'}`)
 
     try {
-      const { project, plEnv, sshConfig } = await lookupProjectAndEnv(projectName, envName)
+      const { project, plEnv, sshConfig, harbor } = await lookupProjectAndEnv(projectName, envName)
       if (!sshConfig) {
         return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息` }
       }
@@ -380,7 +376,57 @@ const rollbackTool: AgentTool = {
         await recordDeployment({ project: projectName, env: envName, imageTag: 'prev', deployedBy: ctx.initiatorId, status: 'rolled_back' })
         return { success: true, output: `✅ 快速回滚成功（使用本地 :prev 镜像）\n服务器: ${sshConfig.host}\n容器: ${containerName}` }
       }
-      return deployTool.execute({ project: projectName, env: envName, imageTag }, ctx)
+
+      // Docker: 使用指定 imageTag 直接 SSH 部署（不走 branch 解析）
+      const harborUrl = harbor?.url ?? ''
+      if (!harborUrl) return { success: false, output: 'Harbor URL 未配置。请在系统配置中设置。' }
+      const harborUser = harbor?.username ?? ''
+      const harborPass = harbor?.password ?? ''
+      const harborProject = project.harborProject || project.name
+      const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
+      const fullImage = buildImageFullPath(harborUrl, harborProject, imageTag)
+      const containerName = project.dockerContainerName || project.name
+      const composePath = project.composePath
+      const latestImage = `${registryHost}/${harborProject}:latest`
+      const prevImage = `${registryHost}/${harborProject}:prev`
+      const repoPath = `${registryHost}/${harborProject}`
+
+      let commands: string
+      if (composePath) {
+        commands = [
+          `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
+          `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
+          `cd ${composePath}`,
+          `$COMPOSE_CMD stop ${containerName} || true`,
+          `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+          `docker rmi ${latestImage} 2>/dev/null || true`,
+          `docker pull ${fullImage}`,
+          `docker tag ${fullImage} ${latestImage}`,
+          `$COMPOSE_CMD up -d ${containerName}`,
+          `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
+        ].join(' && ')
+      } else {
+        commands = [
+          `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
+          `docker stop ${containerName} || true`,
+          `docker rm ${containerName} || true`,
+          `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+          `docker rmi ${latestImage} 2>/dev/null || true`,
+          `docker pull ${fullImage}`,
+          `docker tag ${fullImage} ${latestImage}`,
+          `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
+          `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
+        ].join(' && ')
+      }
+
+      deployLog(`rollback with specific tag ${imageTag} for ${projectName}`)
+      const result = await sshExec({ host: sshConfig.host, port: sshConfig.port, username: sshConfig.username, password: sshConfig.password }, commands)
+      if (result.code !== 0) {
+        await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'failed' })
+        return { success: false, output: `回滚失败 (exit code ${result.code}):\n${result.stderr || result.stdout}` }
+      }
+      await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'rolled_back' })
+      return { success: true, output: `✅ 回滚成功\n服务器: ${sshConfig.host}\n容器: ${containerName}\n镜像: ${fullImage}` }
     } catch (err) {
       return { success: false, output: `回滚错误: ${String(err)}` }
     }

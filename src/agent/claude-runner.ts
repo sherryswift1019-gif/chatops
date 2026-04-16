@@ -10,6 +10,8 @@ import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
 import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
 import { buildClaudeEnv } from './claude-config.js'
+import { ApprovalRouter } from '../approval/router.js'
+import { getApprovalRules } from '../db/repositories/approval-rules.js'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -228,7 +230,34 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 5: Execute with session context
+      // Step 5: 审批拦截（代码级强制）
+      if (capability.needsApproval && !opts.executionMode) {
+        const rules = await getApprovalRules()
+        const router = new ApprovalRouter(rules)
+        const envName = intent.env ?? '*'
+        const rule = router.route(capability.key, envName)
+
+        if (rule) {
+          // 有审批规则 → 只暴露 request_approval，强制走审批流
+          console.log(`[Runner] Approval required for ${capability.key} env=${envName}, restricting to approval tool only`)
+          const approvalOnly = capabilityTools.filter(t => t.name === 'request_approval')
+          if (approvalOnly.length === 0) {
+            await adapter.sendMessage(
+              { type: 'group', id: opts.groupId },
+              { text: `「${capability.displayName}」需要审批但审批工具不可用。请联系管理员。` }
+            )
+            return
+          }
+          // 把 originalPrompt 注入 context 以便审批通过后能恢复执行
+          opts.context.originalPrompt = prompt
+          await this.executeWithPorygon(opts, approvalOnly, capability)
+          return
+        }
+        // 无匹配规则 → 免审批，正常执行
+        console.log(`[Runner] No approval rule for ${capability.key} env=${envName}, auto-approved`)
+      }
+
+      // Step 6: Execute with session context
       await this.executeWithPorygon(opts, capabilityTools, capability)
 
     } catch (err) {
