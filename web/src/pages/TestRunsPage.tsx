@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar } from 'antd'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, UserOutlined } from '@ant-design/icons'
 import { getTestRuns, getTestRun } from '../api/test-runs'
+import type { TestRunWithUser } from '../api/test-runs'
 import { getTestPipelines } from '../api/test-pipelines'
-import type { TestRun, TestPipeline } from '../types'
+import { usePagination } from '../hooks/usePagination'
+import type { TestPipeline } from '../types'
 
 const statusColors: Record<string, string> = { pending: 'default', running: 'processing', success: 'success', failed: 'error', cancelled: 'warning' }
 const statusLabels: Record<string, string> = { pending: '等待中', running: '执行中', success: '成功', failed: '失败', cancelled: '已取消' }
@@ -15,18 +17,36 @@ function formatDuration(ms: number): string {
 }
 
 export default function TestRunsPage() {
-  const [data, setData] = useState<TestRun[]>([])
+  const [data, setData] = useState<TestRunWithUser[]>([])
   const [pipelines, setPipelines] = useState<TestPipeline[]>([])
   const [loading, setLoading] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [selectedRun, setSelectedRun] = useState<TestRun | null>(null)
+  const [selectedRun, setSelectedRun] = useState<TestRunWithUser | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
-  useEffect(() => { load(); loadPipelines() }, [])
+  const { page, limit, setTotal, tableProps } = usePagination(20)
+
+  useEffect(() => { loadPipelines() }, [])
+
+  useEffect(() => {
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
+    load()
+  }, [page, limit])
 
   async function load() {
     setLoading(true)
-    try { setData(await getTestRuns()) } finally { setLoading(false) }
+    try {
+      const res = await getTestRuns({ page, limit })
+      setData(res.data)
+      setTotal(res.total)
+    } catch {
+      // ignore abort errors
+    } finally {
+      setLoading(false)
+    }
   }
+
   async function loadPipelines() {
     try { setPipelines(await getTestPipelines()) } catch { /* */ }
   }
@@ -45,14 +65,14 @@ export default function TestRunsPage() {
     { title: 'ID', dataIndex: 'id' },
     { title: '流水线', dataIndex: 'pipelineId', render: (v: number) => pipelines.find(p => p.id === v)?.name ?? `#${v}` },
     { title: '触发', dataIndex: 'triggerType', render: (v: string) => triggerLabels[v] ?? v },
-    { title: '触发人', dataIndex: 'triggeredByName', render: (_: unknown, r: TestRun) => r.triggeredByName ? <span><Avatar size={20} src={r.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{r.triggeredByName}</span> : (r.triggeredBy || '-') },
+    { title: '触发人', dataIndex: 'triggeredByName', render: (_: unknown, r: TestRunWithUser) => r.triggeredByName ? <span><Avatar size={20} src={r.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{r.triggeredByName}</span> : (r.triggeredBy || '-') },
     { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
-    { title: '进度', render: (_: unknown, r: TestRun) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
+    { title: '进度', render: (_: unknown, r: TestRunWithUser) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
     { title: '开始时间', dataIndex: 'startedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
     { title: '结束时间', dataIndex: 'finishedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
     {
       title: '操作',
-      render: (_: unknown, r: TestRun) => (
+      render: (_: unknown, r: TestRunWithUser) => (
         <Space>
           <a onClick={() => showDetail(r.id)}>详情</a>
           {(r.status === 'success' || r.status === 'failed') && (
@@ -68,7 +88,7 @@ export default function TestRunsPage() {
   return (
     <>
       <Card title="执行记录" extra={<Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>}>
-        <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={{ pageSize: 20 }} />
+        <Table rowKey="id" columns={columns} dataSource={data} loading={loading} {...tableProps} />
       </Card>
 
       <Drawer title={selectedRun ? `执行详情 #${selectedRun.id}` : ''} open={drawerOpen} onClose={() => setDrawerOpen(false)} width={600}>
