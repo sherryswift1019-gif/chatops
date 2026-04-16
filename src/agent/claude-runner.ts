@@ -139,11 +139,17 @@ export class ClaudeRunner {
       }
 
       // Step 0: 有活跃 session 时直接 resume（跳过 intent 检测）
-      const activeSession = this.sessions.get(opts.groupId)
-      if (activeSession && (Date.now() - activeSession.lastUsed) <= SESSION_TTL_MS) {
-        console.log(`[Runner] Active session found for group ${opts.groupId}, resuming with: "${prompt}"`)
-        await this.executeWithPorygon(opts, activeSession.tools)
-        return
+      // 但明确的打招呼/求助消息不 resume，走固定 greet 回复
+      const greetPattern = /^(你好|hi|hello|help|帮助|你能做什么|你会什么|有什么功能|菜单|功能列表)\s*[?？!！。.]*$/i
+      const isGreeting = greetPattern.test(prompt.trim())
+
+      if (!isGreeting) {
+        const activeSession = this.sessions.get(opts.groupId)
+        if (activeSession && (Date.now() - activeSession.lastUsed) <= SESSION_TTL_MS) {
+          console.log(`[Runner] Active session found for group ${opts.groupId}, resuming with: "${prompt}"`)
+          await this.executeWithPorygon(opts, activeSession.tools)
+          return
+        }
       }
 
       // Step 1: Detect intent (新对话)
