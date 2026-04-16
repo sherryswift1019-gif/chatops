@@ -45,15 +45,40 @@ function mapRow(r: Record<string, unknown>): TestRun {
   }
 }
 
-export async function listTestRuns(pipelineId?: number, limit = 50): Promise<TestRun[]> {
+export async function listTestRuns(opts: {
+  pipelineId?: number
+  page?: number
+  pageSize?: number
+}): Promise<{ items: TestRun[]; total: number }> {
   const pool = getPool()
-  if (pipelineId) {
-    const { rows } = await pool.query(
-      'SELECT * FROM test_runs WHERE pipeline_id = $1 ORDER BY id DESC LIMIT $2', [pipelineId, limit])
-    return rows.map(mapRow)
+  const page = Math.max(1, opts.page ?? 1)
+  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 20))
+  const offset = (page - 1) * pageSize
+
+  const whereParts: string[] = []
+  const params: unknown[] = []
+
+  if (opts.pipelineId) {
+    params.push(opts.pipelineId)
+    whereParts.push(`pipeline_id = $${params.length}`)
   }
-  const { rows } = await pool.query('SELECT * FROM test_runs ORDER BY id DESC LIMIT $1', [limit])
-  return rows.map(mapRow)
+
+  const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : ''
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*) AS count FROM test_runs ${where}`,
+    params
+  )
+  const total = parseInt(countResult.rows[0].count, 10)
+
+  params.push(pageSize)
+  params.push(offset)
+  const { rows } = await pool.query(
+    `SELECT * FROM test_runs ${where} ORDER BY id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  )
+
+  return { items: rows.map(mapRow), total }
 }
 
 export async function getTestRunById(id: number): Promise<TestRun | null> {

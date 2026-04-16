@@ -65,3 +65,44 @@ export async function getDingTalkUserCount(): Promise<number> {
   const { rows } = await pool.query('SELECT COUNT(*) AS count FROM dingtalk_users')
   return parseInt(rows[0].count, 10)
 }
+
+export interface DingTalkUserPagedResult {
+  items: DingTalkUser[]
+  total: number
+}
+
+export async function listDingTalkUsersPaged(opts: {
+  keyword?: string
+  page?: number
+  pageSize?: number
+}): Promise<DingTalkUserPagedResult> {
+  const pool = getPool()
+  const page = Math.max(1, opts.page ?? 1)
+  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 20))
+  const offset = (page - 1) * pageSize
+
+  const whereParts: string[] = []
+  const params: unknown[] = []
+
+  if (opts.keyword) {
+    params.push(`%${opts.keyword}%`)
+    whereParts.push(`(name ILIKE $${params.length} OR user_id ILIKE $${params.length} OR department ILIKE $${params.length})`)
+  }
+
+  const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : ''
+
+  const countResult = await pool.query(
+    `SELECT COUNT(*) AS count FROM dingtalk_users ${where}`,
+    params
+  )
+  const total = parseInt(countResult.rows[0].count, 10)
+
+  params.push(pageSize)
+  params.push(offset)
+  const { rows } = await pool.query(
+    `SELECT * FROM dingtalk_users ${where} ORDER BY name LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  )
+
+  return { items: rows.map(mapRow), total }
+}
