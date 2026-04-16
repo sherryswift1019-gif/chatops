@@ -340,6 +340,7 @@ ${capList}
               // 继承父进程环境（PATH/HOME 等），否则子进程找不到 node 且 config 校验失败
               ...(process.env as Record<string, string>),
               CHATOPS_TASK_CONTEXT: JSON.stringify(context),
+              CHATOPS_ALLOWED_TOOLS: toolNames.join(','),
               DATABASE_URL: process.env.DATABASE_URL ?? '',
               ...claudeEnv,
             },

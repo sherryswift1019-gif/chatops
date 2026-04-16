@@ -40,7 +40,15 @@ const server = new Server(
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   const ctx: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
   const { filterToolsByRole } = await import('./mcp-server-utils.js')
-  const tools = await filterToolsByRole(getAllTools(), ctx.initiatorRole ?? null, ctx.productLineId)
+  let tools = await filterToolsByRole(getAllTools(), ctx.initiatorRole ?? null, ctx.productLineId)
+
+  // 按 capability 白名单过滤（由 runner 通过环境变量传入）
+  const allowedList = process.env.CHATOPS_ALLOWED_TOOLS
+  if (allowedList) {
+    const allowed = new Set(allowedList.split(','))
+    tools = tools.filter(t => allowed.has(t.name))
+  }
+
   return {
     tools: tools.map(t => ({
       name: t.name,
