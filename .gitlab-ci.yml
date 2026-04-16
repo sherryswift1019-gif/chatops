@@ -12,6 +12,8 @@ variables:
   HARBOR_PROJECT_PUBLIC: para-pam
   BASE_IMAGE_NAME: chatops-base
   APP_IMAGE_NAME: chatops
+  # 禁用 BuildKit：BuildKit 不走 daemon 的 insecure-registries，传统 builder 走
+  DOCKER_BUILDKIT: "0"
 
 stages:
   - build-base
