@@ -424,6 +424,27 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
   }
 
   async function handleSave() {
+    // 兜底校验：检测同一服务器被分配到多个环境
+    const serverEnvMap = new Map<number, string[]>()
+    for (const r of rows) {
+      if (r.runtime !== 'docker') continue
+      const cfg = r.connectionConfig as Record<string, unknown> | undefined
+      const ids = Array.isArray(cfg?.serverIds) ? (cfg.serverIds as number[]) : []
+      for (const sid of ids) {
+        if (!serverEnvMap.has(sid)) serverEnvMap.set(sid, [])
+        serverEnvMap.get(sid)!.push(r.envDisplayName)
+      }
+    }
+    const dups = [...serverEnvMap.entries()].filter(([, names]) => names.length > 1)
+    if (dups.length > 0) {
+      const detail = dups.map(([sid, names]) => {
+        const s = servers.find(sv => sv.id === sid)
+        return `${s?.name ?? sid} 同时在 ${names.join('、')} 中`
+      }).join('；')
+      message.error(`服务器不能重复分配：${detail}`)
+      return
+    }
+
     setSaving(true)
     try {
       await setProductLineEnvs(productLineId, rows.map(r => ({
@@ -481,6 +502,21 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
         }
         // Docker: select servers from TestServer pool
         const serverIds = (cfg.serverIds as unknown as number[]) ?? []
+        // 计算被其他环境占用的服务器
+        const usedByOthers = new Map<number, string>()
+        for (const r of rows) {
+          if (r.envId === record.envId || r.runtime !== 'docker') continue
+          const rCfg = r.connectionConfig as Record<string, unknown> | undefined
+          const ids = Array.isArray(rCfg?.serverIds) ? (rCfg.serverIds as number[]) : []
+          for (const sid of ids) usedByOthers.set(sid, r.envDisplayName)
+        }
+        const serverOptions = servers.map(s => ({
+          value: s.id,
+          label: usedByOthers.has(s.id)
+            ? `${s.name} (${s.host}) - 已被 ${usedByOthers.get(s.id)} 使用`
+            : `${s.name} (${s.host}) - ${s.role || '无角色'}`,
+          disabled: usedByOthers.has(s.id),
+        }))
         // Legacy format: show migration hint
         if (!cfg.serverIds && cfg.host) {
           return (
@@ -494,10 +530,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
                 onChange={(ids: number[]) => updateRow(record.envId, {
                   connectionConfig: { serverIds: ids },
                 })}
-                options={servers.map(s => ({
-                  value: s.id,
-                  label: `${s.name} (${s.host}) - ${s.role || '无角色'}`,
-                }))}
+                options={serverOptions}
               />
             </Space>
           )
@@ -511,10 +544,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
             onChange={(ids: number[]) => updateRow(record.envId, {
               connectionConfig: { serverIds: ids },
             })}
-            options={servers.map(s => ({
-              value: s.id,
-              label: `${s.name} (${s.host}) - ${s.role || '无角色'}`,
-            }))}
+            options={serverOptions}
           />
         )
       },

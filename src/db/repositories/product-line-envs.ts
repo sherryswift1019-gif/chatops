@@ -69,6 +69,25 @@ export async function batchSetProductLineEnvs(
   envs: Array<Pick<ProductLineEnv, 'envId' | 'runtime'> &
     Partial<Pick<ProductLineEnv, 'namespace' | 'enabled' | 'connectionConfig'>>>
 ): Promise<ProductLineEnv[]> {
+  // 校验：同一产线内 Docker 模式环境不能共享服务器
+  const serverEnvMap = new Map<number, number[]>()
+  for (const env of envs) {
+    if (env.runtime !== 'docker') continue
+    const cfg = env.connectionConfig as Record<string, unknown> | undefined
+    const ids = Array.isArray(cfg?.serverIds) ? (cfg.serverIds as number[]) : []
+    for (const sid of ids) {
+      if (!serverEnvMap.has(sid)) serverEnvMap.set(sid, [])
+      serverEnvMap.get(sid)!.push(env.envId)
+    }
+  }
+  const duplicates = [...serverEnvMap.entries()].filter(([, envIds]) => envIds.length > 1)
+  if (duplicates.length > 0) {
+    const err = new Error('服务器不能同时分配给多个环境') as Error & { statusCode: number; duplicates: Array<[number, number[]]> }
+    err.statusCode = 400
+    err.duplicates = duplicates
+    throw err
+  }
+
   const pool = getPool()
   const client = await pool.connect()
   try {
