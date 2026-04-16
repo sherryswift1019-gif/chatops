@@ -1,7 +1,7 @@
 import { createPorygon, type Porygon } from '@snack-kit/porygon'
 import type { IMAdapter } from '../adapters/im/types.js'
-import { getTool, getAllTools } from './tools/index.js'
-import type { AgentTool, TaskContext } from './tools/types.js'
+import { getTool, getAllTools, getPermittedTools } from './tools/index.js'
+import type { AgentTool, TaskContext, Role } from './tools/types.js'
 import { getRecentTasks } from '../db/repositories/tasks.js'
 import { listCapabilities, getCapabilityByKey, type Capability } from '../db/repositories/capabilities.js'
 import { checkCapabilityAccess } from '../db/repositories/product-line-capabilities.js'
@@ -168,14 +168,39 @@ export class ClaudeRunner {
       }
 
       // Step 3: Check access
+      const userRole = context.initiatorRole ?? 'developer'
+
+      // 3a: 未绑定产线的用户无法执行非查询类能力
+      if (!productLineId && capability.category !== 'query') {
+        await adapter.sendMessage(
+          { type: 'group', id: opts.groupId },
+          { text: `⛔ 你还未加入任何产线，无法执行「${capability.displayName}」。请联系管理员将你添加到产线成员中。` }
+        )
+        return
+      }
+
+      // 3b: 已有产线的用户检查 capability-level 权限
       if (productLineId) {
         const envName = intent.env ?? '*'
-        const userRole = context.initiatorRole ?? 'developer'
         const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole)
         if (!access.allowed) {
           await adapter.sendMessage(
             { type: 'group', id: opts.groupId },
             { text: `⛔ 无法执行「${capability.displayName}」：${access.reason}` }
+          )
+          return
+        }
+      }
+
+      // 3c: 检查用户 role 是否有权使用该能力的核心工具
+      if (productLineId) {
+        const permitted = await getPermittedTools(userRole as Role, productLineId)
+        const permittedNames = new Set(permitted.map(t => t.name))
+        const hasAnyCapTool = capability.toolNames.some(name => permittedNames.has(name))
+        if (!hasAnyCapTool) {
+          await adapter.sendMessage(
+            { type: 'group', id: opts.groupId },
+            { text: `⛔ 你的角色（${userRole}）无权执行「${capability.displayName}」。如需此权限，请联系管理员。` }
           )
           return
         }
