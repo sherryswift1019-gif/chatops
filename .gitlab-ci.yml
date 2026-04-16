@@ -35,7 +35,7 @@ stages:
     - echo "${HARBOR_PASSWORD}" | docker login ${HARBOR_REGISTRY}
         -u "${HARBOR_USERNAME}" --password-stdin
   tags:
-    - pam
+    - zta-vm
 
 # ============================================================
 # Stage 1: 构建 base 镜像（仅依赖变更时触发）
