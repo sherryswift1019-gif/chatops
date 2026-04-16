@@ -11,13 +11,15 @@ export function getTestPool(): Pool {
   return testPool
 }
 
+function loadSchema(name: string): string {
+  return readFileSync(join(process.cwd(), `src/db/${name}`), 'utf8')
+}
+
 export async function resetTestDb(): Promise<void> {
   const pool = getTestPool()
-  const schema = readFileSync(join(process.cwd(), 'src/db/schema.sql'), 'utf8')
-  const schemaV2 = readFileSync(join(process.cwd(), 'src/db/schema-v2.sql'), 'utf8')
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;')
-  await pool.query(schema)
-  await pool.query(schemaV2)
-  const schemaV3 = readFileSync(join(process.cwd(), 'src/db/schema-v3.sql'), 'utf8')
-  await pool.query(schemaV3)
+  const schemas = ['schema.sql', 'schema-v2.sql', 'schema-v3.sql', 'schema-v4.sql', 'schema-v5.sql', 'schema-v6.sql', 'schema-v7.sql', 'schema-v8.sql']
+  for (const s of schemas) {
+    await pool.query(loadSchema(s))
+  }
 }

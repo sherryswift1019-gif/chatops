@@ -1,0 +1,116 @@
+# generated: 2026-04-15
+# project: ChatOps 研发 AI 助手
+# project_key: chatops-ai-assistant
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status: backlog → in-progress → done
+# Story Status: backlog → ready-for-dev → in-progress → review → done
+# Retrospective Status: optional ↔ done
+
+# SPRINT PLAN (1 人开发，4 冲刺 = 27 Story):
+# ============================================
+# Sprint 1 (7 Story): 最小可用分析 — @机器人 → 分析报告 + Issue
+# Sprint 2 (5 Story): 图片 + 知识库秒回
+# Sprint 3 (8 Story): L1 自动修复闭环
+# Sprint 4 (7 Story): L2 + AI Review + 降级
+#
+# 后续（非 MVP 核心，延后）:
+# - L3 审批（Epic 5）
+# - 管理后台（Epic 6）
+# - Growth（Epic 7-8）
+
+generated: 2026-04-15
+project: ChatOps 研发 AI 助手
+project_key: chatops-ai-assistant
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # ═══ Sprint 1: 最小可用分析 (7 Story) ═══
+  epic-1: backlog
+  1-1-schema-v8-migration-capability-registration: backlog
+  1-5-worktree-manager: backlog
+  1-7-agent-coordinator-skeleton: backlog
+  1-8-analysis-tools-read-code-download-image: backlog
+  1-9-analysis-tools-switch-version-create-issue: backlog
+  1-10-analyze-bug-capability: backlog
+  1-11-e2e-first-analysis-validation: backlog
+
+  # ═══ Sprint 2: 图片 + 知识库秒回 (5 Story) ═══
+  1-3-dingtalk-adapter-image-support: backlog
+  1-6-knowledge-repository-base: backlog
+  2-1-index-json-matching-engine: backlog
+  2-2-search-knowledge-mcp-tool: backlog
+  2-5-hit-query-before-analysis: backlog
+
+  # ═══ Sprint 3: L1 自动修复 (8 Story) ═══
+  1-4-gitlab-webhook-receiver-issue-mr-events: backlog
+  3-1-fix-tools-fix-code-run-tests-create-mr: backlog
+  3-2-update-ai-summary-tool: backlog
+  3-3-fix-branch-management: backlog
+  3-4-aider-commit-message-builder: backlog
+  3-5-fix-bug-l1-capability: backlog
+  3-6-gitlab-label-state-machine: backlog
+  3-7-l1-e2e-validation: backlog
+  epic-1-retrospective: optional
+
+  # ═══ Sprint 4: L2 + AI Review + 降级 (7 Story) ═══
+  epic-4: backlog
+  4-1-sensitive-info-masking: backlog
+  4-2-retry-handler: backlog
+  4-3-auto-downgrade-logic: backlog
+  4-4-fix-bug-l2-capability: backlog
+  4-5-review-mr-diff-mcp-tool: backlog
+  4-6-ai-review-mr-capability: backlog
+  4-7-l2-e2e-validation: backlog
+  epic-4-retrospective: optional
+
+  # ═══ 延后：非 MVP 核心 ═══
+  # --- L3 审批（退化为 AI 只分析，人工全程接手）---
+  epic-5: backlog
+  5-1-module-owners-data-layer: backlog
+  5-2-module-owner-matching-logic: backlog
+  5-3-fix-bug-l3-capability: backlog
+  5-4-l3-dingtalk-approval-card: backlog
+  5-5-l3-e2e-validation: backlog
+  epic-5-retrospective: optional
+
+  # --- 管理后台（PAM 直接配 DB，不需要页面）---
+  epic-6: backlog
+  1-2-extend-test-pipelines-stage-types: backlog
+  6-1-product-knowledge-repos-api: backlog
+  6-2-ai-summary-auto-scan: backlog
+  6-3-product-onboarding-api: backlog
+  6-4-product-onboarding-frontend: backlog
+  6-5-module-owners-frontend: backlog
+  6-6-bug-runs-frontend: backlog
+  6-7-audit-log-export: backlog
+  epic-6-retrospective: optional
+
+  # --- Growth ---
+  epic-2: backlog
+  2-3-knowledge-image-local-storage: backlog
+  2-4-knowledge-hit-tracking: backlog
+  2-6-knowledge-manual-edit-git: backlog
+  epic-2-retrospective: optional
+  epic-3-retrospective: optional
+
+  epic-7: backlog
+  7-1-root-cause-attribution-logic: backlog
+  7-2-issue-close-knowledge-settlement: backlog
+  7-3-root-cause-repeat-rate-stats: backlog
+  7-4-root-cause-improvement-suggestions: backlog
+  7-5-metrics-daily-aggregation: backlog
+  7-6-metrics-dashboard-frontend: backlog
+  epic-7-retrospective: optional
+
+  epic-8: backlog
+  8-1-feishu-webhook-image-support: backlog
+  8-2-gitlab-pipeline-failure-trigger: backlog
+  8-3-prometheus-grafana-alert-integration: backlog
+  8-4-porygon-backend-abstraction: backlog
+  8-5-cn-model-backend-example: backlog
+  epic-8-retrospective: optional

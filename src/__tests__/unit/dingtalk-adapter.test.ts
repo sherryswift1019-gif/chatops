@@ -8,6 +8,7 @@ vi.mock('dingtalk-stream-sdk-nodejs', () => {
       listeners.set(topic, cb)
       return mockClient
     }),
+    registerAllEventListener: vi.fn(() => mockClient),
     connect: vi.fn(async () => {}),
     disconnect: vi.fn(),
     send: vi.fn(),

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { resetTestDb } from '../helpers/db.js'
 import { createMockAdapter } from '../helpers/im.js'
 import { SessionManager } from '../../agent/session-manager.js'
@@ -18,9 +18,10 @@ describe('SessionManager', () => {
     adapter.simulateMessage({ groupId: 'g1', text: 'hello' })
     adapter.simulateMessage({ groupId: 'g2', text: 'world' })
 
-    await new Promise(r => setTimeout(r, 50))
-    expect(handled).toContain('g1')
-    expect(handled).toContain('g2')
+    await vi.waitFor(() => {
+      expect(handled).toContain('g1')
+      expect(handled).toContain('g2')
+    }, { timeout: 2000 })
   })
 
   it('sends immediate ack message on receiving a request', async () => {
@@ -32,10 +33,11 @@ describe('SessionManager', () => {
     manager.start()
 
     adapter.simulateMessage({ groupId: 'g1', text: 'deploy something' })
-    await new Promise(r => setTimeout(r, 20))
 
-    expect(adapter.sentMessages.length).toBeGreaterThan(0)
-    const ack = adapter.sentMessages[0].content as { text: string }
-    expect(ack.text).toContain('收到')
+    await vi.waitFor(() => {
+      expect(adapter.sentMessages.length).toBeGreaterThan(0)
+      const ack = adapter.sentMessages[0].content as { text: string }
+      expect(ack.text).toContain('收到')
+    }, { timeout: 2000 })
   })
 })

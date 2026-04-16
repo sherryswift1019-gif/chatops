@@ -8,6 +8,10 @@ import {
   ThunderboltOutlined,
   SettingOutlined,
   ExperimentOutlined,
+  BugOutlined,
+  BookOutlined,
+  DashboardOutlined,
+  UserSwitchOutlined,
 } from '@ant-design/icons'
 
 const { Sider, Content, Header } = Layout
@@ -21,6 +25,11 @@ const menuItems = [
   { key: '/test-servers', icon: <CloudServerOutlined />, label: '服务器' },
   { key: '/test-pipelines', icon: <ExperimentOutlined />, label: '流水线' },
   { key: '/test-runs', icon: <ExperimentOutlined />, label: '执行记录' },
+  { type: 'divider' as const },
+  { key: '/bug-runs', icon: <BugOutlined />, label: 'Bug 修复实例' },
+  { key: '/module-owners', icon: <UserSwitchOutlined />, label: '模块负责人' },
+  { key: '/product-knowledge', icon: <BookOutlined />, label: '知识库配置' },
+  { key: '/metrics', icon: <DashboardOutlined />, label: '价值仪表盘' },
 ]
 
 export default function AdminLayout() {

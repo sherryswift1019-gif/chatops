@@ -81,3 +81,40 @@ export interface StageResult {
   startedAt?: string; finishedAt?: string; durationMs?: number; output?: string; error?: string
   aiAnalysis?: string
 }
+
+// ─── 研发 AI 助手类型 ───────────────────────────────────────────
+
+export interface BugAnalysisReport {
+  id: number; issueId: number; issueUrl: string; productLineId: number
+  agentSessionId: string | null; level: string; classification: string
+  confidence: string; confidenceScore: number | null
+  rootCauseSummary: string | null; solutionsJson: Solution[]
+  affectedModules: string[] | null; analysisSteps: string[] | null
+  metadata: Record<string, unknown> | null; status: string
+  createdAt: string; updatedAt: string
+}
+
+export interface Solution {
+  id: string; summary: string; recommended: boolean; risk: string; effort: string
+}
+
+export interface ModuleOwner {
+  id: number; productLineId: number; modulePattern: string
+  ownerUserId: string; backupOwnerUserId: string | null; createdAt: string
+}
+
+export interface ProductKnowledgeRepo {
+  id: number; productLineId: number; codeRepoUrl: string; codeDefaultBranch: string
+  knowledgeRepoUrl: string; aiSummaryPath: string
+  imageStorageConfig: Record<string, unknown> | null; createdAt: string
+}
+
+export interface KnowledgeHitStat {
+  id: number; entryId: string; productLineId: number
+  hitCount: number; lastHitAt: string | null; updatedAt: string
+}
+
+export interface MetricDaily {
+  id: number; date: string; productLineId: number | null
+  metricKey: string; metricValue: number; metadata: Record<string, unknown> | null
+}

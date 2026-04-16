@@ -10,6 +10,14 @@ interface DingTalkStreamConfig {
   clientSecret: string
 }
 
+interface RichTextItem {
+  text?: string
+  content?: string
+  type?: string        // 当前消息 richText: 'picture' | 'text'
+  msgType?: string     // 引用消息 richText: 'picture' | 'text'
+  downloadCode?: string
+}
+
 interface RobotMessage {
   conversationId: string
   chatbotUserId: string
@@ -25,7 +33,26 @@ interface RobotMessage {
   sessionWebhook: string
   robotCode: string
   msgtype: string
-  text: { content: string }
+  text: {
+    content: string
+    // 引用回复嵌套在 text 里
+    repliedMsg?: {
+      msgType?: string
+      content?: {
+        richText?: RichTextItem[]
+        downloadCode?: string
+        photoURL?: string
+      } | string
+    }
+  }
+  // richText 图文混排（顶层 content.richText）
+  content?: {
+    richText?: RichTextItem[]
+    photoURL?: string
+    downloadCode?: string
+  } | string
+  // imageList 数组形式
+  imageList?: Array<{ downloadCode?: string; imageUrl?: string }>
 }
 
 interface AccessTokenCache {
@@ -161,32 +188,112 @@ export class DingTalkAdapter implements IMAdapter {
       if (first) this.processedMsgIds.delete(first)
     }
 
-    console.log('[DingTalk] Message from:', msg.senderNick, '| conversationId:', msg.conversationId, '| text:', msg.text?.content)
+    console.log('[DingTalk] Message from:', msg.senderNick, '| conversationId:', msg.conversationId, '| msgtype:', msg.msgtype)
 
     // Cache sessionWebhook so we can reply to this conversation later
     if (msg.sessionWebhook) {
       this.webhookCache.set(msg.conversationId, msg.sessionWebhook)
     }
 
-    // Strip @mentions from text
-    const text = (msg.text?.content ?? '').replace(/@\S+/g, '').trim()
+    // ── 提取文本 ──────────────────────────────────────────
+    let text = ''
+    const contentObj = typeof msg.content === 'string' ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : msg.content
+
+    if (msg.msgtype === 'richText' && contentObj?.richText) {
+      // richText 图文混排：从 content.richText[] 提取文本
+      text = contentObj.richText
+        .filter((item: RichTextItem) => item.text || (item.type === 'text' && item.content))
+        .map((item: RichTextItem) => item.text || item.content || '')
+        .join('')
+        .replace(/@\S+/g, '').trim()
+    } else {
+      text = (msg.text?.content ?? '').replace(/@\S+/g, '').trim()
+    }
+
+    // ── 提取图片 ──────────────────────────────────────────
+    const images: string[] = []
+
+    // 1. 引用回复中的图片（优先级最高，因为用户明确引用了某条消息）
+    const repliedMsg = msg.text?.repliedMsg
+    if (repliedMsg) {
+      const repliedContent = typeof repliedMsg.content === 'string'
+        ? (() => { try { return JSON.parse(repliedMsg.content) } catch { return null } })()
+        : repliedMsg.content
+
+      // 引用消息中的 richText 图片
+      if (repliedContent?.richText) {
+        for (const item of repliedContent.richText) {
+          if (item.msgType === 'picture' && item.downloadCode) {
+            images.push(item.downloadCode)
+          }
+          // 同时提取引用消息的文本
+          if (item.msgType === 'text' && item.content) {
+            const cleanText = item.content.replace(/@\S+\s*/g, '').trim()
+            if (cleanText) text = cleanText + '\n' + text
+          }
+        }
+      }
+
+      // 引用消息是纯图片
+      if (repliedMsg.msgType === 'picture' && repliedContent?.downloadCode) {
+        images.push(repliedContent.downloadCode)
+      }
+    }
+
+    // 2. 当前消息的 richText 图片
+    if (contentObj?.richText) {
+      for (const item of contentObj.richText) {
+        if (item.type === 'picture' && item.downloadCode) {
+          images.push(item.downloadCode)
+        }
+      }
+    }
+
+    // 3. 纯图片消息 (content.photoURL)
+    if (contentObj?.photoURL) {
+      images.push(contentObj.photoURL)
+    }
+
+    // 4. imageList 数组形式
+    if (msg.imageList && msg.imageList.length > 0) {
+      for (const img of msg.imageList) {
+        const code = img.downloadCode || img.imageUrl
+        if (code) images.push(code)
+      }
+    }
+
+    // ── 提取引用文本 ──────────────────────────────────────
+    let repliedText: string | undefined
+    if (repliedMsg) {
+      const repliedContent = typeof repliedMsg.content === 'string'
+        ? (() => { try { return JSON.parse(repliedMsg.content) } catch { return null } })()
+        : repliedMsg.content
+      if (repliedContent?.richText) {
+        repliedText = repliedContent.richText
+          .filter((item: RichTextItem) => item.msgType === 'text' && item.content)
+          .map((item: RichTextItem) => item.content)
+          .join(' ')
+      }
+    }
 
     // ACK immediately
     this.client.send(res.headers.messageId, { status: 'SUCCESS' })
 
-    if (!text) {
-      console.log('[DingTalk] Empty text after stripping mentions, skipping')
+    if (!text && images.length === 0) {
+      console.log('[DingTalk] Empty text and no images after stripping mentions, skipping')
       return
     }
 
-    console.log('[DingTalk] Processed text:', text, '| hasHandler:', !!this.messageHandler)
+    console.log('[DingTalk] Processed text:', text, '| images:', images.length, '| repliedText:', !!repliedText)
 
     const normalized: NormalizedMessage = {
       platform: 'dingtalk',
       groupId: msg.conversationId,
       userId: msg.senderId,
       userName: msg.senderNick,
-      text,
+      text: text || '[图片]',
+      images: images.length > 0 ? images : undefined,
+      repliedText,
       timestamp: msg.createAt ?? Date.now(),
       rawPayload: msg,
     }

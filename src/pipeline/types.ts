@@ -1,6 +1,6 @@
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval'
+  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
@@ -11,9 +11,14 @@ export interface StageDefinition {
   // approval stage
   approverIds?: string[]
   approvalDescription?: string
+  // capability stage（研发 AI 助手：触发 Agent capability）
+  capabilityKey?: string
+  capabilityParams?: Record<string, unknown>
+  // wait_webhook stage（等待外部 Webhook 恢复）
+  webhookTag?: string
 }
 
-export function getStageType(stage: StageDefinition): 'script' | 'approval' {
+export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'capability' | 'wait_webhook' {
   return stage.stageType ?? 'script'
 }
 

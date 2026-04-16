@@ -30,6 +30,18 @@ import './tools/approval.js'
 import './tools/role.js'
 import './tools/autotest.js'
 
+// 研发 AI 助手工具
+import './tools/read-code.js'
+import './tools/download-image.js'
+import './tools/switch-version.js'
+import './tools/create-issue.js'
+import './tools/search-knowledge.js'
+import './tools/fix-code.js'
+import './tools/run-tests.js'
+import './tools/create-mr.js'
+import './tools/update-ai-summary.js'
+import './tools/review-mr-diff.js'
+
 const server = new Server(
   { name: 'chatops-tools', version: '1.0.0' },
   { capabilities: { tools: {} } }
@@ -58,10 +70,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   // TaskContext passed from claude-runner via env var
-  const context: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
+  const rawContext = process.env.CHATOPS_TASK_CONTEXT
+  if (!rawContext) {
+    mcpLog('WARNING: CHATOPS_TASK_CONTEXT not set, using empty context')
+  }
+  const context: TaskContext = JSON.parse(rawContext ?? '{}')
 
   try {
-    mcpLog(`Calling tool: ${request.params.name} args=${JSON.stringify(request.params.arguments)}`)
+    // 脱敏日志：不记录完整参数（可能含敏感信息）
+    const argKeys = Object.keys(request.params.arguments ?? {})
+    mcpLog(`Calling tool: ${request.params.name} argKeys=[${argKeys.join(',')}]`)
     const result = await tool.execute(request.params.arguments ?? {}, context)
     mcpLog(`Tool result: success=${result.success} output=${result.output.slice(0, 500)}`)
     return {

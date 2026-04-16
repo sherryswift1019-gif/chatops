@@ -11,6 +11,11 @@ import CapabilitiesPage from './pages/CapabilitiesPage'
 import TestServersPage from './pages/TestServersPage'
 import TestPipelinesPage from './pages/TestPipelinesPage'
 import TestRunsPage from './pages/TestRunsPage'
+// 研发 AI 助手页面
+import ModuleOwnersPage from './pages/ModuleOwnersPage'
+import BugRunsPage from './pages/BugRunsPage'
+import ProductKnowledgePage from './pages/ProductKnowledgePage'
+import MetricsPage from './pages/MetricsPage'
 
 export default function App() {
   return (
@@ -28,6 +33,11 @@ export default function App() {
             <Route path="/test-servers" element={<TestServersPage />} />
             <Route path="/test-pipelines" element={<TestPipelinesPage />} />
             <Route path="/test-runs" element={<TestRunsPage />} />
+            {/* 研发 AI 助手 */}
+            <Route path="/bug-runs" element={<BugRunsPage />} />
+            <Route path="/module-owners" element={<ModuleOwnersPage />} />
+            <Route path="/product-knowledge" element={<ProductKnowledgePage />} />
+            <Route path="/metrics" element={<MetricsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

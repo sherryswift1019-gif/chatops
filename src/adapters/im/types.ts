@@ -32,6 +32,8 @@ export interface NormalizedMessage {
   userId: string
   userName: string
   text: string
+  images?: string[]  // 图片本地文件路径（钉钉图片下载后）
+  repliedText?: string  // 引用回复的文本内容
   timestamp: number
   rawPayload: unknown
 }
