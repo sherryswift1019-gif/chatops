@@ -30,11 +30,8 @@ stages:
   services:
     - name: ${HARBOR_REGISTRY}/${HARBOR_PROJECT_PUBLIC}/docker:27-dind
       alias: docker
-      entrypoint: ["/bin/sh", "-c"]
-      command: ["dockerd-entrypoint.sh --insecure-registry=harbor.paraview.cn"]
   before_script:
     - |
-      # 等待 DinD daemon 就绪
       echo "Waiting for Docker daemon..."
       until docker info >/dev/null 2>&1; do sleep 1; done
       echo "Docker daemon ready"
