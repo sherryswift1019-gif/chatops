@@ -37,9 +37,10 @@ interface DetectedIntent {
 interface GroupSession {
   sessionId: string
   lastUsed: number
+  tools: AgentTool[]
 }
 
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000 // 8 hours
+const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
 
 function interpolatePrompt(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`)
@@ -121,8 +122,8 @@ export class ClaudeRunner {
     return session.sessionId
   }
 
-  private saveSessionId(groupId: string, sessionId: string): void {
-    this.sessions.set(groupId, { sessionId, lastUsed: Date.now() })
+  private saveSession(groupId: string, sessionId: string, tools: AgentTool[]): void {
+    this.sessions.set(groupId, { sessionId, lastUsed: Date.now(), tools })
   }
 
   async run(opts: RunOptions): Promise<void> {
@@ -135,7 +136,15 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 1: Detect intent
+      // Step 0: 有活跃 session 时直接 resume（跳过 intent 检测）
+      const activeSession = this.sessions.get(opts.groupId)
+      if (activeSession && (Date.now() - activeSession.lastUsed) <= SESSION_TTL_MS) {
+        console.log(`[Runner] Active session found for group ${opts.groupId}, resuming with: "${prompt}"`)
+        await this.executeWithPorygon(opts, activeSession.tools)
+        return
+      }
+
+      // Step 1: Detect intent (新对话)
       console.log('[Runner] Step 1: detecting intent for:', prompt)
       const intent = await this.detectIntent(prompt)
       console.log('[Runner] Intent result:', JSON.stringify(intent))
@@ -343,7 +352,7 @@ ${capList}
 
         // Capture sessionId from any message
         if ('sessionId' in msg && msg.sessionId) {
-          this.saveSessionId(groupId, msg.sessionId as string)
+          this.saveSession(groupId, msg.sessionId as string, tools)
         }
 
         switch (msg.type) {
@@ -358,7 +367,7 @@ ${capList}
           case 'result':
             // Capture sessionId from result
             if ('sessionId' in msg && msg.sessionId) {
-              this.saveSessionId(groupId, msg.sessionId as string)
+              this.saveSession(groupId, msg.sessionId as string, tools)
             }
             console.log(`[Runner] Porygon result received`)
             break
