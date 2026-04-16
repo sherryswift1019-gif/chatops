@@ -7,13 +7,14 @@ export interface TestRunWithUser extends TestRun {
   triggeredByAvatar?: string
 }
 
-export const getTestRuns = (params: { pipelineId?: number; page: number; limit: number }) =>
+export const getTestRuns = (params: { pipelineId?: number; page: number; limit: number }, signal?: AbortSignal) =>
   client.get<PaginatedResponse<TestRunWithUser>>('/test-runs', {
     params: {
       ...(params.pipelineId ? { pipeline_id: params.pipelineId } : {}),
       page: params.page,
       limit: params.limit,
     },
+    signal,
   }).then(r => r.data)
 
 export const getTestRun = (id: number) =>

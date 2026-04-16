@@ -24,7 +24,7 @@ export default function DingTalkUsersPage() {
   async function load() {
     setLoading(true)
     try {
-      const res = await getDingTalkUsersPaged({ keyword: keyword || undefined, page, limit })
+      const res = await getDingTalkUsersPaged({ keyword: keyword || undefined, page, limit }, abortRef.current?.signal)
       setData(res.data)
       setTotal(res.total)
     } catch {

@@ -37,7 +37,7 @@ export default function TestRunsPage() {
   async function load() {
     setLoading(true)
     try {
-      const res = await getTestRuns({ page, limit })
+      const res = await getTestRuns({ page, limit }, abortRef.current?.signal)
       setData(res.data)
       setTotal(res.total)
     } catch {

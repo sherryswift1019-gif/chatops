@@ -11,12 +11,11 @@ export const getDingTalkUsers = (keyword?: string): Promise<DingTalkUsersRespons
   ).then(r => ({ users: r.data.data, total: r.data.total }))
 
 // Paginated function for DingTalkUsersPage
-export const getDingTalkUsersPaged = (params: {
-  keyword?: string
-  page: number
-  limit: number
-}): Promise<PaginatedResponse<DingTalkUser>> =>
-  client.get<PaginatedResponse<DingTalkUser>>('/dingtalk/users', { params }).then(r => r.data)
+export const getDingTalkUsersPaged = (
+  params: { keyword?: string; page: number; limit: number },
+  signal?: AbortSignal
+): Promise<PaginatedResponse<DingTalkUser>> =>
+  client.get<PaginatedResponse<DingTalkUser>>('/dingtalk/users', { params, signal }).then(r => r.data)
 
 export const syncDingTalkUsers = () =>
   client.post<{ success: boolean; synced?: number; error?: string }>('/dingtalk/users/sync').then(r => r.data)

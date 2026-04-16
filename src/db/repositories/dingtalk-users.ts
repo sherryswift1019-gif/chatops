@@ -79,7 +79,7 @@ export async function listDingTalkUsersPaged(
     pool.query(
       `SELECT * FROM dingtalk_users
        WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')
-       ORDER BY name, id
+       ORDER BY name, user_id
        LIMIT $2 OFFSET $3`,
       [kw, limit, offset]
     ),
