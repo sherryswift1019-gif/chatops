@@ -30,9 +30,16 @@ pnpm migrate           # 顺序执行 schema.sql → schema-v7.sql
 # base 只在 pnpm-lock.yaml / package.json / Node/pnpm 版本变化时重建
 ./build-base.sh        # 构建并 push linux/amd64 base 到 harbor.paraview.cn/chatops/chatops-base
                        # 同时打 :latest 和 :deps-<lockfileSha8> 两个 tag
-./build.sh             # 日常业务构建：本地先 pnpm build 前端，再 docker build linux/amd64 业务镜像
-                       # 环境变量：IMAGE_NAME / IMAGE_TAG / BASE_IMAGE / PLATFORM / SKIP_WEB
-                       # 依赖已在 base 里，业务镜像仅 COPY src/ + web/dist（秒级完成）
+./build.sh             # 日常业务构建：docker build 多阶段（前端在内部编译 + 后端 tsc）
+                       # 环境变量：IMAGE_NAME / IMAGE_TAG / BASE_IMAGE / PLATFORM
+                       # 依赖已在 base 里，业务镜像仅装前端依赖 + COPY src/
+
+# GitLab CI（code.paraview.cn，推送 master 或打 tag 自动触发）
+# .gitlab-ci.yml 定义两个 stage：
+#   build-base — 仅 pnpm-lock.yaml / package.json / Dockerfile.base 变更时触发
+#   build-app  — master 推送或 tag 推送时触发
+# CI Variables: HARBOR_USERNAME / HARBOR_PASSWORD（GitLab 项目设置）
+# Runner: amd64, Docker-in-Docker, Paraview 内网
 
 # Docker 部署
 ./deploy.sh up         # 启动全栈（postgres + migrate + chatops），自动 --build
