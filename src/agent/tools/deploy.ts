@@ -136,7 +136,7 @@ async function verifyImageExists(harborUrl: string, harborProject: string, tag: 
 
 const deployTool: AgentTool = {
   name: 'execute_deploy',
-  description: '执行部署：根据分支名自动查 GitLab 最新提交构造镜像 tag，验证 Harbor 镜像存在后 SSH 到目标服务器更新容器。也可直接指定 imageTag 跳过自动解析。',
+  description: '执行部署。必须提供 branch（Git 分支名），工具会自动查 GitLab 该分支最新 commit 构造精确镜像 tag 并验证 Harbor 中存在后再部署。禁止使用 latest 类 tag，禁止跳过 GitLab 校验。仅当用户明确给出完整 tag（如 develop_fca291a5）时才可用 imageTag 参数。',
   riskLevel: 'high',
   requiredRole: 'ops',
   inputSchema: {
@@ -144,10 +144,10 @@ const deployTool: AgentTool = {
     properties: {
       project: { type: 'string', description: '项目名称' },
       env: { type: 'string', description: '目标环境 (dev/test/staging/prod)' },
-      branch: { type: 'string', description: 'Git 分支名，如 develop、main。工具会自动查该分支最新 commit 拼成镜像 tag' },
-      imageTag: { type: 'string', description: '（可选）直接指定镜像标签，跳过 GitLab 分支解析' },
+      branch: { type: 'string', description: '必填。Git 分支名，如 develop、main、release。工具会自动查该分支最新 commit 拼成镜像 tag（格式：分支名_commitId前8位）' },
+      imageTag: { type: 'string', description: '仅在用户明确给出完整 commit tag 时使用（如 develop_fca291a5）。不要传 xxx_latest 类 tag' },
     },
-    required: ['project', 'env'],
+    required: ['project', 'env', 'branch'],
   },
   async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
     const { project: projectName, env: envName, branch, imageTag: explicitTag } = params as { project: string; env: string; branch?: string; imageTag?: string }
