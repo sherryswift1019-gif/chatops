@@ -1,0 +1,2 @@
+FROM docker:27
+RUN apk add --no-cache openssh-client sshpass curl

@@ -124,6 +124,7 @@ build-app:
 # 目标服务器需先运行 scripts/setup-target.sh 初始化
 # ============================================================
 deploy-prod:
+  image: ${HARBOR_REGISTRY}/${HARBOR_PROJECT_PUBLIC}/docker:27-deploy
   extends: .docker-job
   stage: deploy
   resource_group: production
@@ -138,9 +139,6 @@ deploy-prod:
       fi
       FULL_IMAGE="${HARBOR_REGISTRY}/${HARBOR_PROJECT_CHATOPS}/${APP_IMAGE_NAME}:${APP_TAG}"
       echo "==> Deploying ${FULL_IMAGE} to ${DEPLOY_HOST}"
-
-      # ── 安装 SSH 工具 ──
-      apk add --no-cache openssh-client sshpass
 
       export SSHPASS="${DEPLOY_PASSWORD}"
       SSH="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
