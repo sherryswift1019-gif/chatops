@@ -1,0 +1,53 @@
+# docker-compose.prod.yml — 生产部署（使用 Harbor 预构建镜像）
+# CHATOPS_IMAGE 通过 .env 文件自动读取，部署脚本会写入/更新该变量
+# 用法: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: chatops
+      POSTGRES_PASSWORD: chatops
+      POSTGRES_DB: chatops
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatops"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  migrate:
+    image: ${CHATOPS_IMAGE:-harbor.paraview.cn/chatops/chatops:latest}
+    command: ["node", "--import", "tsx/esm", "src/db/migrate.ts"]
+    environment:
+      DATABASE_URL: postgres://chatops:chatops@postgres:5432/chatops
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: on-failure:3
+
+  chatops:
+    image: ${CHATOPS_IMAGE:-harbor.paraview.cn/chatops/chatops:latest}
+    ports:
+      - "${PORT:-3000}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgres://chatops:chatops@postgres:5432/chatops
+      PORT: "3000"
+      TEST_DATA_DIR: /data/chatops/test-runs
+    volumes:
+      - testdata:/data/chatops/test-runs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  testdata:
