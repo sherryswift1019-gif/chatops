@@ -5,7 +5,7 @@ import { listProjects } from '../../db/repositories/projects-repo.js'
 import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
 import { getConfig } from '../../db/repositories/system-config.js'
-import { resolveSSHConfig } from './ssh-utils.js'
+import { resolveSSHConfig, resolveComposeFile } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import axios from 'axios'
 import https from 'https'
@@ -50,7 +50,7 @@ function sshExec(config: { host: string; port?: number; username: string; passwo
 async function lookupProjectAndEnv(projectName: string, envName: string) {
   const projects = await listProjects()
   const project = projects.find(p => p.name === projectName || p.displayName === projectName)
-  if (!project) throw new Error(`项目 "${projectName}" 未在数据库中注册`)
+  if (!project) throw new Error(`模块 "${projectName}" 未在数据库中注册`)
 
   const envs = await listEnvironments()
   const env = envs.find(e => e.name === envName || e.displayName === envName)
@@ -58,7 +58,7 @@ async function lookupProjectAndEnv(projectName: string, envName: string) {
 
   const plEnvs = await listProductLineEnvs(project.productLineId)
   const plEnv = plEnvs.find(e => e.envId === env.id)
-  if (!plEnv) throw new Error(`项目所属产线未配置 "${envName}" 环境`)
+  if (!plEnv) throw new Error(`模块所属产线未配置 "${envName}" 环境`)
 
   const harborCfg = await getConfig('harbor')
   const harbor = harborCfg?.value as Record<string, string> | undefined
@@ -124,9 +124,9 @@ async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ ta
       // 查询该项目所有分支，帮用户找到正确分支名
       const branchList = await listGitLabBranches(gitlabPath)
       const hint = branchList.length > 0
-        ? `\n\n该项目可用分支:\n${branchList.map(b => `- ${b}`).join('\n')}`
+        ? `\n\n该模块可用分支:\n${branchList.map(b => `- ${b}`).join('\n')}`
         : ''
-      throw new Error(`GitLab 分支 "${branch}" 不存在（项目: ${gitlabPath}）${hint}`)
+      throw new Error(`GitLab 分支 "${branch}" 不存在（模块: ${gitlabPath}）${hint}`)
     }
     throw new Error(`GitLab 查询失败: ${String(err)}`)
   }
@@ -165,7 +165,7 @@ const deployTool: AgentTool = {
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string', description: '项目名称' },
+      project: { type: 'string', description: '模块名称' },
       env: { type: 'string', description: '目标环境 (dev/test/staging/prod)' },
       branch: { type: 'string', description: 'Git 分支名，如 develop、main、release' },
     },
@@ -184,7 +184,7 @@ const deployTool: AgentTool = {
 
       // 通过 GitLab 解析分支最新 commit → 镜像 tag
       if (!project.gitlabPath) {
-        return { success: false, output: `项目 "${projectName}" 未配置 GitLab 路径。请在管理后台设置 gitlabPath。` }
+        return { success: false, output: `模块 "${projectName}" 未配置 GitLab 路径。请在管理后台的模块配置中设置 gitlabPath。` }
       }
       const harborUrl = harbor?.url ?? ''
       const harborProject = project.harborProject || project.name
@@ -219,17 +219,17 @@ const deployTool: AgentTool = {
 
         if (composePath) {
           // Docker Compose 部署模式
+          const composeFile = resolveComposeFile(composePath)
           commands = [
             `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
             `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
-            `cd ${composePath}`,
-            `$COMPOSE_CMD stop ${containerName} || true`,
+            `$COMPOSE_CMD -f '${composeFile}' stop ${containerName} || true`,
             // 备份当前版本用于回滚
             `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
             `docker rmi ${latestImage} 2>/dev/null || true`,
             `docker pull ${fullImage}`,
             `docker tag ${fullImage} ${latestImage}`,
-            `$COMPOSE_CMD up -d ${containerName}`,
+            `$COMPOSE_CMD -f '${composeFile}' up -d ${containerName}`,
             // 清理多余镜像（只保留 :latest 和 :prev）
             `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
           ].join(' && ')
@@ -300,7 +300,7 @@ const rollbackTool: AgentTool = {
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string', description: '项目名称' },
+      project: { type: 'string', description: '模块名称' },
       env: { type: 'string', description: '目标环境' },
       imageTag: { type: 'string', description: '回滚到的镜像标签（Docker 必填，K8s 可选）' },
     },
@@ -342,6 +342,7 @@ const rollbackTool: AgentTool = {
 
         let commands: string
         if (composePath) {
+          const composeFile = resolveComposeFile(composePath)
           commands = [
             `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
             `docker inspect ${prevImage} >/dev/null 2>&1 || (echo "NO_PREV" && exit 1)`,
@@ -350,7 +351,7 @@ const rollbackTool: AgentTool = {
             `docker tag ${prevImage} ${latestImage}`,
             `docker tag ${registryHost}/${harborProject}:rollback_tmp ${prevImage} 2>/dev/null || true`,
             `docker rmi ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
-            `cd ${composePath} && $COMPOSE_CMD up -d ${containerName}`,
+            `$COMPOSE_CMD -f '${composeFile}' up -d ${containerName}`,
           ].join(' && ')
         } else {
           commands = [
@@ -393,16 +394,16 @@ const rollbackTool: AgentTool = {
 
       let commands: string
       if (composePath) {
+        const composeFile = resolveComposeFile(composePath)
         commands = [
           `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
           `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
-          `cd ${composePath}`,
-          `$COMPOSE_CMD stop ${containerName} || true`,
+          `$COMPOSE_CMD -f '${composeFile}' stop ${containerName} || true`,
           `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
           `docker rmi ${latestImage} 2>/dev/null || true`,
           `docker pull ${fullImage}`,
           `docker tag ${fullImage} ${latestImage}`,
-          `$COMPOSE_CMD up -d ${containerName}`,
+          `$COMPOSE_CMD -f '${composeFile}' up -d ${containerName}`,
           `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
         ].join(' && ')
       } else {
@@ -442,7 +443,7 @@ const restartTool: AgentTool = {
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string', description: '项目名称' },
+      project: { type: 'string', description: '模块名称' },
       env: { type: 'string', description: '目标环境' },
     },
     required: ['project', 'env'],
@@ -462,7 +463,8 @@ const restartTool: AgentTool = {
         const containerName = project.dockerContainerName || project.name
         const composePath = project.composePath
         if (composePath) {
-          command = `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose") && cd ${composePath} && $COMPOSE_CMD restart ${containerName}`
+          const composeFile = resolveComposeFile(composePath)
+          command = `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose") && $COMPOSE_CMD -f '${composeFile}' restart ${containerName}`
         } else {
           command = `docker restart ${containerName}`
         }

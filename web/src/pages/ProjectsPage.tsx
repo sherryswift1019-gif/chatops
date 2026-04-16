@@ -131,7 +131,7 @@ export default function ProjectsPage() {
         return name ? <Tag color="blue">{name}</Tag> : <Tag>ID:{v}</Tag>
       },
     },
-    { title: '项目名', dataIndex: 'name' },
+    { title: '模块名', dataIndex: 'name' },
     { title: '显示名', dataIndex: 'displayName' },
     { title: 'GitLab路径', dataIndex: 'gitlabPath', ellipsis: true },
     { title: 'Harbor项目', dataIndex: 'harborProject', ellipsis: true },
@@ -154,7 +154,7 @@ export default function ProjectsPage() {
 
   return (
     <Card
-      title="项目管理"
+      title="模块管理"
       extra={
         <Space>
           <Select
@@ -165,14 +165,14 @@ export default function ProjectsPage() {
             onChange={v => setFilterProductLineId(v)}
             options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))}
           />
-          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增项目</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模块</Button>
         </Space>
       }
     >
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
 
       <Modal
-        title={editing ? '编辑项目' : '新增项目'}
+        title={editing ? '编辑模块' : '新增模块'}
         open={modalOpen}
         onOk={handleSubmit}
         onCancel={() => setModalOpen(false)}
@@ -186,7 +186,7 @@ export default function ProjectsPage() {
               options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))}
             />
           </Form.Item>
-          <Form.Item name="name" label="项目名" rules={[{ required: true, message: '请输入项目名' }]}>
+          <Form.Item name="name" label="模块名" rules={[{ required: true, message: '请输入模块名' }]}>
             <Input placeholder="如: my-service" />
           </Form.Item>
           <Form.Item name="displayName" label="显示名" rules={[{ required: true, message: '请输入显示名' }]}>

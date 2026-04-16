@@ -18,12 +18,12 @@ async function getGitLabConfig(): Promise<{ url: string; token: string; skipTlsV
 
 const getGitLabCommitsTool: AgentTool = {
   name: 'get_gitlab_commits',
-  description: '获取 GitLab 项目的最近提交记录。可用于关联日志错误与代码变更。',
+  description: '获取模块的 GitLab 最近提交记录。可用于关联日志错误与代码变更。',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string', description: '项目名称' },
+      project: { type: 'string', description: '模块名称' },
       limit: { type: 'number', description: '提交数量，默认 10' },
       since: { type: 'string', description: 'ISO 日期，筛选此时间之后的提交' },
     },

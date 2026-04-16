@@ -164,11 +164,11 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
   return (
     <>
       <div style={{ marginBottom: 16, textAlign: 'right' }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增项目</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模块</Button>
       </div>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal
-        title={editing ? '编辑项目' : '新增项目'}
+        title={editing ? '编辑模块' : '新增模块'}
         open={modalOpen}
         onOk={handleSubmit}
         onCancel={() => setModalOpen(false)}
@@ -176,7 +176,7 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
         width={600}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="项目名称" rules={[{ required: true, message: '请输入项目名称' }]}>
+          <Form.Item name="name" label="模块名称" rules={[{ required: true, message: '请输入模块名称' }]}>
             <Input placeholder="如: pam-backend" />
           </Form.Item>
           <Form.Item name="displayName" label="显示名" rules={[{ required: true, message: '请输入显示名' }]}>
@@ -207,8 +207,8 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
           <Form.Item name="k8sProjectName" label="K8s 项目名">
             <Input placeholder="如: pam-backend" />
           </Form.Item>
-          <Form.Item name="composePath" label="Docker Compose 路径">
-            <Input placeholder="如: /opt/pam/ssh-proxy" />
+          <Form.Item name="composePath" label="Docker Compose 文件路径">
+            <Input placeholder="如: /opt/pam/ssh-proxy/docker-compose.yml" />
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} />
@@ -889,7 +889,7 @@ export default function ProductLineDetailPage() {
     },
     {
       key: 'projects',
-      label: '项目列表',
+      label: '模块列表',
       children: <ProjectsTab productLineId={productLineId} />,
     },
     {

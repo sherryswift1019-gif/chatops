@@ -176,7 +176,7 @@ export default function CapabilitiesPage() {
                   恢复默认
                 </Button>
                 <span style={{ color: '#888', fontSize: 12 }}>
-                  支持变量: {'{{initiatorRole}}'} | 项目/服务器信息会自动注入
+                  支持变量: {'{{initiatorRole}}'} | 模块/服务器信息会自动注入
                 </span>
               </div>
             </Form.Item>
