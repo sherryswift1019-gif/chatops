@@ -7,6 +7,8 @@ import { listEnvironments } from '../../db/repositories/environments-repo.js'
 import { getConfig } from '../../db/repositories/system-config.js'
 import { resolveSSHConfig } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
+import axios from 'axios'
+import https from 'https'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
 function deployLog(msg: string) {
@@ -70,11 +72,71 @@ function buildImageFullPath(harborUrl: string, harborProject: string, imageTag: 
   return `${registryHost}/${harborProject}:${imageTag}`
 }
 
+// ── GitLab branch → commit 解析 ─────────────────────────────────────────
+
+async function getGitLabConfig(): Promise<{ url: string; token: string; skipTlsVerify: boolean }> {
+  const cfg = await getConfig('gitlab')
+  if (!cfg) return { url: '', token: '', skipTlsVerify: false }
+  const v = cfg.value as Record<string, string>
+  return {
+    url: v.url ?? '',
+    token: v.token ?? '',
+    skipTlsVerify: v.skipTlsVerify === 'true' || v.skipTlsVerify === true as unknown as string,
+  }
+}
+
+async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ tag: string; commitId: string; shortId: string }> {
+  const gitlab = await getGitLabConfig()
+  if (!gitlab.url || !gitlab.token) throw new Error('GitLab 未配置（url/token）。请在系统配置中设置。')
+
+  const encodedProject = encodeURIComponent(gitlabPath)
+  const encodedBranch = encodeURIComponent(branch)
+  const agent = gitlab.skipTlsVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined
+
+  try {
+    const res = await axios.get<{ commit: { id: string; short_id: string; message: string } }>(
+      `${gitlab.url}/api/v4/projects/${encodedProject}/repository/branches/${encodedBranch}`,
+      { headers: { 'PRIVATE-TOKEN': gitlab.token }, httpsAgent: agent, timeout: 10000 }
+    )
+    const shortId = res.data.commit.short_id.slice(0, 8)
+    const tag = `${branch}_${shortId}`
+    deployLog(`resolveImageTag: ${gitlabPath} branch=${branch} → commit=${shortId} → tag=${tag}`)
+    return { tag, commitId: res.data.commit.id, shortId }
+  } catch (err: unknown) {
+    const status = (err as { response?: { status?: number } })?.response?.status
+    if (status === 404) throw new Error(`GitLab 分支 "${branch}" 不存在（项目: ${gitlabPath}）`)
+    throw new Error(`GitLab 查询失败: ${String(err)}`)
+  }
+}
+
+async function verifyImageExists(harborUrl: string, harborProject: string, tag: string): Promise<boolean> {
+  const harborCfg = await getConfig('harbor')
+  const harbor = harborCfg?.value as Record<string, string> | undefined
+  const username = harbor?.username ?? ''
+  const password = harbor?.password ?? ''
+  const skipTls = harbor?.skipTlsVerify === 'true'
+  const agent = skipTls ? new https.Agent({ rejectUnauthorized: false }) : undefined
+
+  const [projectName, repoName] = harborProject.includes('/') ? harborProject.split('/') : [harborProject, harborProject]
+  const url = `${harborUrl}/api/v2.0/projects/${projectName}/repositories/${encodeURIComponent(repoName)}/artifacts/${encodeURIComponent(tag)}`
+
+  try {
+    await axios.get(url, {
+      headers: username ? { Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}` } : {},
+      httpsAgent: agent,
+      timeout: 10000,
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
 // ── Deploy Tool ──────────────────────────────────────────────────────────
 
 const deployTool: AgentTool = {
   name: 'execute_deploy',
-  description: '执行部署：SSH 到目标服务器，从 Harbor 拉取新镜像并更新容器。需要先通过审批。',
+  description: '执行部署：根据分支名自动查 GitLab 最新提交构造镜像 tag，验证 Harbor 镜像存在后 SSH 到目标服务器更新容器。也可直接指定 imageTag 跳过自动解析。',
   riskLevel: 'high',
   requiredRole: 'ops',
   inputSchema: {
@@ -82,19 +144,49 @@ const deployTool: AgentTool = {
     properties: {
       project: { type: 'string', description: '项目名称' },
       env: { type: 'string', description: '目标环境 (dev/test/staging/prod)' },
-      imageTag: { type: 'string', description: '镜像标签' },
+      branch: { type: 'string', description: 'Git 分支名，如 develop、main。工具会自动查该分支最新 commit 拼成镜像 tag' },
+      imageTag: { type: 'string', description: '（可选）直接指定镜像标签，跳过 GitLab 分支解析' },
     },
-    required: ['project', 'env', 'imageTag'],
+    required: ['project', 'env'],
   },
   async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
-    const { project: projectName, env: envName, imageTag } = params as { project: string; env: string; imageTag: string }
-    deployLog(`execute_deploy: project=${projectName} env=${envName} tag=${imageTag}`)
+    const { project: projectName, env: envName, branch, imageTag: explicitTag } = params as { project: string; env: string; branch?: string; imageTag?: string }
+    deployLog(`execute_deploy: project=${projectName} env=${envName} branch=${branch ?? '-'} tag=${explicitTag ?? '-'}`)
 
     try {
       const { project, plEnv, harbor, sshConfig } = await lookupProjectAndEnv(projectName, envName)
 
       if (!sshConfig) {
         return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息（IP/用户名/密码）。请在管理后台 → 产线详情 → 环境配置中设置。` }
+      }
+
+      // 解析镜像 tag
+      let imageTag: string
+      let resolveInfo = ''
+      if (explicitTag) {
+        imageTag = explicitTag
+      } else if (branch) {
+        if (!project.gitlabPath) {
+          return { success: false, output: `项目 "${projectName}" 未配置 GitLab 路径。请在管理后台设置 gitlabPath。` }
+        }
+        const harborUrl = harbor?.url ?? ''
+        const harborProject = project.harborProject || project.name
+        const resolved = await resolveImageTag(project.gitlabPath, branch)
+        imageTag = resolved.tag
+        resolveInfo = `\n分支: ${branch}\n提交: ${resolved.shortId}`
+
+        // 验证镜像是否已编译
+        if (harborUrl) {
+          const exists = await verifyImageExists(harborUrl, harborProject, imageTag)
+          if (!exists) {
+            return {
+              success: false,
+              output: `⚠️ 镜像 ${imageTag} 在 Harbor 中不存在。\n\n分支 "${branch}" 最新提交: ${resolved.shortId}\n该提交可能尚未编译成功，或 CI 流水线未触发。\n\n请检查 GitLab CI 状态后重试。`,
+            }
+          }
+        }
+      } else {
+        return { success: false, output: '请指定分支名（branch）或镜像标签（imageTag）。例如：「部署 ssh-proxy 到 dev，分支 develop」' }
       }
 
       if (plEnv.runtime === 'docker') {
@@ -158,7 +250,7 @@ const deployTool: AgentTool = {
         }
 
         await recordDeployment({ project: projectName, env: envName, imageTag, deployedBy: ctx.initiatorId, status: 'success' })
-        return { success: true, output: `✅ 部署成功\n服务器: ${sshConfig.host}\n容器: ${containerName}\n镜像: ${fullImage}` }
+        return { success: true, output: `✅ 部署成功\n服务器: ${sshConfig.host}\n容器: ${containerName}\n镜像: ${fullImage}${resolveInfo}` }
 
       } else {
         // Kubernetes
