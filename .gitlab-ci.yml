@@ -195,7 +195,7 @@ deploy-prod:
 
       # ── 7. 清理多余备份 ──
       cd backups
-      ls -t chatops_*.sql.gz 2>/dev/null | tail -n +\$(( ${BACKUP_RETAIN_COUNT} + 1 )) | xargs -r rm -f
+      ls -t chatops_*.sql.gz 2>/dev/null | tail -n +\$(( ${BACKUP_RETAIN_COUNT} + 1 )) | xargs -r rm -f || true
       DEPLOY_EOF
 
       # ── 健康检查（runner 端执行，max 120s）──
