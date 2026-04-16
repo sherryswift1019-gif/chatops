@@ -154,12 +154,29 @@ export class ClaudeRunner {
       // Greeting or unknown
       if (!intent || intent.capability === 'greet') {
         const caps = await listCapabilities()
-        const capsList = caps.map(c => `- **${c.displayName}** — ${c.description}`).join('\n')
+        const examples: Record<string, string> = {
+          deploy: '部署 ssh-proxy 到 dev 环境，分支 develop',
+          rollback: '回滚 ssh-proxy dev 环境',
+          restart: '重启 rdp-proxy dev 环境',
+          custom_script: '在 proxy-server 上执行 df -h',
+          manage_role: '给黄文华 ops 角色',
+          view_deployments: '查看 ssh-proxy 的部署历史',
+          view_images: '查看 rdp-proxy 的镜像列表',
+          view_logs: '查看 ssh-proxy dev 环境最近 50 行日志',
+          view_commits: '查看 ssh-proxy 最近的提交记录',
+          view_projects: '查看当前产线有哪些模块',
+        }
+        const capsList = caps.map(c => {
+          const ex = examples[c.key]
+          return ex
+            ? `- **${c.displayName}** — ${c.description}\n  > 💬 \`${ex}\``
+            : `- **${c.displayName}** — ${c.description}`
+        }).join('\n')
         const text = [
-          '## 你好！我是 ChatOps 助手 🤖',
+          '## 你好！我是 ChatOps 助手',
           '**我目前支持以下能力：**',
           capsList,
-          '你可以直接用自然语言告诉我你想做什么，比如「查看日志」「部署到开发环境」等。',
+          '直接用自然语言告诉我你想做什么即可。',
         ].join('\n\n')
         await adapter.sendMessage(
           { type: 'group', id: opts.groupId },
