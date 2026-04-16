@@ -1,0 +1,317 @@
+/* ============================================================
+   ChatOps — Global Design System
+   Precision Dark aesthetic: deep navy + electric blue
+   ============================================================ */
+
+/* Base reset */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Urbanist', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #0F1117;
+  color: #E6EAF3;
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+/* ---- Typography ---- */
+code, pre, .mono {
+  font-family: 'JetBrains Mono', 'Courier New', monospace !important;
+}
+
+/* ---- Sidebar Logo ---- */
+.chatops-logo {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  flex-shrink: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+.chatops-logo-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #4B8BFF 0%, #6366F1 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 10px;
+  color: white;
+  letter-spacing: -0.5px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 10px rgba(75, 139, 255, 0.35);
+}
+
+.chatops-logo-text {
+  margin-left: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  color: #E6EAF3;
+  white-space: nowrap;
+  letter-spacing: -0.3px;
+  transition: opacity 0.2s ease;
+}
+
+/* ---- Sidebar Menu Overrides ---- */
+.ant-menu-item-group-title {
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.09em !important;
+  text-transform: uppercase !important;
+  color: rgba(255, 255, 255, 0.22) !important;
+  padding-top: 16px !important;
+  padding-bottom: 4px !important;
+}
+
+.ant-menu-dark .ant-menu-item,
+.ant-menu-dark.ant-menu-inline .ant-menu-item {
+  border-radius: 6px !important;
+  margin: 1px 8px !important;
+  width: calc(100% - 16px) !important;
+}
+
+.ant-menu-dark .ant-menu-item-group .ant-menu-item {
+  padding-left: 20px !important;
+}
+
+/* ---- Sidebar collapse trigger ---- */
+.ant-layout-sider-trigger {
+  background: rgba(255,255,255,0.04) !important;
+  border-top: 1px solid rgba(255,255,255,0.06) !important;
+}
+
+/* ---- Header ---- */
+.chatops-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.chatops-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chatops-page-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #E6EAF3;
+  letter-spacing: -0.2px;
+}
+
+.chatops-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chatops-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4B8BFF 0%, #6366F1 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+  box-shadow: 0 1px 6px rgba(75, 139, 255, 0.3);
+}
+
+.chatops-username {
+  font-size: 13px;
+  font-weight: 500;
+  color: #8B93A8;
+}
+
+.chatops-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255,255,255,0.1);
+}
+
+/* ---- Table header uppercase ---- */
+.ant-table-thead .ant-table-cell {
+  font-family: 'Urbanist', sans-serif !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.07em !important;
+  text-transform: uppercase !important;
+  opacity: 0.55 !important;
+}
+
+/* ---- Card head ---- */
+.ant-card-head {
+  min-height: 48px !important;
+}
+
+.ant-card-head-title {
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.1px;
+}
+
+/* ---- Login page ---- */
+.login-bg {
+  min-height: 100vh;
+  background-color: #090C13;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 28px 28px;
+  pointer-events: none;
+}
+
+.login-glow {
+  position: absolute;
+  width: 700px;
+  height: 700px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(75, 139, 255, 0.1) 0%, transparent 65%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: 400px;
+  background: #111827;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 40px;
+  box-shadow: 0 32px 72px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(75, 139, 255, 0.08);
+  animation: cardIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.login-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.login-logo-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #4B8BFF 0%, #6366F1 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 15px;
+  color: white;
+  letter-spacing: -0.5px;
+  flex-shrink: 0;
+  box-shadow: 0 6px 20px rgba(75, 139, 255, 0.45);
+  animation: iconPulse 3s ease-in-out infinite;
+}
+
+@keyframes iconPulse {
+  0%, 100% { box-shadow: 0 6px 20px rgba(75, 139, 255, 0.45); }
+  50%       { box-shadow: 0 6px 28px rgba(75, 139, 255, 0.65); }
+}
+
+.login-logo-info h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 800;
+  color: #E6EAF3;
+  letter-spacing: -0.4px;
+  line-height: 1.1;
+}
+
+.login-logo-info p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  color: #3D4A62;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.login-field-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #4E5869;
+  margin-bottom: 6px;
+}
+
+.login-card .ant-btn-primary {
+  background: linear-gradient(135deg, #4B8BFF 0%, #5B5EF5 100%) !important;
+  border: none !important;
+  height: 40px !important;
+  font-weight: 700 !important;
+  font-size: 14px !important;
+  letter-spacing: 0.02em !important;
+  box-shadow: 0 4px 16px rgba(75, 139, 255, 0.35) !important;
+  transition: all 0.2s ease !important;
+}
+
+.login-card .ant-btn-primary:hover {
+  background: linear-gradient(135deg, #5C99FF 0%, #6B6EFF 100%) !important;
+  box-shadow: 0 6px 24px rgba(75, 139, 255, 0.5) !important;
+  transform: translateY(-1px);
+}
+
+.login-separator {
+  height: 1px;
+  background: rgba(255,255,255,0.07);
+  margin: 24px 0;
+}
+
+/* ---- Content area ---- */
+.admin-content {
+  padding: 24px;
+  overflow: auto;
+}
+
+/* ---- Tag overrides for dark mode ---- */
+.ant-tag {
+  border-radius: 4px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em;
+}

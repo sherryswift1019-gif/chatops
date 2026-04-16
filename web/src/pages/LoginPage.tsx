@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Form, Input, Button, Card, message } from 'antd'
+import { Form, Input, Button, message } from 'antd'
 import { login } from '../api/auth'
 
 export default function LoginPage() {
@@ -25,20 +25,59 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-      <Card title="ChatOps 管理后台" style={{ width: 400 }}>
-        <Form layout="vertical" onFinish={onFinish}>
-          <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
-            <Input autoFocus autoComplete="username" />
+    <div className="login-bg">
+      <div className="login-grid" />
+      <div className="login-glow" />
+
+      <div className="login-card">
+        {/* Logo mark */}
+        <div className="login-logo">
+          <div className="login-logo-icon">CO</div>
+          <div className="login-logo-info">
+            <h1>ChatOps</h1>
+            <p>DEVOPS MANAGEMENT CONSOLE</p>
+          </div>
+        </div>
+
+        <div className="login-separator" />
+
+        <Form layout="vertical" onFinish={onFinish} requiredMark={false}>
+          <Form.Item
+            name="username"
+            label={<span className="login-field-label">用户名</span>}
+            rules={[{ required: true, message: '请输入用户名' }]}
+            style={{ marginBottom: 16 }}
+          >
+            <Input
+              autoFocus
+              autoComplete="username"
+              size="large"
+              style={{ background: '#0B0E18', borderColor: 'rgba(255,255,255,0.1)', color: '#E6EAF3', borderRadius: 8 }}
+              placeholder="输入用户名"
+            />
           </Form.Item>
-          <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-            <Input.Password autoComplete="current-password" />
+
+          <Form.Item
+            name="password"
+            label={<span className="login-field-label">密码</span>}
+            rules={[{ required: true, message: '请输入密码' }]}
+            style={{ marginBottom: 24 }}
+          >
+            <Input.Password
+              autoComplete="current-password"
+              size="large"
+              style={{ background: '#0B0E18', borderColor: 'rgba(255,255,255,0.1)', color: '#E6EAF3', borderRadius: 8 }}
+              placeholder="输入密码"
+            />
           </Form.Item>
-          <Form.Item>
-            <Button type="primary" htmlType="submit" loading={loading} block>登录</Button>
+
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Button type="primary" htmlType="submit" loading={loading} block size="large">
+              登录
+            </Button>
           </Form.Item>
         </Form>
-      </Card>
+      </div>
     </div>
   )
 }

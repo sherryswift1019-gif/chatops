@@ -1,28 +1,59 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useNavigate, useLocation } from 'react-router-dom'
-import { Layout, Menu, Button, Space } from 'antd'
+import { Layout, Menu, Button } from 'antd'
 import {
   AppstoreOutlined,
-  CloudServerOutlined,
-  TeamOutlined,
+  CloudOutlined,
+  UserOutlined,
   ThunderboltOutlined,
   SettingOutlined,
-  ExperimentOutlined,
+  HddOutlined,
+  PartitionOutlined,
+  HistoryOutlined,
   LogoutOutlined,
 } from '@ant-design/icons'
 import { me, logout, type MeResponse } from '../api/auth'
 
 const { Sider, Content, Header } = Layout
 
+const PAGE_NAMES: Record<string, string> = {
+  '/product-lines': '产线管理',
+  '/environments': '环境管理',
+  '/dingtalk-users': '钉钉用户',
+  '/capabilities': '能力管理',
+  '/system-config': '系统配置',
+  '/test-servers': '服务器管理',
+  '/test-pipelines': '流水线管理',
+  '/test-runs': '执行记录',
+}
+
 const menuItems = [
-  { key: '/product-lines', icon: <AppstoreOutlined />, label: '产线管理' },
-  { key: '/environments', icon: <CloudServerOutlined />, label: '环境管理' },
-  { key: '/dingtalk-users', icon: <TeamOutlined />, label: '钉钉用户' },
-  { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
-  { key: '/system-config', icon: <SettingOutlined />, label: '系统配置' },
-  { key: '/test-servers', icon: <CloudServerOutlined />, label: '服务器' },
-  { key: '/test-pipelines', icon: <ExperimentOutlined />, label: '流水线' },
-  { key: '/test-runs', icon: <ExperimentOutlined />, label: '执行记录' },
+  {
+    type: 'group' as const,
+    label: '运维管理',
+    children: [
+      { key: '/product-lines', icon: <AppstoreOutlined />, label: '产线管理' },
+      { key: '/environments', icon: <CloudOutlined />, label: '环境管理' },
+      { key: '/dingtalk-users', icon: <UserOutlined />, label: '钉钉用户' },
+      { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '测试中心',
+    children: [
+      { key: '/test-servers', icon: <HddOutlined />, label: '服务器' },
+      { key: '/test-pipelines', icon: <PartitionOutlined />, label: '流水线' },
+      { key: '/test-runs', icon: <HistoryOutlined />, label: '执行记录' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '系统',
+    children: [
+      { key: '/system-config', icon: <SettingOutlined />, label: '系统配置' },
+    ],
+  },
 ]
 
 export default function AdminLayout() {
@@ -38,25 +69,64 @@ export default function AdminLayout() {
     navigate('/login', { replace: true })
   }
 
-  const selectedKey = location.pathname === '/' ? '/product-lines' : location.pathname.split('/').slice(0, 2).join('/')
+  const selectedKey = location.pathname === '/'
+    ? '/product-lines'
+    : location.pathname.split('/').slice(0, 2).join('/')
+
+  const pageTitle = PAGE_NAMES[selectedKey] ?? 'ChatOps'
+  const userInitial = user?.username?.[0]?.toUpperCase() ?? 'U'
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed}>
-        <div style={{ height: 32, margin: 16, color: '#fff', fontSize: 16, textAlign: 'center', fontWeight: 'bold', lineHeight: '32px' }}>
-          {collapsed ? 'CO' : 'ChatOps 管理'}
+      <Sider
+        collapsible
+        collapsed={collapsed}
+        onCollapse={setCollapsed}
+        width={200}
+        style={{ borderRight: '1px solid rgba(255,255,255,0.06)' }}
+      >
+        {/* Logo */}
+        <div className="chatops-logo">
+          <div className="chatops-logo-icon">CO</div>
+          {!collapsed && <span className="chatops-logo-text">ChatOps</span>}
         </div>
-        <Menu theme="dark" mode="inline" selectedKeys={[selectedKey]} items={menuItems} onClick={({ key }) => navigate(key)} />
+
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          items={menuItems}
+          onClick={({ key }) => navigate(key)}
+          style={{ borderRight: 'none', paddingTop: 8 }}
+        />
       </Sider>
+
       <Layout>
-        <Header style={{ background: '#fff', padding: '0 24px', fontSize: 16, fontWeight: 500, borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span>ChatOps 管理控制台</span>
-          <Space>
-            {user && <span>{user.username}</span>}
-            <Button type="text" icon={<LogoutOutlined />} onClick={onLogout}>登出</Button>
-          </Space>
+        <Header className="chatops-header">
+          <div className="chatops-header-left">
+            <span className="chatops-page-title">{pageTitle}</span>
+          </div>
+          <div className="chatops-header-right">
+            {user && (
+              <>
+                <div className="chatops-avatar">{userInitial}</div>
+                <span className="chatops-username">{user.username}</span>
+                <div className="chatops-divider" />
+              </>
+            )}
+            <Button
+              type="text"
+              icon={<LogoutOutlined />}
+              onClick={onLogout}
+              size="small"
+              style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}
+            >
+              登出
+            </Button>
+          </div>
         </Header>
-        <Content style={{ margin: 24 }}>
+
+        <Content className="admin-content">
           <Outlet />
         </Content>
       </Layout>
