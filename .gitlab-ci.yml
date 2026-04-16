@@ -59,7 +59,7 @@ build-base:
       docker push "${FULL_BASE_DEPS}"
       echo "==> [$(( $(date +%s) - T1 ))s] docker push done"
   rules:
-    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - pnpm-lock.yaml
         - package.json
@@ -70,7 +70,7 @@ build-base:
     - when: never
 
 # ============================================================
-# Stage 2: 构建业务镜像（master 推送或 tag 推送时触发）
+# Stage 2: 构建业务镜像（main 推送或 tag 推送时触发）
 # ============================================================
 build-app:
   extends: .docker-job
@@ -106,7 +106,7 @@ build-app:
       docker push "${FULL_APP_LATEST}"
       echo "==> [$(( $(date +%s) - T1 ))s] docker push done"
   rules:
-    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
       when: always
     - if: '$CI_COMMIT_TAG'
       when: always
