@@ -1,35 +1,48 @@
-FROM node:20-slim AS base
-RUN corepack enable && corepack prepare pnpm@10 --activate
+# ChatOps 业务镜像 — 多阶段构建：前端编译 + 后端打包
+# 依赖已在 base 镜像烘焙，前端在 web-build stage 编译
+#
+# Build（linux/amd64）：
+#   ./build.sh
+#
+# base 由 BASE_IMAGE build arg 指定，默认 harbor.paraview.cn/chatops/chatops-base:latest
+# 需要重建 base 时使用 ./build-base.sh。
 
-# Stage 1: Build frontend
-FROM base AS web-build
+ARG BASE_IMAGE=harbor.paraview.cn/chatops/chatops-base:latest
+
+# ============================================================
+# Stage 1: 前端构建（base 已有 node + pnpm + npmmirror 配置）
+# ============================================================
+FROM ${BASE_IMAGE} AS web-build
+
 WORKDIR /app/web
+
+# 先拷贝锁文件，安装前端依赖（利用 Docker layer cache）
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
+
+# 拷贝前端源码并构建
 COPY web/ .
 RUN pnpm build
 
-# Stage 2: Backend + serve frontend
-FROM base AS final
+# ============================================================
+# Stage 2: 最终业务镜像
+# ============================================================
+FROM ${BASE_IMAGE}
+
 WORKDIR /app
 
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --prod=false
-
+# 源码与编译配置；node_modules 已在 base 中
 COPY tsconfig.json ./
 COPY src/ src/
 
-# Copy frontend build output
+# 前端构建产物（来自 web-build stage）
 COPY --from=web-build /app/web/dist web/dist
 
-# Verify TypeScript compiles
+# 验证 TypeScript 编译
 RUN npx tsc --noEmit
 
-# Create data directory for test reports
-RUN mkdir -p /data/chatops/test-runs
-
-# Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
-RUN useradd -m -s /bin/bash chatops && chown -R chatops:chatops /app /data/chatops
+# chatops 用户 / /data/chatops/test-runs 已在 base 中创建
+RUN chown -R chatops:chatops /app
 USER chatops
 
 EXPOSE 3000

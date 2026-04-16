@@ -1,0 +1,30 @@
+# ChatOps base image — 仅包含 Node runtime + pnpm + node_modules
+# 触发重建条件：pnpm-lock.yaml / package.json 变化或 Node/pnpm 版本升级。
+#
+# Build + push（linux/amd64）：
+#   ./build-base.sh
+#
+# 产物：
+#   harbor.paraview.cn/chatops/chatops-base:latest
+#   harbor.paraview.cn/chatops/chatops-base:deps-<lockfileSha8>
+
+ARG NODE_IMAGE=harbor.paraview.cn/para-pam/node:20-slim
+FROM ${NODE_IMAGE}
+
+RUN corepack enable && corepack prepare pnpm@10 --activate
+
+WORKDIR /app
+
+# 内网无法访问 npmjs.org，使用淘宝镜像源
+RUN pnpm config set registry https://registry.npmmirror.com
+
+# 只拷贝锁文件相关；这样业务代码变化不会影响此镜像 layer
+COPY package.json pnpm-lock.yaml ./
+
+# 装全量依赖（含 devDeps），因为运行时 tsx/esm 需要 tsx + typescript
+RUN pnpm install --frozen-lockfile --prod=false
+
+# 创建运行时需要的目录与非 root 用户；业务镜像可直接继承
+RUN mkdir -p /data/chatops/test-runs \
+ && useradd -m -s /bin/bash chatops \
+ && chown -R chatops:chatops /app /data/chatops

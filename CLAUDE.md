@@ -26,8 +26,13 @@ cd web && pnpm build   # TypeScript 类型检查 + Vite 产物输出到 web/dist
 # 数据库迁移
 pnpm migrate           # 顺序执行 schema.sql → schema-v7.sql
 
-# Docker 镜像构建
-./build.sh             # 多阶段构建，含前端编译 + 后端类型检查（IMAGE_NAME / IMAGE_TAG 可选）
+# Docker 镜像构建（两层：base 依赖层 + 业务层）
+# base 只在 pnpm-lock.yaml / package.json / Node/pnpm 版本变化时重建
+./build-base.sh        # 构建并 push linux/amd64 base 到 harbor.paraview.cn/chatops/chatops-base
+                       # 同时打 :latest 和 :deps-<lockfileSha8> 两个 tag
+./build.sh             # 日常业务构建：本地先 pnpm build 前端，再 docker build linux/amd64 业务镜像
+                       # 环境变量：IMAGE_NAME / IMAGE_TAG / BASE_IMAGE / PLATFORM / SKIP_WEB
+                       # 依赖已在 base 里，业务镜像仅 COPY src/ + web/dist（秒级完成）
 
 # Docker 部署
 ./deploy.sh up         # 启动全栈（postgres + migrate + chatops），自动 --build

@@ -1,0 +1,3 @@
+[registry."harbor.paraview.cn"]
+  http = false
+  insecure = true
