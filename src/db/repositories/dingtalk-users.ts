@@ -66,43 +66,32 @@ export async function getDingTalkUserCount(): Promise<number> {
   return parseInt(rows[0].count, 10)
 }
 
-export interface DingTalkUserPagedResult {
-  items: DingTalkUser[]
-  total: number
-}
-
-export async function listDingTalkUsersPaged(opts: {
-  keyword?: string
-  page?: number
-  pageSize?: number
-}): Promise<DingTalkUserPagedResult> {
+export async function listDingTalkUsersPaged(
+  keyword: string | null,
+  page: number,
+  limit: number
+): Promise<{ data: DingTalkUser[]; total: number }> {
   const pool = getPool()
-  const page = Math.max(1, opts.page ?? 1)
-  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 20))
-  const offset = (page - 1) * pageSize
+  const offset = (page - 1) * limit
+  const kw = keyword || null
 
-  const whereParts: string[] = []
-  const params: unknown[] = []
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(
+      `SELECT * FROM dingtalk_users
+       WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')
+       ORDER BY name, id
+       LIMIT $2 OFFSET $3`,
+      [kw, limit, offset]
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count FROM dingtalk_users
+       WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')`,
+      [kw]
+    ),
+  ])
 
-  if (opts.keyword) {
-    params.push(`%${opts.keyword}%`)
-    whereParts.push(`(name ILIKE $${params.length} OR user_id ILIKE $${params.length} OR department ILIKE $${params.length})`)
+  return {
+    data: dataResult.rows.map(mapRow),
+    total: parseInt(countResult.rows[0].count, 10),
   }
-
-  const where = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : ''
-
-  const countResult = await pool.query(
-    `SELECT COUNT(*) AS count FROM dingtalk_users ${where}`,
-    params
-  )
-  const total = parseInt(countResult.rows[0].count, 10)
-
-  params.push(pageSize)
-  params.push(offset)
-  const { rows } = await pool.query(
-    `SELECT * FROM dingtalk_users ${where} ORDER BY name LIMIT $${params.length - 1} OFFSET $${params.length}`,
-    params
-  )
-
-  return { items: rows.map(mapRow), total }
 }

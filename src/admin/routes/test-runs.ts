@@ -10,19 +10,30 @@ const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
 export async function registerTestRunRoutes(app: FastifyInstance): Promise<void> {
   // List runs
-  app.get<{ Querystring: { pipeline_id?: string; page?: string; page_size?: string } }>('/test-runs', async (req, reply) => {
-    const pipelineId = req.query.pipeline_id ? Number(req.query.pipeline_id) : undefined
-    const page = req.query.page ? Number(req.query.page) : undefined
-    const pageSize = req.query.page_size ? Number(req.query.page_size) : undefined
-    const result = await listTestRuns({ pipelineId, page, pageSize })
-    const userIds = [...new Set(result.items.map(r => r.triggeredBy).filter(Boolean))]
+  app.get('/test-runs', {
+    schema: {
+      querystring: {
+        type: 'object',
+        properties: {
+          pipeline_id: { type: 'integer' },
+          page: { type: 'integer', minimum: 1, default: 1 },
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
+        },
+      },
+    },
+  }, async (req, reply) => {
+    const { pipeline_id, page, limit } = req.query as { pipeline_id?: number; page: number; limit: number }
+    const result = await listTestRuns(pipeline_id ?? null, page, limit)
+    const userIds = [...new Set(result.data.map(r => r.triggeredBy).filter(Boolean))]
     const userMap = await getDingTalkUsersByIds(userIds)
     return reply.send({
-      items: result.items.map(r => {
+      data: result.data.map(r => {
         const u = userMap.get(r.triggeredBy)
         return { ...r, triggeredByName: u?.name, triggeredByAvatar: u?.avatar }
       }),
       total: result.total,
+      page,
+      limit,
     })
   })
 
