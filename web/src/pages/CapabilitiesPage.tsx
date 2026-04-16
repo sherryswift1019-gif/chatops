@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message, Tooltip } from 'antd'
+import { Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message, Tooltip, theme } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import { getCapabilities, createCapability, updateCapability, updateCapabilitySystemPrompt, resetCapabilitySystemPrompt } from '../api/capabilities'
 import type { Capability } from '../api/capabilities'
@@ -14,6 +14,7 @@ const categoryLabels: Record<string, string> = {
 }
 
 export default function CapabilitiesPage() {
+  const { token } = theme.useToken()
   const [data, setData] = useState<Capability[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
@@ -175,7 +176,7 @@ export default function CapabilitiesPage() {
                 <Button size="small" onClick={handleResetPrompt} disabled={editing.systemPrompt === editing.defaultSystemPrompt}>
                   恢复默认
                 </Button>
-                <span style={{ color: '#888', fontSize: 12 }}>
+                <span style={{ color: token.colorTextDescription, fontSize: 12 }}>
                   支持变量: {'{{initiatorRole}}'} | 模块/服务器信息会自动注入
                 </span>
               </div>
