@@ -136,7 +136,7 @@ async function verifyImageExists(harborUrl: string, harborProject: string, tag: 
 
 const deployTool: AgentTool = {
   name: 'execute_deploy',
-  description: '执行部署。必须提供 branch（Git 分支名），工具会自动查 GitLab 该分支最新 commit 构造精确镜像 tag 并验证 Harbor 中存在后再部署。禁止使用 latest 类 tag，禁止跳过 GitLab 校验。仅当用户明确给出完整 tag（如 develop_fca291a5）时才可用 imageTag 参数。',
+  description: '执行部署。根据 Git 分支名查 GitLab 最新 commit，构造镜像 tag（格式：分支名_commitId前8位），验证 Harbor 中镜像存在后 SSH 部署。',
   riskLevel: 'high',
   requiredRole: 'ops',
   inputSchema: {
@@ -144,14 +144,13 @@ const deployTool: AgentTool = {
     properties: {
       project: { type: 'string', description: '项目名称' },
       env: { type: 'string', description: '目标环境 (dev/test/staging/prod)' },
-      branch: { type: 'string', description: '必填。Git 分支名，如 develop、main、release。工具会自动查该分支最新 commit 拼成镜像 tag（格式：分支名_commitId前8位）' },
-      imageTag: { type: 'string', description: '仅在用户明确给出完整 commit tag 时使用（如 develop_fca291a5）。不要传 xxx_latest 类 tag' },
+      branch: { type: 'string', description: 'Git 分支名，如 develop、main、release' },
     },
     required: ['project', 'env', 'branch'],
   },
   async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
-    const { project: projectName, env: envName, branch, imageTag: explicitTag } = params as { project: string; env: string; branch?: string; imageTag?: string }
-    deployLog(`execute_deploy: project=${projectName} env=${envName} branch=${branch ?? '-'} tag=${explicitTag ?? '-'}`)
+    const { project: projectName, env: envName, branch } = params as { project: string; env: string; branch: string }
+    deployLog(`execute_deploy: project=${projectName} env=${envName} branch=${branch}`)
 
     try {
       const { project, plEnv, harbor, sshConfig } = await lookupProjectAndEnv(projectName, envName)
@@ -160,33 +159,24 @@ const deployTool: AgentTool = {
         return { success: false, output: `环境 "${envName}" 未配置 SSH 连接信息（IP/用户名/密码）。请在管理后台 → 产线详情 → 环境配置中设置。` }
       }
 
-      // 解析镜像 tag
-      let imageTag: string
-      let resolveInfo = ''
-      if (explicitTag) {
-        imageTag = explicitTag
-      } else if (branch) {
-        if (!project.gitlabPath) {
-          return { success: false, output: `项目 "${projectName}" 未配置 GitLab 路径。请在管理后台设置 gitlabPath。` }
-        }
-        const harborUrl = harbor?.url ?? ''
-        const harborProject = project.harborProject || project.name
-        const resolved = await resolveImageTag(project.gitlabPath, branch)
-        imageTag = resolved.tag
-        resolveInfo = `\n分支: ${branch}\n提交: ${resolved.shortId}`
+      // 通过 GitLab 解析分支最新 commit → 镜像 tag
+      if (!project.gitlabPath) {
+        return { success: false, output: `项目 "${projectName}" 未配置 GitLab 路径。请在管理后台设置 gitlabPath。` }
+      }
+      const harborUrl = harbor?.url ?? ''
+      const harborProject = project.harborProject || project.name
+      if (!harborUrl) return { success: false, output: 'Harbor URL 未配置。请在系统配置中设置。' }
 
-        // 验证镜像是否已编译
-        if (harborUrl) {
-          const exists = await verifyImageExists(harborUrl, harborProject, imageTag)
-          if (!exists) {
-            return {
-              success: false,
-              output: `⚠️ 镜像 ${imageTag} 在 Harbor 中不存在。\n\n分支 "${branch}" 最新提交: ${resolved.shortId}\n该提交可能尚未编译成功，或 CI 流水线未触发。\n\n请检查 GitLab CI 状态后重试。`,
-            }
-          }
+      const resolved = await resolveImageTag(project.gitlabPath, branch)
+      const imageTag = resolved.tag
+      const resolveInfo = `\n分支: ${branch}\n提交: ${resolved.shortId}`
+
+      const exists = await verifyImageExists(harborUrl, harborProject, imageTag)
+      if (!exists) {
+        return {
+          success: false,
+          output: `⚠️ 镜像 ${imageTag} 在 Harbor 中不存在。\n\n分支 "${branch}" 最新提交: ${resolved.shortId}\n该提交可能尚未编译成功，或 CI 流水线未触发。\n\n请检查 GitLab CI 状态后重试。`,
         }
-      } else {
-        return { success: false, output: '请指定分支名（branch）或镜像标签（imageTag）。例如：「部署 ssh-proxy 到 dev，分支 develop」' }
       }
 
       if (plEnv.runtime === 'docker') {
