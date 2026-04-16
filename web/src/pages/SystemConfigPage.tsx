@@ -47,6 +47,12 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; lab
       { name: 'model', label: '模型' },
     ],
   },
+  platform: {
+    label: '平台设置',
+    fields: [
+      { name: 'max_concurrency', label: '最大并发数（默认 10）' },
+    ],
+  },
 }
 
 export default function SystemConfigPage() {

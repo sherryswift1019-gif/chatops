@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   const runner = new ClaudeRunner()
 
   // Pending approval contexts — keyed by taskId
-  const pendingApprovals = new Map<string, { groupId: string; platform: string; initiatorId: string; initiatorRole?: string; productLineId?: number; originalPrompt: string }>()
+  const pendingApprovals = new Map<string, { groupId: string; platform: string; initiatorId: string; initiatorRole?: string; productLineId?: number; originalPrompt: string; lockProject?: string; lockEnv?: string }>()
 
   // Wire ApprovalTool to gate
   setApprovalGateHandler(async (taskId, action, env, description, meta) => {
@@ -111,6 +111,8 @@ async function main(): Promise<void> {
             adapter,
             executionMode: true,
             productLineId: pending.productLineId,
+            lockProject: pending.lockProject,
+            lockEnv: pending.lockEnv,
           })
         } else {
           await adapter.sendMessage(

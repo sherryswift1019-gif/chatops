@@ -9,9 +9,11 @@ import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
 import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
+import { listEnvironments } from '../db/repositories/environments-repo.js'
 import { buildClaudeEnv } from './claude-config.js'
 import { ApprovalRouter } from '../approval/router.js'
 import { getApprovalRules } from '../db/repositories/approval-rules.js'
+import { acquireLock, releaseLock } from './deploy-lock.js'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -26,6 +28,8 @@ export interface RunOptions {
   executionMode?: boolean
   approvedBy?: string
   productLineId?: number
+  lockProject?: string
+  lockEnv?: string
 }
 
 interface DetectedIntent {
@@ -35,11 +39,12 @@ interface DetectedIntent {
   summary: string
 }
 
-// Session per group with auto-expiry
-interface GroupSession {
+// Session per user with auto-expiry
+interface UserSession {
   sessionId: string
   lastUsed: number
   tools: AgentTool[]
+  lock?: { project: string; env: string }
 }
 
 const SESSION_TTL_MS = 30 * 60 * 1000 // 30 minutes
@@ -95,7 +100,7 @@ async function buildProjectContext(productLineId: number): Promise<string> {
 
 export class ClaudeRunner {
   private porygon: Porygon
-  private sessions = new Map<string, GroupSession>()
+  private sessions = new Map<string, UserSession>()
 
   constructor() {
     this.porygon = createPorygon({
@@ -112,86 +117,100 @@ export class ClaudeRunner {
         maxTurns: 20,
       },
     })
+
+    // session 定时清理（含 lock 释放）
+    setInterval(() => {
+      for (const [userId, session] of this.sessions) {
+        if (Date.now() - session.lastUsed > SESSION_TTL_MS) {
+          if (session.lock) releaseLock(session.lock.project, session.lock.env, userId)
+          this.sessions.delete(userId)
+        }
+      }
+    }, 10 * 60 * 1000)
   }
 
-  private getSessionId(groupId: string): string | undefined {
-    const session = this.sessions.get(groupId)
+  private getSessionId(userId: string): string | undefined {
+    const session = this.sessions.get(userId)
     if (!session) return undefined
     if (Date.now() - session.lastUsed > SESSION_TTL_MS) {
-      this.sessions.delete(groupId)
+      this.clearSession(userId)
       return undefined
     }
     return session.sessionId
   }
 
-  private saveSession(groupId: string, sessionId: string, tools: AgentTool[]): void {
-    this.sessions.set(groupId, { sessionId, lastUsed: Date.now(), tools })
+  private saveSession(userId: string, sessionId: string, tools: AgentTool[], lock?: { project: string; env: string }): void {
+    const existing = this.sessions.get(userId)
+    this.sessions.set(userId, {
+      sessionId,
+      lastUsed: Date.now(),
+      tools,
+      lock: lock ?? existing?.lock,
+    })
+  }
+
+  private clearSession(userId: string): void {
+    const session = this.sessions.get(userId)
+    if (session?.lock) {
+      releaseLock(session.lock.project, session.lock.env, userId)
+    }
+    this.sessions.delete(userId)
   }
 
   async run(opts: RunOptions): Promise<void> {
     const { prompt, context, adapter, executionMode = false, productLineId } = opts
+    const userId = context.initiatorId
 
     try {
+      // executionMode（审批通过后）
       if (executionMode) {
+        // 审批后执行也需要部署锁
+        if (opts.lockProject && opts.lockEnv) {
+          const lockMsg = acquireLock(opts.lockProject, opts.lockEnv, userId, 'deploy')
+          if (lockMsg) {
+            await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: lockMsg })
+            return
+          }
+        }
         const tools = getAllTools().filter(t => t.name !== 'request_approval')
-        await this.executeWithPorygon(opts, tools)
+        try {
+          await this.executeWithPorygon(opts, tools)
+        } finally {
+          if (opts.lockProject && opts.lockEnv) releaseLock(opts.lockProject, opts.lockEnv, userId)
+        }
         return
       }
 
-      // Step 0: 有活跃 session 时直接 resume（跳过 intent 检测）
-      // 但明确的打招呼/求助消息不 resume，走固定 greet 回复
-      const greetPattern = /^(你好|hi|hello|help|帮助|你能做什么|你会什么|有什么功能|菜单|功能列表)\s*[?？!！。.]*$/i
-      const isGreeting = greetPattern.test(prompt.trim())
-
-      if (!isGreeting) {
-        const activeSession = this.sessions.get(opts.groupId)
-        if (activeSession && (Date.now() - activeSession.lastUsed) <= SESSION_TTL_MS) {
-          console.log(`[Runner] Active session found for group ${opts.groupId}, resuming with: "${prompt}"`)
-          await this.executeWithPorygon(opts, activeSession.tools)
-          return
-        }
-      }
-
-      // Step 1: Detect intent (新对话)
+      // Step 1: 每次都先 intent 检测
       console.log('[Runner] Step 1: detecting intent for:', prompt)
       const intent = await this.detectIntent(prompt)
       console.log('[Runner] Intent result:', JSON.stringify(intent))
 
-      // Greeting or unknown
-      if (!intent || intent.capability === 'greet') {
-        const caps = await listCapabilities()
-        const examples: Record<string, string> = {
-          deploy: '部署 ssh-proxy 到 dev 环境，分支 develop',
-          rollback: '回滚 ssh-proxy dev 环境',
-          restart: '重启 rdp-proxy dev 环境',
-          custom_script: '在 proxy-server 上执行 df -h',
-          manage_role: '给黄文华 ops 角色',
-          view_deployments: '查看 ssh-proxy 的部署历史',
-          view_images: '查看 rdp-proxy 的镜像列表',
-          view_logs: '查看 ssh-proxy dev 环境最近 50 行日志',
-          view_commits: '查看 ssh-proxy 最近的提交记录',
-          view_projects: '查看当前产线有哪些模块',
-        }
-        const capsList = caps.map(c => {
-          const ex = examples[c.key]
-          return ex
-            ? `- **${c.displayName}** — ${c.description}\n  > 💬 \`${ex}\``
-            : `- **${c.displayName}** — ${c.description}`
-        }).join('\n')
-        const text = [
-          '## 你好！我是 ChatOps 助手',
-          '**我目前支持以下能力：**',
-          capsList,
-          '直接用自然语言告诉我你想做什么即可。',
-        ].join('\n\n')
-        await adapter.sendMessage(
-          { type: 'group', id: opts.groupId },
-          { text }
-        )
+      // Step 2: greet → 固定帮助（永不 resume）
+      if (intent?.capability === 'greet') {
+        await this.sendGreeting(adapter, opts.groupId)
         return
       }
 
-      // Step 2: Get capability
+      // Step 3: intent=null（跟进回复如"好""是的"）→ 尝试 resume
+      if (!intent) {
+        const session = this.sessions.get(userId)
+        if (session && (Date.now() - session.lastUsed) <= SESSION_TTL_MS) {
+          try {
+            console.log(`[Runner] Resuming session for user ${userId} with: "${prompt}"`)
+            await this.executeWithPorygon(opts, session.tools)
+            return
+          } catch {
+            // Porygon session 可能已过期，清除避免死循环
+            this.clearSession(userId)
+          }
+        }
+        // 无 session 也无 intent → 当 greet
+        await this.sendGreeting(adapter, opts.groupId)
+        return
+      }
+
+      // Step 4: 有具体 capability → 查找 + 权限检查
       const capability = await getCapabilityByKey(intent.capability)
       if (!capability) {
         await adapter.sendMessage(
@@ -201,10 +220,9 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 3: Check access
       const userRole = context.initiatorRole ?? 'developer'
 
-      // 3a: 未绑定产线的用户无法执行非查询类能力
+      // 4a: 未绑定产线的用户无法执行非查询类能力
       if (!productLineId && capability.category !== 'query') {
         await adapter.sendMessage(
           { type: 'group', id: opts.groupId },
@@ -213,7 +231,7 @@ export class ClaudeRunner {
         return
       }
 
-      // 3b: 已有产线的用户检查 capability-level 权限
+      // 4b: 已有产线的用户检查 capability-level 权限
       if (productLineId) {
         const envName = intent.env ?? '*'
         const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole)
@@ -226,7 +244,7 @@ export class ClaudeRunner {
         }
       }
 
-      // 3c: 检查用户 role 是否有权使用该能力的核心工具
+      // 4c: 检查用户 role 是否有权使用该能力的核心工具
       if (productLineId) {
         const permitted = await getPermittedTools(userRole as Role, productLineId)
         const permittedNames = new Set(permitted.map(t => t.name))
@@ -240,7 +258,7 @@ export class ClaudeRunner {
         }
       }
 
-      // Step 4: Get tools
+      // Step 5: 加载工具
       const capabilityTools = capability.toolNames
         .map(name => getTool(name))
         .filter((t): t is AgentTool => t !== undefined)
@@ -253,16 +271,15 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 5: 审批拦截（代码级强制）
-      if (capability.needsApproval && !opts.executionMode) {
+      // Step 6: 审批拦截（代码级强制）
+      if (capability.needsApproval && !executionMode) {
         const rules = await getApprovalRules()
         const router = new ApprovalRouter(rules)
         const envName = intent.env ?? '*'
         const rule = router.route(capability.key, envName)
 
         if (rule) {
-          // 有审批规则 → 只暴露 request_approval，强制走审批流
-          console.log(`[Runner] Approval required for ${capability.key} env=${envName}, restricting to approval tool only`)
+          console.log(`[Runner] Approval required for ${capability.key} env=${envName}`)
           const approvalOnly = capabilityTools.filter(t => t.name === 'request_approval')
           if (approvalOnly.length === 0) {
             await adapter.sendMessage(
@@ -271,17 +288,50 @@ export class ClaudeRunner {
             )
             return
           }
-          // 把 originalPrompt 注入 context 以便审批通过后能恢复执行
           opts.context.originalPrompt = prompt
+          // 清旧 session → 加锁 → 执行审批
+          this.clearSession(userId)
           await this.executeWithPorygon(opts, approvalOnly, capability)
           return
         }
-        // 无匹配规则 → 免审批，正常执行
         console.log(`[Runner] No approval rule for ${capability.key} env=${envName}, auto-approved`)
       }
 
-      // Step 6: Execute with session context
-      await this.executeWithPorygon(opts, capabilityTools, capability)
+      // ── 所有检查通过，清旧 session + 加锁 + 执行 ──
+
+      this.clearSession(userId)
+
+      // 写操作加 deploy lock
+      const writeCapabilities = new Set(['deploy', 'rollback', 'restart'])
+      const needsLock = writeCapabilities.has(intent.capability) && intent.project && intent.env
+      let lockInfo: { project: string; env: string } | undefined
+
+      if (needsLock) {
+        // 归一化 project/env 名称
+        const projects = await listProjects()
+        const p = projects.find(x => x.name === intent.project || x.displayName === intent.project)
+        const normalizedProject = p?.name ?? intent.project!
+        const envs = await listEnvironments()
+        const e = envs.find(x => x.name === intent.env || x.displayName === intent.env)
+        const normalizedEnv = e?.name ?? intent.env!
+
+        const lockMsg = acquireLock(normalizedProject, normalizedEnv, userId, intent.capability)
+        if (lockMsg) {
+          await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: lockMsg })
+          return
+        }
+        lockInfo = { project: normalizedProject, env: normalizedEnv }
+      }
+
+      try {
+        await this.executeWithPorygon(opts, capabilityTools, capability, lockInfo)
+      } catch (err) {
+        // 异常时释放未被 session 接管的锁
+        if (lockInfo && !this.sessions.has(userId)) {
+          releaseLock(lockInfo.project, lockInfo.env, userId)
+        }
+        throw err
+      }
 
     } catch (err) {
       console.error('[Runner] Error:', err)
@@ -290,6 +340,35 @@ export class ClaudeRunner {
         { text: `❌ Agent error: ${String(err)}` }
       ).catch(e => console.error('[Runner] Failed to send error to IM:', e))
     }
+  }
+
+  private async sendGreeting(adapter: IMAdapter, groupId: string): Promise<void> {
+    const caps = await listCapabilities()
+    const examples: Record<string, string> = {
+      deploy: '部署 ssh-proxy 到 dev 环境，分支 develop',
+      rollback: '回滚 ssh-proxy dev 环境',
+      restart: '重启 rdp-proxy dev 环境',
+      custom_script: '在 proxy-server 上执行 df -h',
+      manage_role: '给黄文华 ops 角色',
+      view_deployments: '查看 ssh-proxy 的部署历史',
+      view_images: '查看 rdp-proxy 的镜像列表',
+      view_logs: '查看 ssh-proxy dev 环境最近 50 行日志',
+      view_commits: '查看 ssh-proxy 最近的提交记录',
+      view_projects: '查看当前产线有哪些模块',
+    }
+    const capsList = caps.map(c => {
+      const ex = examples[c.key]
+      return ex
+        ? `- **${c.displayName}** — ${c.description}\n  > 💬 \`${ex}\``
+        : `- **${c.displayName}** — ${c.description}`
+    }).join('\n')
+    const text = [
+      '## 你好！我是 ChatOps 助手',
+      '**我目前支持以下能力：**',
+      capsList,
+      '直接用自然语言告诉我你想做什么即可。',
+    ].join('\n\n')
+    await adapter.sendMessage({ type: 'group', id: groupId }, { text })
   }
 
   private async detectIntent(prompt: string): Promise<DetectedIntent | null> {
@@ -309,15 +388,19 @@ ${capList}
 重要规则:
 1. 如果用户提到"执行"、"运行"、"触发"某个流水线名称，优先匹配 pipeline_ 开头的能力
 2. 流水线名称可能是产品名、项目名等，如"执行Windows流水线"应匹配 pipeline_X 而非 view_deployments
+3. 如果用户回复是简短的确认、否认或补充信息（如"好"、"是的"、"不"、"1"、"对"、"用 dev 分支"、"ssh-proxy"），说明是在回复之前的对话，返回 null（不要返回 JSON）
+4. 仅当用户主动打招呼、问好、或询问系统功能时才返回 greet
 
 返回 JSON（不要代码块）：
 {"capability":"能力key","project":"项目名(如有)","env":"环境名(如有)","summary":"一句话总结"}
 
-如果用户在打招呼、问好、自我介绍请求，返回：
+如果用户在打招呼、问好、询问功能，返回：
 {"capability":"greet","summary":"打招呼"}
 
 如果不属于任何已知能力，返回：
-{"capability":"unknown","summary":"无法识别"}`,
+{"capability":"unknown","summary":"无法识别"}
+
+如果是简短的确认/否认/补充信息，直接返回文本 null`,
         maxTurns: 1,
         disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'],
         envVars: await buildClaudeEnv(),
@@ -325,6 +408,7 @@ ${capList}
 
       console.log('[Runner] Porygon raw result:', result)
       const cleaned = result.replace(/```json?\n?/g, '').replace(/```\n?/g, '').trim()
+      if (cleaned === 'null' || cleaned === '') return null
       const parsed = JSON.parse(cleaned) as DetectedIntent
       return parsed.capability === 'unknown' ? null : parsed
     } catch (err) {
@@ -333,8 +417,9 @@ ${capList}
     }
   }
 
-  private async executeWithPorygon(opts: RunOptions, tools: AgentTool[], capability?: Capability): Promise<void> {
-    const { prompt, context, adapter, executionMode = false, groupId } = opts
+  private async executeWithPorygon(opts: RunOptions, tools: AgentTool[], capability?: Capability, lockInfo?: { project: string; env: string }): Promise<void> {
+    const { prompt, context, adapter, executionMode = false } = opts
+    const userId = context.initiatorId
 
     const FALLBACK_PROMPT = '你是一个 DevOps 助手。用户通过群聊与你交互。只使用提供给你的 MCP 工具，不要使用 Bash 等内置工具。'
 
@@ -367,12 +452,12 @@ ${capList}
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
     console.log(`[Runner] executeWithPorygon: mcpServerPath=${mcpServerPath}, tools=[${toolNames.join(',')}]`)
 
-    // Resume existing session for this group if available
-    const existingSessionId = this.getSessionId(groupId)
+    // Resume existing session for this user if available
+    const existingSessionId = this.getSessionId(userId)
     if (existingSessionId) {
-      console.log(`[Runner] Resuming session: ${existingSessionId} for group: ${groupId}`)
+      console.log(`[Runner] Resuming session: ${existingSessionId} for user: ${userId}`)
     } else {
-      console.log(`[Runner] New session for group: ${groupId}`)
+      console.log(`[Runner] New session for user: ${userId}`)
     }
 
     let textBuffer = ''
@@ -389,7 +474,6 @@ ${capList}
             command: 'node',
             args: ['--import', 'tsx/esm', mcpServerPath],
             env: {
-              // 继承父进程环境（PATH/HOME 等），否则子进程找不到 node 且 config 校验失败
               ...(process.env as Record<string, string>),
               CHATOPS_TASK_CONTEXT: JSON.stringify(context),
               CHATOPS_ALLOWED_TOOLS: toolNames.join(','),
@@ -405,7 +489,7 @@ ${capList}
 
         // Capture sessionId from any message
         if ('sessionId' in msg && msg.sessionId) {
-          this.saveSession(groupId, msg.sessionId as string, tools)
+          this.saveSession(userId, msg.sessionId as string, tools, lockInfo)
         }
 
         switch (msg.type) {
@@ -418,9 +502,8 @@ ${capList}
             break
 
           case 'result':
-            // Capture sessionId from result
             if ('sessionId' in msg && msg.sessionId) {
-              this.saveSession(groupId, msg.sessionId as string, tools)
+              this.saveSession(userId, msg.sessionId as string, tools, lockInfo)
             }
             console.log(`[Runner] Porygon result received`)
             break
@@ -437,8 +520,7 @@ ${capList}
       console.log(`[Runner] Porygon query completed, textBuffer length=${textBuffer.length}`)
     } catch (err) {
       console.error('[Runner] executeWithPorygon error:', err)
-      // Session might be invalid, clear it
-      this.sessions.delete(groupId)
+      this.clearSession(userId)
       await adapter.sendMessage(
         { type: 'group', id: opts.groupId },
         { text: `❌ 执行错误: ${String(err)}` }

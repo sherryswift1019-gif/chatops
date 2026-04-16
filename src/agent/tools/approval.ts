@@ -8,6 +8,8 @@ export interface ApprovalMeta {
   initiatorRole?: string
   productLineId?: number
   originalPrompt: string
+  lockProject?: string
+  lockEnv?: string
 }
 
 let gateRequestFn: ((taskId: string, action: string, env: string, description: string, meta: ApprovalMeta) => Promise<void>) | null = null
