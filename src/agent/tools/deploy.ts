@@ -112,20 +112,25 @@ const deployTool: AgentTool = {
         deployLog(`SSH to ${sshConfig.host}, container=${containerName}, image=${fullImage}, composePath=${composePath}`)
 
         const latestImage = `${registryHost}/${harborProject}:latest`
+        const prevImage = `${registryHost}/${harborProject}:prev`
+        const repoPath = `${registryHost}/${harborProject}`
         let commands: string
 
         if (composePath) {
           // Docker Compose 部署模式
-          // 先检测 compose 命令版本，后续统一使用
           commands = [
             `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
             `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
             `cd ${composePath}`,
             `$COMPOSE_CMD stop ${containerName} || true`,
-            `docker rmi ${latestImage} || true`,
+            // 备份当前版本用于回滚
+            `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+            `docker rmi ${latestImage} 2>/dev/null || true`,
             `docker pull ${fullImage}`,
             `docker tag ${fullImage} ${latestImage}`,
             `$COMPOSE_CMD up -d ${containerName}`,
+            // 清理多余镜像（只保留 :latest 和 :prev）
+            `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
           ].join(' && ')
         } else {
           // 裸 Docker 部署模式（兼容旧方式）
@@ -133,10 +138,14 @@ const deployTool: AgentTool = {
             `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
             `docker stop ${containerName} || true`,
             `docker rm ${containerName} || true`,
-            `docker rmi ${latestImage} || true`,
+            // 备份当前版本用于回滚
+            `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+            `docker rmi ${latestImage} 2>/dev/null || true`,
             `docker pull ${fullImage}`,
             `docker tag ${fullImage} ${latestImage}`,
             `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
+            // 清理多余镜像
+            `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
           ].join(' && ')
         }
 
@@ -184,7 +193,7 @@ const deployTool: AgentTool = {
 
 const rollbackTool: AgentTool = {
   name: 'execute_rollback',
-  description: '回滚部署。Docker 需指定回滚目标镜像标签，K8s 自动回滚到上一版本。',
+  description: '回滚部署。Docker 默认使用本地 :prev 镜像秒级回滚；也可指定镜像标签从 Harbor 拉取。K8s 自动回滚到上一版本。',
   riskLevel: 'high',
   requiredRole: 'ops',
   inputSchema: {
@@ -218,7 +227,54 @@ const rollbackTool: AgentTool = {
       }
 
       // Docker: redeploy with old tag
-      if (!imageTag) return { success: false, output: 'Docker 回滚需要指定目标镜像标签。请先用 query_deployments 查看历史版本。' }
+      if (!imageTag) {
+        // 尝试用本地 :prev 镜像快速回滚（秒级，不依赖 Harbor 网络）
+        const harborCfg = await getConfig('harbor')
+        const harbor = harborCfg?.value as Record<string, string> | undefined
+        const harborUrl = harbor?.url ?? ''
+        const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
+        const harborProject = project.harborProject || project.name
+        const prevImage = `${registryHost}/${harborProject}:prev`
+        const latestImage = `${registryHost}/${harborProject}:latest`
+        const containerName = project.dockerContainerName || project.name
+        const composePath = project.composePath
+
+        let commands: string
+        if (composePath) {
+          commands = [
+            `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
+            `docker inspect ${prevImage} >/dev/null 2>&1 || (echo "NO_PREV" && exit 1)`,
+            // 交换 :latest ↔ :prev
+            `docker tag ${latestImage} ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
+            `docker tag ${prevImage} ${latestImage}`,
+            `docker tag ${registryHost}/${harborProject}:rollback_tmp ${prevImage} 2>/dev/null || true`,
+            `docker rmi ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
+            `cd ${composePath} && $COMPOSE_CMD up -d ${containerName}`,
+          ].join(' && ')
+        } else {
+          commands = [
+            `docker inspect ${prevImage} >/dev/null 2>&1 || (echo "NO_PREV" && exit 1)`,
+            `docker tag ${latestImage} ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
+            `docker tag ${prevImage} ${latestImage}`,
+            `docker tag ${registryHost}/${harborProject}:rollback_tmp ${prevImage} 2>/dev/null || true`,
+            `docker rmi ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
+            `docker stop ${containerName} || true`,
+            `docker rm ${containerName} || true`,
+            `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
+          ].join(' && ')
+        }
+
+        deployLog(`rollback using local :prev image for ${projectName}`)
+        const result = await sshExec(
+          { host: sshConfig.host, port: sshConfig.port, username: sshConfig.username, password: sshConfig.password },
+          commands
+        )
+        if (result.stdout.includes('NO_PREV') || result.code !== 0) {
+          return { success: false, output: '本地无上一版本镜像（:prev）。请指定镜像标签回滚，如：imageTag="develop_latest"。可用 query_deployments 查看历史版本。' }
+        }
+        await recordDeployment({ project: projectName, env: envName, imageTag: 'prev', deployedBy: ctx.initiatorId, status: 'rolled_back' })
+        return { success: true, output: `✅ 快速回滚成功（使用本地 :prev 镜像）\n服务器: ${sshConfig.host}\n容器: ${containerName}` }
+      }
       return deployTool.execute({ project: projectName, env: envName, imageTag }, ctx)
     } catch (err) {
       return { success: false, output: `回滚错误: ${String(err)}` }
