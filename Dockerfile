@@ -1,35 +1,31 @@
-FROM node:20-slim AS base
-RUN corepack enable && corepack prepare pnpm@10 --activate
+# ChatOps 业务镜像 — 多阶段构建：前端编译 + 后端打包
+# base 镜像已含后端 + 前端 node_modules，业务构建仅 COPY 源码 + build。
 
-# Stage 1: Build frontend
-FROM base AS web-build
+ARG BASE_IMAGE=harbor.paraview.cn/chatops/chatops-base:latest
+
+# ============================================================
+# Stage 1: 前端构建（node_modules 已在 base 中，只需 COPY 源码 + build）
+# ============================================================
+FROM ${BASE_IMAGE} AS web-build
+
 WORKDIR /app/web
-COPY web/package.json web/pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
 COPY web/ .
 RUN pnpm build
 
-# Stage 2: Backend + serve frontend
-FROM base AS final
-WORKDIR /app
+# ============================================================
+# Stage 2: 最终业务镜像
+# ============================================================
+FROM ${BASE_IMAGE}
 
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile --prod=false
+WORKDIR /app
 
 COPY tsconfig.json ./
 COPY src/ src/
-
-# Copy frontend build output
 COPY --from=web-build /app/web/dist web/dist
 
-# Verify TypeScript compiles
 RUN npx tsc --noEmit
 
-# Create data directory for test reports
-RUN mkdir -p /data/chatops/test-runs
-
-# Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
-RUN useradd -m -s /bin/bash chatops && chown -R chatops:chatops /app /data/chatops
+RUN chown -R chatops:chatops /app
 USER chatops
 
 EXPOSE 3000

@@ -1,10 +1,21 @@
 import { registerTool } from './index.js'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
-let gateRequestFn: ((taskId: string, action: string, env: string, description: string) => Promise<void>) | null = null
+export interface ApprovalMeta {
+  groupId: string
+  platform: string
+  initiatorId: string
+  initiatorRole?: string
+  productLineId?: number
+  originalPrompt: string
+  lockProject?: string
+  lockEnv?: string
+}
+
+let gateRequestFn: ((taskId: string, action: string, env: string, description: string, meta: ApprovalMeta) => Promise<void>) | null = null
 
 export function setApprovalGateHandler(
-  fn: (taskId: string, action: string, env: string, description: string) => Promise<void>
+  fn: (taskId: string, action: string, env: string, description: string, meta: ApprovalMeta) => Promise<void>
 ): void {
   gateRequestFn = fn
 }
@@ -27,7 +38,14 @@ const approvalTool: AgentTool = {
     if (!gateRequestFn) {
       return { success: false, output: 'Approval gate not configured' }
     }
-    await gateRequestFn(ctx.taskId, action, env, description)
+    await gateRequestFn(ctx.taskId, action, env, description, {
+      groupId: ctx.groupId,
+      platform: ctx.platform ?? 'dingtalk',
+      initiatorId: ctx.initiatorId,
+      initiatorRole: ctx.initiatorRole ?? undefined,
+      productLineId: ctx.productLineId,
+      originalPrompt: ctx.originalPrompt ?? '',
+    })
     return {
       success: true,
       output: `Approval request sent. The operation will proceed once an authorized approver confirms. Session ending — I will continue after approval is received.`,

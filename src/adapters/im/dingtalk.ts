@@ -289,7 +289,7 @@ export class DingTalkAdapter implements IMAdapter {
     const normalized: NormalizedMessage = {
       platform: 'dingtalk',
       groupId: msg.conversationId,
-      userId: msg.senderId,
+      userId: msg.senderStaffId,
       userName: msg.senderNick,
       text: text || '[图片]',
       images: images.length > 0 ? images : undefined,

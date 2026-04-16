@@ -16,7 +16,10 @@ services:
       retries: 5
 
   migrate:
-    build: .
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-harbor.paraview.cn/chatops/chatops-base:latest}
     command: ["node", "--import", "tsx/esm", "src/db/migrate.ts"]
     environment:
       DATABASE_URL: postgres://chatops:chatops@postgres:5432/chatops
@@ -25,7 +28,10 @@ services:
         condition: service_healthy
 
   chatops:
-    build: .
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-harbor.paraview.cn/chatops/chatops-base:latest}
     ports:
       - "${PORT:-3000}:3000"
     env_file:

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync } from 'fs'
 import { config } from './config.js'
+import { getConfig } from './db/repositories/system-config.js'
 import { DingTalkAdapter } from './adapters/im/dingtalk.js'
 import { FeishuAdapter } from './adapters/im/feishu.js'
 import { GitLabWebhookReceiver } from './adapters/gitlab/webhook-receiver.js'
@@ -27,6 +28,7 @@ import './agent/tools/deploy.js'
 import './agent/tools/approval.js'
 import './agent/tools/role.js'
 import './agent/tools/autotest.js'
+import './agent/tools/list-projects.js'
 
 // 研发 AI 助手工具
 import './agent/tools/read-code.js'
@@ -59,23 +61,25 @@ async function resolveProductLineId(userId: string): Promise<{ productLineId: nu
 async function main(): Promise<void> {
   const app = Fastify({ logger: true })
 
-  // Build IM adapters (only create if credentials are configured)
+  // Build IM adapters (only create if credentials are configured in system_config)
   const adapters: IMAdapter[] = []
 
-  if (config.DINGTALK_CLIENT_ID && config.DINGTALK_CLIENT_SECRET) {
+  const dingtalkCfg = (await getConfig('dingtalk'))?.value as { clientId?: string; clientSecret?: string } | undefined
+  if (dingtalkCfg?.clientId && dingtalkCfg?.clientSecret) {
     const dingtalk = new DingTalkAdapter({
-      clientId: config.DINGTALK_CLIENT_ID,
-      clientSecret: config.DINGTALK_CLIENT_SECRET,
+      clientId: dingtalkCfg.clientId,
+      clientSecret: dingtalkCfg.clientSecret,
     })
     adapters.push(dingtalk)
     app.log.info('DingTalk adapter enabled (Stream mode)')
   }
 
-  if (config.FEISHU_APP_ID && config.FEISHU_APP_SECRET) {
+  const feishuCfg = (await getConfig('feishu'))?.value as { appId?: string; appSecret?: string; verificationToken?: string } | undefined
+  if (feishuCfg?.appId && feishuCfg?.appSecret) {
     const feishu = new FeishuAdapter({
-      appId: config.FEISHU_APP_ID,
-      appSecret: config.FEISHU_APP_SECRET,
-      verificationToken: config.FEISHU_VERIFICATION_TOKEN,
+      appId: feishuCfg.appId,
+      appSecret: feishuCfg.appSecret,
+      verificationToken: feishuCfg.verificationToken ?? '',
     })
     adapters.push(feishu)
     app.log.info('Feishu adapter enabled (Webhook mode)')
@@ -86,20 +90,59 @@ async function main(): Promise<void> {
   await gate.initialize()
   setApprovalGate(gate)
 
+  // Claude runner
+  const runner = new ClaudeRunner()
+
+  // Pending approval contexts — keyed by taskId
+  const pendingApprovals = new Map<string, { groupId: string; platform: string; initiatorId: string; initiatorRole?: string; productLineId?: number; originalPrompt: string; lockProject?: string; lockEnv?: string }>()
+
   // Wire ApprovalTool to gate
-  setApprovalGateHandler(async (taskId, action, env, description) => {
+  setApprovalGateHandler(async (taskId, action, env, description, meta) => {
+    // 保存执行上下文以便审批通过后恢复
+    pendingApprovals.set(taskId, meta)
+
     await gate.request(
-      { taskId, action, env, description, initiatorName: 'user', groupId: '' },
+      { taskId, action, env, description, initiatorName: meta.initiatorId, groupId: meta.groupId },
       async (tid, decision, approverId) => {
+        const pending = pendingApprovals.get(tid)
+        pendingApprovals.delete(tid)
+        if (!pending) return
+
+        const adapter = adapters.find(a => a.platform === pending.platform) ?? adapters[0]
         if (decision === 'approved') {
-          // Trigger execution session via queue
+          console.log(`[Server] Approval granted for task ${tid}, triggering execution`)
+          await adapter.sendMessage(
+            { type: 'group', id: pending.groupId },
+            { text: `✅ 审批通过（审批人: ${approverId}），正在执行...` }
+          )
+          // 以 executionMode 重新执行（此时 request_approval 被过滤，只暴露执行工具）
+          await runner.run({
+            prompt: pending.originalPrompt,
+            context: {
+              taskId: tid,
+              groupId: pending.groupId,
+              platform: pending.platform,
+              initiatorId: pending.initiatorId,
+              initiatorRole: (pending.initiatorRole as any) ?? null,
+              productLineId: pending.productLineId,
+            },
+            groupId: pending.groupId,
+            platform: pending.platform,
+            adapter,
+            executionMode: true,
+            productLineId: pending.productLineId,
+            lockProject: pending.lockProject,
+            lockEnv: pending.lockEnv,
+          })
+        } else {
+          await adapter.sendMessage(
+            { type: 'group', id: pending.groupId },
+            { text: `❌ 审批被拒绝（审批人: ${approverId}），操作已取消。` }
+          )
         }
       }
     )
   })
-
-  // Claude runner
-  const runner = new ClaudeRunner()
 
   // 注入 ClaudeRunner 到各 Agent handler
   setClaudeRunner(runner)
@@ -127,6 +170,7 @@ async function main(): Promise<void> {
           const membership = await resolveProductLineId(msg.userId)
           if (membership) {
             context.initiatorRole = membership.role as any
+            context.productLineId = membership.productLineId
           }
           await runner.run({
             prompt: msg.text,
@@ -180,7 +224,8 @@ async function main(): Promise<void> {
     })
   }
 
-  const gitlabReceiver = new GitLabWebhookReceiver(config.GITLAB_WEBHOOK_SECRET)
+  const gitlabWebhookSecret = ((await getConfig('gitlab'))?.value as { webhookSecret?: string } | undefined)?.webhookSecret ?? ''
+  const gitlabReceiver = new GitLabWebhookReceiver(gitlabWebhookSecret)
   gitlabReceiver.onPipelineEvent(async (project, status, pipelineId) => {
     if (status === 'failed') {
       app.log.info({ project, pipelineId }, 'Pipeline failed')

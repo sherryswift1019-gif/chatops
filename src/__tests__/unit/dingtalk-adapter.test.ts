@@ -12,6 +12,7 @@ vi.mock('dingtalk-stream-sdk-nodejs', () => {
     connect: vi.fn(async () => {}),
     disconnect: vi.fn(),
     send: vi.fn(),
+    registerAllEventListener: vi.fn(),
     // Test helpers
     _trigger: (topic: string, data: unknown) => listeners.get(topic)?.(data),
     _listeners: listeners,
@@ -169,7 +170,7 @@ describe('DingTalkAdapter (Stream mode)', () => {
     }
     expect(msg.platform).toBe('dingtalk')
     expect(msg.groupId).toBe('cid-001')
-    expect(msg.userId).toBe('user-001')
+    expect(msg.userId).toBe('staff-001')
     expect(msg.userName).toBe('张三')
     expect(msg.text).toBe('deploy payment-service')
     expect(msg.timestamp).toBe(1712836800000)

@@ -9,6 +9,7 @@ export interface TaskContext {
   initiatorRole: Role | null
   cwd?: string  // worktree 工作目录（分析/修复 Agent 用）
   productLineId?: number  // 产品线 ID
+  originalPrompt?: string
 }
 
 export interface ToolResult {
@@ -36,6 +37,7 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   execute_restart: ['ops', 'admin'],
   request_approval: ['developer', 'tester', 'ops', 'admin'],
   manage_role: ['admin'],
+  list_product_line_projects: ['developer', 'tester', 'ops', 'admin'],
 
   // 研发 AI 助手工具
   read_code: ['developer', 'tester', 'ops', 'admin'],

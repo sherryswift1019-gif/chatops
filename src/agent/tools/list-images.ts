@@ -48,7 +48,7 @@ const listImagesTool: AgentTool = {
       toolLog(`listProjects returned ${allProjects.length} projects: ${allProjects.map(p => `${p.name}(harbor=${p.harborProject})`).join(', ')}`)
     } catch (err) {
       toolLog(`listProjects ERROR: ${String(err)}`)
-      return { success: false, output: `数据库查询项目失败: ${String(err)}` }
+      return { success: false, output: `数据库查询模块失败: ${String(err)}` }
     }
     const projectRecord = allProjects.find(p =>
       p.name === project || p.displayName === project || p.harborProject === project
@@ -59,11 +59,11 @@ const listImagesTool: AgentTool = {
     if (!projectRecord) {
       const projectNames = allProjects.length > 0
         ? allProjects.map(p => `${p.name}(harbor=${p.harborProject})`).join(', ')
-        : '无（数据库中没有项目）'
-      return { success: false, output: `项目 "${project}" 在数据库中未找到匹配。\n已注册项目: [${projectNames}]\n请确认项目名称是否正确。` }
+        : '无（数据库中没有模块）'
+      return { success: false, output: `模块 "${project}" 在数据库中未找到匹配。\n已注册模块: [${projectNames}]\n请确认模块名称是否正确。` }
     }
     if (!harborProject) {
-      return { success: false, output: `项目 "${project}" 未配置 Harbor 镜像地址。请在管理后台的项目配置中设置 Harbor 项目路径。` }
+      return { success: false, output: `模块 "${project}" 未配置 Harbor 镜像地址。请在管理后台的模块配置中设置 Harbor 项目路径。` }
     }
 
     // Try cache first
@@ -127,7 +127,7 @@ const listImagesTool: AgentTool = {
       const errMsg = (err as Record<string, unknown>)?.response
         ? `HTTP ${((err as Record<string, unknown>).response as Record<string, unknown>).status}: ${JSON.stringify(((err as Record<string, unknown>).response as Record<string, unknown>).data)}`
         : String(err)
-      return { success: false, output: `Harbor 访问失败:\n请求: ${apiUrl}\n项目匹配: project="${project}" → harborProject="${harborProject}" (项目名=${harborProjectName}, 仓库名=${repoName})\n错误: ${errMsg}` }
+      return { success: false, output: `Harbor 访问失败:\n请求: ${apiUrl}\n模块匹配: project="${project}" → harborProject="${harborProject}" (Harbor项目名=${harborProjectName}, 仓库名=${repoName})\n错误: ${errMsg}` }
     }
   },
 }

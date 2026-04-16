@@ -164,11 +164,11 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
   return (
     <>
       <div style={{ marginBottom: 16, textAlign: 'right' }}>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增项目</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增模块</Button>
       </div>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal
-        title={editing ? '编辑项目' : '新增项目'}
+        title={editing ? '编辑模块' : '新增模块'}
         open={modalOpen}
         onOk={handleSubmit}
         onCancel={() => setModalOpen(false)}
@@ -176,7 +176,7 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
         width={600}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="name" label="项目名称" rules={[{ required: true, message: '请输入项目名称' }]}>
+          <Form.Item name="name" label="模块名称" rules={[{ required: true, message: '请输入模块名称' }]}>
             <Input placeholder="如: pam-backend" />
           </Form.Item>
           <Form.Item name="displayName" label="显示名" rules={[{ required: true, message: '请输入显示名' }]}>
@@ -207,8 +207,8 @@ function ProjectsTab({ productLineId }: { productLineId: number }) {
           <Form.Item name="k8sProjectName" label="K8s 项目名">
             <Input placeholder="如: pam-backend" />
           </Form.Item>
-          <Form.Item name="composePath" label="Docker Compose 路径">
-            <Input placeholder="如: /opt/pam/ssh-proxy" />
+          <Form.Item name="composePath" label="Docker Compose 文件路径">
+            <Input placeholder="如: /opt/pam/ssh-proxy/docker-compose.yml" />
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} />
@@ -424,6 +424,27 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
   }
 
   async function handleSave() {
+    // 兜底校验：检测同一服务器被分配到多个环境
+    const serverEnvMap = new Map<number, string[]>()
+    for (const r of rows) {
+      if (r.runtime !== 'docker') continue
+      const cfg = r.connectionConfig as Record<string, unknown> | undefined
+      const ids = Array.isArray(cfg?.serverIds) ? (cfg.serverIds as number[]) : []
+      for (const sid of ids) {
+        if (!serverEnvMap.has(sid)) serverEnvMap.set(sid, [])
+        serverEnvMap.get(sid)!.push(r.envDisplayName)
+      }
+    }
+    const dups = [...serverEnvMap.entries()].filter(([, names]) => names.length > 1)
+    if (dups.length > 0) {
+      const detail = dups.map(([sid, names]) => {
+        const s = servers.find(sv => sv.id === sid)
+        return `${s?.name ?? sid} 同时在 ${names.join('、')} 中`
+      }).join('；')
+      message.error(`服务器不能重复分配：${detail}`)
+      return
+    }
+
     setSaving(true)
     try {
       await setProductLineEnvs(productLineId, rows.map(r => ({
@@ -481,6 +502,21 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
         }
         // Docker: select servers from TestServer pool
         const serverIds = (cfg.serverIds as unknown as number[]) ?? []
+        // 计算被其他环境占用的服务器
+        const usedByOthers = new Map<number, string>()
+        for (const r of rows) {
+          if (r.envId === record.envId || r.runtime !== 'docker') continue
+          const rCfg = r.connectionConfig as Record<string, unknown> | undefined
+          const ids = Array.isArray(rCfg?.serverIds) ? (rCfg.serverIds as number[]) : []
+          for (const sid of ids) usedByOthers.set(sid, r.envDisplayName)
+        }
+        const serverOptions = servers.map(s => ({
+          value: s.id,
+          label: usedByOthers.has(s.id)
+            ? `${s.name} (${s.host}) - 已被 ${usedByOthers.get(s.id)} 使用`
+            : `${s.name} (${s.host}) - ${s.role || '无角色'}`,
+          disabled: usedByOthers.has(s.id),
+        }))
         // Legacy format: show migration hint
         if (!cfg.serverIds && cfg.host) {
           return (
@@ -494,10 +530,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
                 onChange={(ids: number[]) => updateRow(record.envId, {
                   connectionConfig: { serverIds: ids },
                 })}
-                options={servers.map(s => ({
-                  value: s.id,
-                  label: `${s.name} (${s.host}) - ${s.role || '无角色'}`,
-                }))}
+                options={serverOptions}
               />
             </Space>
           )
@@ -511,10 +544,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
             onChange={(ids: number[]) => updateRow(record.envId, {
               connectionConfig: { serverIds: ids },
             })}
-            options={servers.map(s => ({
-              value: s.id,
-              label: `${s.name} (${s.host}) - ${s.role || '无角色'}`,
-            }))}
+            options={serverOptions}
           />
         )
       },
@@ -889,7 +919,7 @@ export default function ProductLineDetailPage() {
     },
     {
       key: 'projects',
-      label: '项目列表',
+      label: '模块列表',
       children: <ProjectsTab productLineId={productLineId} />,
     },
     {

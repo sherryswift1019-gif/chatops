@@ -1,0 +1,29 @@
+# ChatOps base image — Node runtime + pnpm + 后端/前端 node_modules
+# 触发重建条件：pnpm-lock.yaml / web/pnpm-lock.yaml / package.json / Dockerfile.base 变化
+#
+# 产物：
+#   harbor.paraview.cn/chatops/chatops-base:latest
+#   harbor.paraview.cn/chatops/chatops-base:deps-<lockfileSha8>
+
+ARG NODE_IMAGE=harbor.paraview.cn/para-pam/node:20-slim
+FROM ${NODE_IMAGE}
+
+RUN corepack enable && corepack prepare pnpm@10 --activate
+
+WORKDIR /app
+
+# 内网无法访问 npmjs.org，使用淘宝镜像源
+RUN pnpm config set registry https://registry.npmmirror.com
+
+# 后端依赖
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --prod=false
+
+# 前端依赖（单独一层，web/pnpm-lock.yaml 不变则 cache hit）
+COPY web/package.json web/pnpm-lock.yaml web/
+RUN cd web && pnpm install --frozen-lockfile
+
+# 创建运行时需要的目录与非 root 用户
+RUN mkdir -p /data/chatops/test-runs \
+ && useradd -m -s /bin/bash chatops \
+ && chown -R chatops:chatops /app /data/chatops

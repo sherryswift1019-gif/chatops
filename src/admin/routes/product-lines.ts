@@ -86,11 +86,17 @@ export async function registerProductLineRoutes(app: FastifyInstance): Promise<v
     '/product-lines/:id/envs', async (req, reply) => {
       const envs = req.body
       if (!Array.isArray(envs)) return reply.status(400).send({ error: 'body must be array' })
-      const result = await batchSetProductLineEnvs(
-        Number(req.params.id),
-        envs.map(e => ({ envId: e.envId, runtime: e.runtime as 'kubernetes' | 'docker', namespace: e.namespace, enabled: e.enabled, connectionConfig: e.connectionConfig }))
-      )
-      return reply.send(result)
+      try {
+        const result = await batchSetProductLineEnvs(
+          Number(req.params.id),
+          envs.map(e => ({ envId: e.envId, runtime: e.runtime as 'kubernetes' | 'docker', namespace: e.namespace, enabled: e.enabled, connectionConfig: e.connectionConfig }))
+        )
+        return reply.send(result)
+      } catch (err: unknown) {
+        const e = err as Error & { statusCode?: number; duplicates?: Array<[number, number[]]> }
+        if (e.statusCode === 400) return reply.status(400).send({ error: e.message, duplicates: e.duplicates })
+        throw err
+      }
     }
   )
 

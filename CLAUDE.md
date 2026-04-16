@@ -26,8 +26,20 @@ cd web && pnpm build   # TypeScript 类型检查 + Vite 产物输出到 web/dist
 # 数据库迁移
 pnpm migrate           # 顺序执行 schema.sql → schema-v7.sql
 
-# Docker 镜像构建
-./build.sh             # 多阶段构建，含前端编译 + 后端类型检查（IMAGE_NAME / IMAGE_TAG 可选）
+# Docker 镜像构建（两层：base 依赖层 + 业务层）
+# base 只在 pnpm-lock.yaml / package.json / Node/pnpm 版本变化时重建
+./build-base.sh        # 构建并 push linux/amd64 base 到 harbor.paraview.cn/chatops/chatops-base
+                       # 同时打 :latest 和 :deps-<lockfileSha8> 两个 tag
+./build.sh             # 日常业务构建：docker build 多阶段（前端在内部编译 + 后端 tsc）
+                       # 环境变量：IMAGE_NAME / IMAGE_TAG / BASE_IMAGE / PLATFORM
+                       # 依赖已在 base 里，业务镜像仅装前端依赖 + COPY src/
+
+# GitLab CI（code.paraview.cn，推送 master 或打 tag 自动触发）
+# .gitlab-ci.yml 定义两个 stage：
+#   build-base — 仅 pnpm-lock.yaml / package.json / Dockerfile.base 变更时触发
+#   build-app  — master 推送或 tag 推送时触发
+# CI Variables: HARBOR_USERNAME / HARBOR_PASSWORD（GitLab 项目设置）
+# Runner: amd64, Docker-in-Docker, Paraview 内网
 
 # Docker 部署
 ./deploy.sh up         # 启动全栈（postgres + migrate + chatops），自动 --build
@@ -47,7 +59,7 @@ IM 消息 → Adapter(DingTalk/Feishu) → SessionManager → ClaudeRunner → M
 ### 后端 (`src/`)
 
 - **server.ts** — Fastify 入口，注册适配器、审批网关、管理 API、静态文件服务
-- **config.ts** — Zod 校验环境变量，必需：`DATABASE_URL`、`ANTHROPIC_API_KEY`
+- **config.ts** — Zod 校验环境变量，必需：`DATABASE_URL`。可选：`CLAUDE_CODE_OAUTH_TOKEN`（未设置时从系统配置页面 Claude 标签读取）
 - **adapters/im/** — IM 平台适配层（`IMAdapter` 接口），钉钉用 Stream 模式、飞书用 Webhook 模式
 - **agent/** — AI Agent 核心
   - `claude-runner.ts` — 通过 Porygon (`@snack-kit/porygon`) 调用 Claude CLI

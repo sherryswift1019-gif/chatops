@@ -29,3 +29,11 @@ export async function resolveSSHConfig(connectionConfig: ConnectionConfig): Prom
 
   return null
 }
+
+/** 兼容旧数据：如果是目录路径（不以 .yml/.yaml 结尾），自动补 /docker-compose.yml */
+export function resolveComposeFile(composePath: string): string {
+  if (composePath.endsWith('.yml') || composePath.endsWith('.yaml')) {
+    return composePath
+  }
+  return `${composePath.replace(/\/+$/, '')}/docker-compose.yml`
+}

@@ -1,35 +1,44 @@
 import { useEffect, useState, useRef } from 'react'
 import { Card, Table, Button, Input, Avatar, Space, message } from 'antd'
 import { SyncOutlined, UserOutlined } from '@ant-design/icons'
-import { getDingTalkUsers, syncDingTalkUsers } from '../api/dingtalk-users'
+import { getDingTalkUsersPaged, syncDingTalkUsers } from '../api/dingtalk-users'
+import { usePagination } from '../hooks/usePagination'
 import type { DingTalkUser } from '../types'
 
 export default function DingTalkUsersPage() {
   const [data, setData] = useState<DingTalkUser[]>([])
-  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [keyword, setKeyword] = useState('')
   const searchTimer = useRef<ReturnType<typeof setTimeout>>()
+  const abortRef = useRef<AbortController | null>(null)
 
-  useEffect(() => { load('') }, [])
+  const { page, limit, total, setTotal, resetPage, tableProps } = usePagination(20)
 
-  async function load(kw: string) {
+  useEffect(() => {
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
+    load()
+  }, [page, limit, keyword])
+
+  async function load() {
     setLoading(true)
     try {
-      const res = await getDingTalkUsers(kw || undefined)
-      setData(res.users)
+      const res = await getDingTalkUsersPaged({ keyword: keyword || undefined, page, limit }, abortRef.current?.signal)
+      setData(res.data)
       setTotal(res.total)
+    } catch {
+      // ignore abort errors
     } finally {
       setLoading(false)
     }
   }
 
   function handleSearch(value: string) {
-    setKeyword(value)
     clearTimeout(searchTimer.current)
     searchTimer.current = setTimeout(() => {
-      load(value)
+      resetPage()
+      setKeyword(value)
     }, 300)
   }
 
@@ -39,7 +48,7 @@ export default function DingTalkUsersPage() {
       const res = await syncDingTalkUsers()
       if (res.success) {
         message.success(res.synced != null ? `同步成功，共同步 ${res.synced} 名用户` : '同步成功')
-        await load(keyword)
+        load()
       } else {
         message.error(res.error ?? '同步失败')
       }
@@ -93,7 +102,7 @@ export default function DingTalkUsersPage() {
         columns={columns}
         dataSource={data}
         loading={loading}
-        pagination={false}
+        {...tableProps}
       />
     </Card>
   )

@@ -37,17 +37,20 @@ export async function recordDeployment(
 
 export async function getRecentDeployments(project: string, env?: string, limit = 5): Promise<Deployment[]> {
   const pool = getPool()
-  const envClause = env ? 'AND env=$2' : ''
+  const envClause = env ? 'AND d.env=$2' : ''
   const params = env ? [project, env, limit] : [project, limit]
   const { rows } = await pool.query(
-    `SELECT * FROM deployments WHERE project=$1 ${envClause}
-     ORDER BY deployed_at DESC LIMIT $${env ? 3 : 2}`,
+    `SELECT d.*, COALESCE(u.name, d.deployed_by) AS deployed_by_name
+     FROM deployments d
+     LEFT JOIN dingtalk_users u ON u.user_id = d.deployed_by
+     WHERE d.project=$1 ${envClause}
+     ORDER BY d.deployed_at DESC LIMIT $${env ? 3 : 2}`,
     params
   )
   return rows.map(r => ({
     id: r.id, project: r.project, env: r.env,
     imageTag: r.image_tag, imageDigest: r.image_digest,
-    deployedBy: r.deployed_by, approvedBy: r.approved_by,
+    deployedBy: r.deployed_by_name, approvedBy: r.approved_by,
     deployedAt: r.deployed_at, status: r.status,
   }))
 }

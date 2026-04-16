@@ -1,5 +1,5 @@
--- schema-v8.sql: 研发 AI 助手数据层
--- 7 张新表 + 6 个新 capability + 索引
+-- schema-v8.sql: 研发 AI 助手数据层 + 查看产线模块能力
+-- 7 张新表 + 6 个新 capability + 索引 + list_projects capability
 
 -- ============================================================
 -- 1. Bug 分析报告（Agent 间 handoff 契约）
@@ -128,3 +128,22 @@ VALUES
   ('ai_review_mr', 'AI Review', '独立视角审查 MR diff，标记风险', 'action', '["review_mr_diff"]', false),
   ('search_knowledge', '知识库查询', '查询知识库 index.json，命中时返回历史方案', 'query', '["search_knowledge"]', false)
 ON CONFLICT (key) DO NOTHING;
+
+-- ============================================================
+-- 9. 注册"查看产线模块"capability（来自 main 分支）
+-- ============================================================
+INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system)
+VALUES (
+  'list_projects',
+  '查看产线模块',
+  '列出当前产线下的所有业务模块及其负责人、GitLab 路径、Harbor 项目',
+  'query',
+  '["list_product_line_projects"]',
+  false,
+  true
+) ON CONFLICT (key) DO NOTHING;
+
+UPDATE capabilities SET
+  default_system_prompt = E'你是一个 DevOps 助手。用户通过群聊与你交互。\n只使用提供给你的 MCP 工具。\n直接调用 list_product_line_projects 返回模块列表，不要添加额外解释。',
+  system_prompt = default_system_prompt
+WHERE key = 'list_projects' AND system_prompt IS NULL;

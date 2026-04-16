@@ -45,15 +45,33 @@ function mapRow(r: Record<string, unknown>): TestRun {
   }
 }
 
-export async function listTestRuns(pipelineId?: number, limit = 50): Promise<TestRun[]> {
+export async function listTestRuns(
+  pipelineId: number | null,
+  page: number,
+  limit: number
+): Promise<{ data: TestRun[]; total: number }> {
   const pool = getPool()
-  if (pipelineId) {
-    const { rows } = await pool.query(
-      'SELECT * FROM test_runs WHERE pipeline_id = $1 ORDER BY id DESC LIMIT $2', [pipelineId, limit])
-    return rows.map(mapRow)
+  const offset = (page - 1) * limit
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(
+      `SELECT * FROM test_runs
+       WHERE ($1::int IS NULL OR pipeline_id = $1)
+       ORDER BY id DESC
+       LIMIT $2 OFFSET $3`,
+      [pipelineId, limit, offset]
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count FROM test_runs
+       WHERE ($1::int IS NULL OR pipeline_id = $1)`,
+      [pipelineId]
+    ),
+  ])
+
+  return {
+    data: dataResult.rows.map(mapRow),
+    total: parseInt(countResult.rows[0].count, 10),
   }
-  const { rows } = await pool.query('SELECT * FROM test_runs ORDER BY id DESC LIMIT $1', [limit])
-  return rows.map(mapRow)
 }
 
 export async function getTestRunById(id: number): Promise<TestRun | null> {

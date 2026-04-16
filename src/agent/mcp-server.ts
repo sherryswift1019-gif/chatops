@@ -29,6 +29,7 @@ import './tools/deploy.js'
 import './tools/approval.js'
 import './tools/role.js'
 import './tools/autotest.js'
+import './tools/list-projects.js'
 
 // 研发 AI 助手工具
 import './tools/read-code.js'
@@ -49,7 +50,17 @@ const server = new Server(
 
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const tools = getAllTools()
+  const ctx: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
+  const { filterToolsByRole } = await import('./mcp-server-utils.js')
+  let tools = await filterToolsByRole(getAllTools(), ctx.initiatorRole ?? null, ctx.productLineId)
+
+  // 按 capability 白名单过滤（由 runner 通过环境变量传入）
+  const allowedList = process.env.CHATOPS_ALLOWED_TOOLS
+  if (allowedList) {
+    const allowed = new Set(allowedList.split(','))
+    tools = tools.filter(t => allowed.has(t.name))
+  }
+
   return {
     tools: tools.map(t => ({
       name: t.name,
@@ -69,12 +80,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   }
 
-  // TaskContext passed from claude-runner via env var
-  const rawContext = process.env.CHATOPS_TASK_CONTEXT
-  if (!rawContext) {
-    mcpLog('WARNING: CHATOPS_TASK_CONTEXT not set, using empty context')
+  const context: TaskContext = JSON.parse(process.env.CHATOPS_TASK_CONTEXT ?? '{}')
+
+  // Re-check permission to prevent bypass via direct tool-name call
+  const { filterToolsByRole } = await import('./mcp-server-utils.js')
+  const permitted = await filterToolsByRole([tool], context.initiatorRole ?? null, context.productLineId)
+  if (permitted.length === 0) {
+    mcpLog(`Denied tool call: ${request.params.name} role=${context.initiatorRole}`)
+    return {
+      content: [{ type: 'text' as const, text: `⛔ 无权限调用工具: ${request.params.name}` }],
+      isError: true,
+    }
   }
-  const context: TaskContext = JSON.parse(rawContext ?? '{}')
 
   try {
     // 脱敏日志：不记录完整参数（可能含敏感信息）

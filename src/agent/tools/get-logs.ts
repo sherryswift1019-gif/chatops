@@ -3,7 +3,7 @@ import { Client } from 'ssh2'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
-import { resolveSSHConfig } from './ssh-utils.js'
+import { resolveSSHConfig, resolveComposeFile } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
@@ -36,7 +36,7 @@ const getLogsTool: AgentTool = {
   inputSchema: {
     type: 'object',
     properties: {
-      project: { type: 'string', description: '项目名称' },
+      project: { type: 'string', description: '模块名称' },
       env: { type: 'string', description: '环境 (dev/test/staging/prod)' },
       tail: { type: 'number', description: '最后 N 行日志，默认 200' },
     },
@@ -50,7 +50,7 @@ const getLogsTool: AgentTool = {
       // 查项目
       const projects = await listProjects()
       const project = projects.find(p => p.name === projectName || p.displayName === projectName)
-      if (!project) return { success: false, output: `项目 "${projectName}" 未在数据库中注册` }
+      if (!project) return { success: false, output: `模块 "${projectName}" 未在数据库中注册` }
 
       // 查环境
       const envs = await listEnvironments()
@@ -60,7 +60,7 @@ const getLogsTool: AgentTool = {
       // 查产线环境配置
       const plEnvs = await listProductLineEnvs(project.productLineId)
       const plEnv = plEnvs.find(e => e.envId === env.id)
-      if (!plEnv) return { success: false, output: `项目所属产线未配置 "${envName}" 环境` }
+      if (!plEnv) return { success: false, output: `模块所属产线未配置 "${envName}" 环境` }
 
       const sshConfig = await resolveSSHConfig(plEnv.connectionConfig)
       if (!sshConfig) {
@@ -72,7 +72,8 @@ const getLogsTool: AgentTool = {
         const containerName = project.dockerContainerName || project.name
         const composePath = project.composePath
         if (composePath) {
-          command = `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose") && cd ${composePath} && $COMPOSE_CMD logs --tail ${tail} ${containerName}`
+          const composeFile = resolveComposeFile(composePath)
+          command = `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose") && $COMPOSE_CMD -f '${composeFile}' logs --tail ${tail} ${containerName}`
         } else {
           command = `docker logs ${containerName} --tail ${tail} 2>&1`
         }

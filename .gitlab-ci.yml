@@ -1,0 +1,232 @@
+# ============================================================
+# ChatOps GitLab CI — 构建并推送 Docker 镜像到 Harbor
+# ============================================================
+# Runner: zta-vm (amd64, Docker executor, socket binding)
+# Harbor: harbor.paraview.cn（自签证书，runner daemon.json 已配 insecure-registries）
+# CI Variables: HARBOR_USERNAME, HARBOR_PASSWORD
+# ============================================================
+
+variables:
+  HARBOR_REGISTRY: harbor.paraview.cn
+  HARBOR_PROJECT_CHATOPS: chatops
+  HARBOR_PROJECT_PUBLIC: para-pam
+  BASE_IMAGE_NAME: chatops-base
+  APP_IMAGE_NAME: chatops
+  # 禁用 BuildKit：BuildKit 不走 daemon 的 insecure-registries，传统 builder 走
+  DOCKER_BUILDKIT: "0"
+  # Deploy
+  DEPLOY_HOST: "10.10.1.166"
+  DEPLOY_DIR: "/opt/chatops"
+  BACKUP_RETAIN_COUNT: "10"
+
+stages:
+  - build-base
+  - build-app
+  - deploy
+
+# ============================================================
+# 公共模板：使用 runner 的 Docker daemon（socket binding）
+# ============================================================
+.docker-job:
+  image: ${HARBOR_REGISTRY}/${HARBOR_PROJECT_PUBLIC}/docker:27
+  before_script:
+    - echo "${HARBOR_PASSWORD}" | docker login ${HARBOR_REGISTRY} -u "${HARBOR_USERNAME}" --password-stdin
+  tags:
+    - zta-vm
+
+# ============================================================
+# Stage 1: 构建 base 镜像（仅依赖变更时触发）
+# ============================================================
+build-base:
+  extends: .docker-job
+  stage: build-base
+  script:
+    - |
+      LOCK_HASH=$(sha256sum pnpm-lock.yaml | head -c 8)
+      DEPS_TAG="deps-${LOCK_HASH}"
+      FULL_BASE_LATEST="${HARBOR_REGISTRY}/${HARBOR_PROJECT_CHATOPS}/${BASE_IMAGE_NAME}:latest"
+      FULL_BASE_DEPS="${HARBOR_REGISTRY}/${HARBOR_PROJECT_CHATOPS}/${BASE_IMAGE_NAME}:${DEPS_TAG}"
+
+      echo "==> Building base image"
+      echo "    latest: ${FULL_BASE_LATEST}"
+      echo "    deps:   ${FULL_BASE_DEPS}"
+
+      T0=$(date +%s)
+      docker build \
+        -f Dockerfile.base \
+        -t "${FULL_BASE_LATEST}" \
+        -t "${FULL_BASE_DEPS}" \
+        .
+      echo "==> [$(( $(date +%s) - T0 ))s] docker build done"
+
+      T1=$(date +%s)
+      docker push "${FULL_BASE_LATEST}"
+      docker push "${FULL_BASE_DEPS}"
+      echo "==> [$(( $(date +%s) - T1 ))s] docker push done"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - pnpm-lock.yaml
+        - package.json
+        - Dockerfile.base
+        - web/pnpm-lock.yaml
+        - web/package.json
+      when: always
+    - when: never
+
+# ============================================================
+# Stage 2: 构建业务镜像（main 推送或 tag 推送时触发）
+# ============================================================
+build-app:
+  extends: .docker-job
+  stage: build-app
+  script:
+    - |
+      BASE_REF="${HARBOR_REGISTRY}/${HARBOR_PROJECT_CHATOPS}/${BASE_IMAGE_NAME}:latest"
+
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then
+        APP_TAG="${CI_COMMIT_TAG}"
+      else
+        SHORT_SHA=$(echo "${CI_COMMIT_SHA}" | head -c 8)
+        APP_TAG="${CI_COMMIT_REF_SLUG}-${SHORT_SHA}"
+      fi
+      FULL_APP="${HARBOR_REGISTRY}/${HARBOR_PROJECT_CHATOPS}/${APP_IMAGE_NAME}:${APP_TAG}"
+      FULL_APP_LATEST="${HARBOR_REGISTRY}/${HARBOR_PROJECT_CHATOPS}/${APP_IMAGE_NAME}:latest"
+
+      echo "==> Building app image"
+      echo "    tag:    ${FULL_APP}"
+      echo "    latest: ${FULL_APP_LATEST}"
+      echo "    base:   ${BASE_REF}"
+
+      T0=$(date +%s)
+      docker build \
+        --build-arg BASE_IMAGE="${BASE_REF}" \
+        -t "${FULL_APP}" \
+        -t "${FULL_APP_LATEST}" \
+        .
+      echo "==> [$(( $(date +%s) - T0 ))s] docker build done"
+
+      T1=$(date +%s)
+      docker push "${FULL_APP}"
+      docker push "${FULL_APP_LATEST}"
+      echo "==> [$(( $(date +%s) - T1 ))s] docker push done"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: always
+    - if: '$CI_COMMIT_TAG'
+      when: always
+    - when: never
+
+# ============================================================
+# Stage 3: 部署到生产服务器（手动触发）
+# ============================================================
+# CI Variables 需额外配置: DEPLOY_PASSWORD (Masked)
+# 目标服务器需先运行 scripts/setup-target.sh 初始化
+# ============================================================
+deploy-prod:
+  image: ${HARBOR_REGISTRY}/${HARBOR_PROJECT_PUBLIC}/docker:27-deploy
+  extends: .docker-job
+  stage: deploy
+  resource_group: production
+  script:
+    - |
+      # ── 计算镜像 tag（与 build-app 一致）──
+      if [ -n "${CI_COMMIT_TAG:-}" ]; then
+        APP_TAG="${CI_COMMIT_TAG}"
+      else
+        SHORT_SHA=$(echo "${CI_COMMIT_SHA}" | head -c 8)
+        APP_TAG="${CI_COMMIT_REF_SLUG}-${SHORT_SHA}"
+      fi
+      FULL_IMAGE="${HARBOR_REGISTRY}/${HARBOR_PROJECT_CHATOPS}/${APP_IMAGE_NAME}:${APP_TAG}"
+      echo "==> Deploying ${FULL_IMAGE} to ${DEPLOY_HOST}"
+
+      export SSHPASS="${DEPLOY_PASSWORD}"
+      SSH="sshpass -e ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+      SCP="sshpass -e scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+
+      # ── 传输 compose 文件和回滚脚本 ──
+      ${SCP} docker-compose.prod.yml root@${DEPLOY_HOST}:${DEPLOY_DIR}/docker-compose.prod.yml
+      ${SCP} scripts/rollback.sh root@${DEPLOY_HOST}:${DEPLOY_DIR}/rollback.sh
+      ${SSH} root@${DEPLOY_HOST} "chmod +x ${DEPLOY_DIR}/rollback.sh"
+
+      # ── 远程执行部署（heredoc 清晰分离本地/远程变量）──
+      ${SSH} root@${DEPLOY_HOST} "bash -s" <<DEPLOY_EOF
+      set -euo pipefail
+
+      cd ${DEPLOY_DIR}
+      mkdir -p backups
+
+      # ── 1. 数据库备份 ──
+      CURRENT_TAG=\$(grep '^CHATOPS_IMAGE=' .env 2>/dev/null | sed 's/.*://' || echo "none")
+      if docker compose -f docker-compose.prod.yml ps postgres --status running 2>/dev/null | grep -q running; then
+        BACKUP_FILE="backups/chatops_\$(date +%Y%m%d_%H%M%S)_\${CURRENT_TAG}.sql.gz"
+        echo "==> Backing up database to \${BACKUP_FILE}"
+        docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U chatops chatops | gzip > "\${BACKUP_FILE}"
+        if [ ! -s "\${BACKUP_FILE}" ]; then
+          echo "ERROR: Backup file is empty, aborting deploy"
+          exit 1
+        fi
+        gzip -t "\${BACKUP_FILE}"
+        echo "==> Backup OK: \$(du -h \${BACKUP_FILE} | cut -f1)"
+      else
+        echo "==> Postgres not running, skipping backup (first deploy?)"
+      fi
+
+      # ── 2. Harbor 登录 + 拉取镜像 ──
+      echo "${HARBOR_PASSWORD}" | docker login ${HARBOR_REGISTRY} -u "${HARBOR_USERNAME}" --password-stdin
+      docker pull ${FULL_IMAGE}
+
+      # ── 3. 持久化镜像变量到 .env ──
+      if grep -q '^CHATOPS_IMAGE=' .env 2>/dev/null; then
+        sed -i "s|^CHATOPS_IMAGE=.*|CHATOPS_IMAGE=${FULL_IMAGE}|" .env
+      else
+        echo "CHATOPS_IMAGE=${FULL_IMAGE}" >> .env
+      fi
+
+      # ── 4. 记录部署历史 ──
+      echo "\$(date +%Y%m%d_%H%M%S) ${APP_TAG} ${FULL_IMAGE}" >> .deploy-history
+
+      # ── 5. 清理旧 migrate 容器并部署 ──
+      docker compose -f docker-compose.prod.yml rm -f migrate 2>/dev/null || true
+      docker compose -f docker-compose.prod.yml up -d
+
+      # ── 6. 清理旧镜像 ──
+      docker image prune -f 2>/dev/null || true
+
+      # ── 7. 清理多余备份 ──
+      cd backups
+      ls -t chatops_*.sql.gz 2>/dev/null | tail -n +\$(( ${BACKUP_RETAIN_COUNT} + 1 )) | xargs -r rm -f || true
+      DEPLOY_EOF
+
+      # ── 健康检查（runner 端执行，max 120s）──
+      echo "==> Waiting for health check (max 120s)..."
+      ATTEMPT=0
+      MAX_ATTEMPTS=24
+      while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+        if ${SSH} root@${DEPLOY_HOST} "curl -sf http://localhost:3000/health" 2>/dev/null | grep -q '"ok"'; then
+          echo "==> Health check passed after $(( ATTEMPT * 5 ))s"
+          break
+        fi
+        ATTEMPT=$(( ATTEMPT + 1 ))
+        if [ "$ATTEMPT" = "$MAX_ATTEMPTS" ]; then
+          echo "==> Health check FAILED after 120s. Fetching logs..."
+          ${SSH} root@${DEPLOY_HOST} "docker compose -f ${DEPLOY_DIR}/docker-compose.prod.yml logs --tail 30 chatops migrate"
+          exit 1
+        fi
+        sleep 5
+      done
+
+      echo "==> Deploy complete: ${FULL_IMAGE}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: manual
+      allow_failure: false
+    - if: '$CI_COMMIT_TAG'
+      when: manual
+      allow_failure: false
+    - when: never
+  environment:
+    name: production
+    url: http://10.10.1.166:3000
+  needs:
+    - job: build-app

@@ -65,3 +65,33 @@ export async function getDingTalkUserCount(): Promise<number> {
   const { rows } = await pool.query('SELECT COUNT(*) AS count FROM dingtalk_users')
   return parseInt(rows[0].count, 10)
 }
+
+export async function listDingTalkUsersPaged(
+  keyword: string | null,
+  page: number,
+  limit: number
+): Promise<{ data: DingTalkUser[]; total: number }> {
+  const pool = getPool()
+  const offset = (page - 1) * limit
+  const kw = keyword || null
+
+  const [dataResult, countResult] = await Promise.all([
+    pool.query(
+      `SELECT * FROM dingtalk_users
+       WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')
+       ORDER BY name, user_id
+       LIMIT $2 OFFSET $3`,
+      [kw, limit, offset]
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count FROM dingtalk_users
+       WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')`,
+      [kw]
+    ),
+  ])
+
+  return {
+    data: dataResult.rows.map(mapRow),
+    total: parseInt(countResult.rows[0].count, 10),
+  }
+}

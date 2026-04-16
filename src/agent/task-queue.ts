@@ -1,5 +1,6 @@
 import { createTask, updateTaskStatus, getExecutingTask, getQueuedTasks, getTaskById } from '../db/repositories/tasks.js'
 import type { Task } from '../db/repositories/tasks.js'
+import { incrementActive, decrementActive } from './concurrency.js'
 
 type TaskExecutor = (task: Task) => Promise<void>
 
@@ -12,11 +13,15 @@ export class TaskQueue {
   private executing = false
   private queue: QueuedEntry[] = []
   private pendingApprovalExecutors = new Map<string, TaskExecutor>()
+  private lastActiveAt = Date.now()
 
   constructor(
     private readonly groupId: string,
     private readonly platform: string
   ) {}
+
+  isIdle(): boolean { return !this.executing && this.queue.length === 0 }
+  idleSince(): number { return this.isIdle() ? Date.now() - this.lastActiveAt : 0 }
 
   async submit(
     data: { initiatorId: string; intent: string; toolName?: string; toolParams?: unknown },
@@ -67,6 +72,7 @@ export class TaskQueue {
   }
 
   private async run(entry: QueuedEntry): Promise<void> {
+    incrementActive()
     this.executing = true
     const { task, executor } = entry
     await updateTaskStatus(task.id, 'executing')
@@ -80,6 +86,8 @@ export class TaskQueue {
       await updateTaskStatus(task.id, 'done', { result: { error: String(err) } })
     } finally {
       this.executing = false
+      this.lastActiveAt = Date.now()
+      decrementActive()
       await this.drain()
     }
   }
