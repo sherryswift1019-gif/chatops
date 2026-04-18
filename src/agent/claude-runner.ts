@@ -9,11 +9,14 @@ import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
 import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
+import { buildClaudeAuthEnv } from './claude-auth.js'
 import { listEnvironments } from '../db/repositories/environments-repo.js'
 import { buildClaudeEnv } from './claude-config.js'
 import { ApprovalRouter } from '../approval/router.js'
 import { getApprovalRules } from '../db/repositories/approval-rules.js'
 import { acquireLock, releaseLock } from './deploy-lock.js'
+import { acquire, release, type Worktree } from './worktree/manager.js'
+import { getByProductLineId } from '../db/repositories/product-knowledge-repos.js'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -113,8 +116,8 @@ export class ClaudeRunner {
         },
       },
       defaults: {
-        timeoutMs: 300_000,
-        maxTurns: 20,
+        timeoutMs: 1_200_000, // 20 分钟（分析 Bug 可能需要多轮工具调用）
+        maxTurns: 30,
       },
     })
 
@@ -402,7 +405,7 @@ ${capList}
 
 如果是简短的确认/否认/补充信息，直接返回文本 null`,
         maxTurns: 1,
-        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'],
+        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Skill', 'AskUserQuestion'],
         envVars: await buildClaudeEnv(),
       })
 
@@ -440,6 +443,29 @@ ${capList}
         systemPrompt += await buildProjectContext(opts.productLineId)
       } catch (err) {
         console.error('[Runner] Failed to build project context:', err)
+      }
+    }
+
+    // 需要代码访问的 capability，自动创建 worktree
+    const CODE_CAPABILITIES = ['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3']
+    let worktree: Worktree | null = null
+    console.log(`[Runner] worktree check: capability=${capability?.key}, productLineId=${opts.productLineId}`)
+    if (capability && CODE_CAPABILITIES.includes(capability.key) && opts.productLineId) {
+      try {
+        const knowledgeRepo = await getByProductLineId(opts.productLineId)
+        if (knowledgeRepo) {
+          worktree = await acquire({
+            userId: context.initiatorId,
+            product: `pl-${opts.productLineId}`,
+            version: knowledgeRepo.codeDefaultBranch,
+            sessionId: context.taskId,
+            repoUrl: knowledgeRepo.codeRepoUrl,
+          })
+          context.cwd = worktree.path
+          console.log(`[Runner] Worktree acquired: ${worktree.path}`)
+        }
+      } catch (err) {
+        console.error('[Runner] Failed to acquire worktree:', err)
       }
     }
 
@@ -482,7 +508,7 @@ ${capList}
             },
           },
         },
-        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
+        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill', 'AskUserQuestion'],
         envVars: claudeEnv,
       })) {
         console.log(`[Runner] Porygon msg: type=${msg.type}`, msg.type === 'error' ? msg.message : '')
@@ -534,6 +560,66 @@ ${capList}
         { text: textBuffer.trim() }
       )
     }
+
+    // 释放 worktree
+    if (worktree) {
+      release(worktree)
+      console.log(`[Runner] Worktree released: ${worktree.path}`)
+    }
+  }
+
+  /**
+   * 直接执行 capability（Agent 内部调用，不经 IM 流程）。
+   * 用于 AgentCoordinator 触发分析/修复/Review。
+   * 返回 Claude 的完整文本输出。
+   */
+  async executeCapabilityDirect(opts: {
+    prompt: string
+    systemPrompt: string
+    context: TaskContext
+    tools: AgentTool[]
+    cwd?: string
+    sessionKey?: string
+  }): Promise<string> {
+    const { prompt, systemPrompt, context, tools, cwd, sessionKey } = opts
+    const mcpServerPath = join(__dirname, 'mcp-server.ts')
+    const toolNames = tools.map(t => t.name)
+
+    const existingSessionId = sessionKey ? this.getSessionId(sessionKey) : undefined
+
+    let textBuffer = ''
+
+    for await (const msg of this.porygon.query({
+      prompt,
+      appendSystemPrompt: systemPrompt,
+      ...(existingSessionId ? { resume: existingSessionId } : {}),
+      ...(cwd ? { cwd } : {}),
+      mcpServers: {
+        'chatops-tools': {
+          command: 'node',
+          args: ['--import', 'tsx/esm', mcpServerPath],
+          env: {
+            ...(process.env as Record<string, string>),
+            CHATOPS_TASK_CONTEXT: JSON.stringify({ ...context, cwd }),
+            DATABASE_URL: process.env.DATABASE_URL ?? '',
+            ...buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
+          },
+        },
+      },
+      disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
+      envVars: buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
+    })) {
+      if ('sessionId' in msg && msg.sessionId && sessionKey) {
+        this.saveSession(sessionKey, msg.sessionId as string, tools)
+      }
+      if (msg.type === 'assistant' && 'content' in msg) {
+        textBuffer += String(msg.content)
+      } else if (msg.type === 'result' && 'text' in msg) {
+        textBuffer += String(msg.text)
+      }
+    }
+
+    return textBuffer
   }
 
   async dispose(): Promise<void> {

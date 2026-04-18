@@ -8,6 +8,8 @@ import { generateHtmlReport, generateZipArchive } from './report-generator.js'
 import { resolveVariables, type VariableContext } from './variables.js'
 import { analyzeFailure } from './failure-analyzer.js'
 import { PipelineApprovalManager } from './approval-manager.js'
+import { WebhookWaiter } from './webhook-waiter.js'
+import { triggerCapability } from '../agent/coordinator.js'
 import { getStageType } from './types.js'
 import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, ArtifactInput } from './types.js'
 import { resolveArtifact } from './artifact-resolver.js'
@@ -32,6 +34,90 @@ async function executeApprovalStage(stage: StageDefinition): Promise<StageExecut
   } catch (err) {
     return { status: 'failed', output: `审批流程错误: ${String(err)}`, error: String(err) }
   }
+}
+
+/** 解析 capabilityParams 中的模板变量 {{triggerParams.xxx}} */
+function resolveCapabilityParams(
+  params: Record<string, unknown> | undefined,
+  triggerParams: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  if (!params) return params
+  const resolved: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === 'string') {
+      const match = value.match(/^\{\{triggerParams\.(\w+)\}\}$/)
+      if (match && triggerParams) {
+        resolved[key] = triggerParams[match[1]]
+      } else {
+        resolved[key] = value
+      }
+    } else {
+      resolved[key] = value
+    }
+  }
+  return resolved
+}
+
+async function executeCapabilityStage(stage: StageDefinition, ctx: StageContext, triggerParams?: Record<string, unknown>): Promise<StageExecutionResult> {
+  const capabilityKey = stage.capabilityKey
+  if (!capabilityKey) return { status: 'failed', output: '未配置 capabilityKey', error: 'no capabilityKey' }
+
+  const timeoutMs = (stage.timeoutSeconds ?? 1200) * 1000
+  const resolvedParams = resolveCapabilityParams(stage.capabilityParams, triggerParams)
+  console.log(`[Pipeline] capability stage: ${capabilityKey} (timeout ${timeoutMs}ms)`)
+
+  try {
+    const capabilityPromise = triggerCapability({
+      capabilityKey,
+      context: {
+        taskId: `pipeline-${ctx.runId}-stage-${ctx.stageIndex}`,
+        groupId: 'pipeline',
+        platform: 'pipeline',
+        initiatorId: 'pipeline-executor',
+        initiatorRole: 'admin',
+      },
+      extraParams: resolvedParams,
+    })
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('capability 执行超时')), timeoutMs)
+    )
+
+    const result = await Promise.race([capabilityPromise, timeoutPromise])
+
+    return {
+      status: result.success ? 'success' : 'failed',
+      output: result.output ?? '',
+      error: result.error,
+    }
+  } catch (err) {
+    return { status: 'failed', output: `capability 执行失败: ${String(err)}`, error: String(err) }
+  }
+}
+
+async function executeWaitWebhookStage(
+  stage: StageDefinition,
+  runId: number,
+  stageIndex: number,
+  stageResults: StageResult[]
+): Promise<StageExecutionResult> {
+  const webhookTag = stage.webhookTag
+  if (!webhookTag) return { status: 'failed', output: '未配置 webhookTag', error: 'no webhookTag' }
+
+  const timeoutMs = (stage.timeoutSeconds ?? 3600) * 1000
+  console.log(`[Pipeline] wait_webhook stage: ${webhookTag} (timeout ${timeoutMs}ms)`)
+
+  // 标记为 waiting 状态
+  stageResults[stageIndex] = { ...stageResults[stageIndex], status: 'waiting' }
+  await updateTestRunStage(runId, stageIndex, stageResults)
+
+  const waiter = WebhookWaiter.getInstance()
+  const result = await waiter.wait(webhookTag, timeoutMs)
+
+  if (result) {
+    return { status: 'success', output: `webhook 已到达: ${webhookTag}` }
+  }
+  return { status: 'failed', output: `等待 webhook 超时: ${webhookTag}`, error: 'timeout' }
 }
 
 async function executeStage(stage: StageDefinition, servers: ServerInfo[], ctx: StageContext): Promise<StageExecutionResult> {
@@ -99,7 +185,8 @@ export async function runPipeline(
   triggerType: 'manual' | 'api' | 'scheduled',
   triggeredBy: string,
   runtimeVarsInput: Record<string, string> = {},
-  onComplete?: (result: PipelineRunResult) => void
+  onComplete?: (result: PipelineRunResult) => void,
+  triggerParams?: Record<string, unknown>
 ): Promise<number> {
   const pipelineStartTime = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
@@ -144,8 +231,9 @@ export async function runPipeline(
   const logDir = join(DATA_DIR, String(run.id))
   await mkdir(logDir, { recursive: true })
 
-  // Resolve server info from DB
-  const allServers = await listTestServers(pipeline.productLineId)
+  // Resolve server info from DB (skip for serverless pipelines)
+  const hasServers = Object.keys(serverAssignment).length > 0
+  const allServers = hasServers ? await listTestServers(pipeline.productLineId) : []
   const serverMap: Record<string, ServerInfo[]> = {}
   const serverIds: number[] = []
 
@@ -158,8 +246,8 @@ export async function runPipeline(
     })
   }
 
-  // Lock servers
-  await bulkSetServerStatus(serverIds, 'in_use')
+  // Lock servers (skip for serverless pipelines)
+  if (serverIds.length > 0) await bulkSetServerStatus(serverIds, 'in_use')
 
   const stages = pipeline.stages as StageDefinition[]
   const stageResults: StageResult[] = stages.map(s => ({ name: s.name, type: getStageType(s), status: 'pending' as const }))
@@ -178,6 +266,68 @@ export async function runPipeline(
         await updateTestRunStage(run.id, i, stageResults)
 
         const result = await executeApprovalStage(stage)
+        stageResults[i] = {
+          ...stageResults[i], status: result.status, finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - startTime, output: result.output, error: result.error,
+        }
+        await updateTestRunStage(run.id, i, stageResults)
+
+        if (result.status === 'failed') {
+          if (stage.onFailure === 'stop') {
+            finalStatus = 'failed'
+            errorMessage = `Stage "${stage.name}" failed: ${result.error ?? result.output}`
+            for (let j = i + 1; j < stages.length; j++) stageResults[j] = { ...stageResults[j], status: 'skipped' }
+            await updateTestRunStage(run.id, i, stageResults)
+            break
+          }
+          finalStatus = 'failed'
+          errorMessage = `Stage "${stage.name}" failed but continued`
+        }
+        continue
+      }
+
+      // Capability stages — trigger Agent capability
+      if (getStageType(stage) === 'capability') {
+        const startTime = Date.now()
+        stageResults[i] = { ...stageResults[i], status: 'running', startedAt: new Date().toISOString() }
+        await updateTestRunStage(run.id, i, stageResults)
+
+        const ctx: StageContext = {
+          runId: run.id, stageIndex: i, servers: serverMap, logDir,
+          productLine: productLine ? { name: productLine.name, displayName: productLine.displayName } : undefined,
+          pipeline: { id: pipeline.id, name: pipeline.name },
+          run: { id: run.id, triggeredBy, triggerType },
+          variables: pipeline.variables ?? {},
+        }
+
+        const result = await executeCapabilityStage(stage, ctx, triggerParams)
+        stageResults[i] = {
+          ...stageResults[i], status: result.status, finishedAt: new Date().toISOString(),
+          durationMs: Date.now() - startTime, output: result.output, error: result.error,
+        }
+        await updateTestRunStage(run.id, i, stageResults)
+
+        if (result.status === 'failed') {
+          if (stage.onFailure === 'stop') {
+            finalStatus = 'failed'
+            errorMessage = `Stage "${stage.name}" failed: ${result.error ?? result.output}`
+            for (let j = i + 1; j < stages.length; j++) stageResults[j] = { ...stageResults[j], status: 'skipped' }
+            await updateTestRunStage(run.id, i, stageResults)
+            break
+          }
+          finalStatus = 'failed'
+          errorMessage = `Stage "${stage.name}" failed but continued`
+        }
+        continue
+      }
+
+      // Wait webhook stages — pause until external event
+      if (getStageType(stage) === 'wait_webhook') {
+        const startTime = Date.now()
+        stageResults[i] = { ...stageResults[i], status: 'waiting', startedAt: new Date().toISOString() }
+        await updateTestRunStage(run.id, i, stageResults)
+
+        const result = await executeWaitWebhookStage(stage, run.id, i, stageResults)
         stageResults[i] = {
           ...stageResults[i], status: result.status, finishedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime, output: result.output, error: result.error,
@@ -292,7 +442,7 @@ export async function runPipeline(
     await finishTestRun(run.id, 'failed', logDir, String(err))
     finalStatus = 'failed'
   } finally {
-    await bulkSetServerStatus(serverIds, 'idle')
+    if (serverIds.length > 0) await bulkSetServerStatus(serverIds, 'idle')
   }
 
   if (onComplete) {

@@ -382,6 +382,7 @@ interface EnvRow {
   runtime: 'kubernetes' | 'docker'
   namespace: string
   connectionConfig: Record<string, unknown>
+  defaultBranch: string
 }
 
 function EnvConfigTab({ productLineId }: { productLineId: number }) {
@@ -412,6 +413,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
           runtime: (existing?.runtime as 'kubernetes' | 'docker') ?? 'docker',
           namespace: existing?.namespace ?? '',
           connectionConfig: existing?.connectionConfig ?? {},
+          defaultBranch: existing?.defaultBranch ?? '',
         }
       }))
     } finally {
@@ -453,6 +455,7 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
         namespace: r.namespace,
         enabled: r.enabled,
         connectionConfig: r.connectionConfig,
+        defaultBranch: r.defaultBranch,
       })))
       message.success('环境配置保存成功')
     } finally {
@@ -548,6 +551,18 @@ function EnvConfigTab({ productLineId }: { productLineId: number }) {
           />
         )
       },
+    },
+    {
+      title: '默认分支',
+      dataIndex: 'defaultBranch',
+      width: 140,
+      render: (v: string, record: EnvRow) => (
+        <Input
+          value={v}
+          placeholder="如 develop"
+          onChange={(e) => updateRow(record.envId, { defaultBranch: e.target.value })}
+        />
+      ),
     },
   ]
 

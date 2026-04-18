@@ -45,6 +45,12 @@ export async function getTestPipelineById(id: number): Promise<TestPipeline | nu
   return rows[0] ? mapRow(rows[0]) : null
 }
 
+export async function getTestPipelineByName(name: string): Promise<TestPipeline | null> {
+  const pool = getPool()
+  const { rows } = await pool.query('SELECT * FROM test_pipelines WHERE name = $1 AND enabled = true LIMIT 1', [name])
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
 export async function createTestPipeline(data: {
   productLineId: number; name: string; description?: string
   stages: unknown[]; serverRoles: Record<string, { count: number }>

@@ -11,6 +11,10 @@ import {
   PartitionOutlined,
   HistoryOutlined,
   LogoutOutlined,
+  BugOutlined,
+  BookOutlined,
+  DashboardOutlined,
+  UserSwitchOutlined,
 } from '@ant-design/icons'
 import { me, logout, type MeResponse } from '../api/auth'
 
@@ -25,6 +29,10 @@ const PAGE_NAMES: Record<string, string> = {
   '/test-servers': '服务器管理',
   '/test-pipelines': '流水线管理',
   '/test-runs': '执行记录',
+  '/bug-runs': 'Bug 修复实例',
+  '/module-owners': '模块负责人',
+  '/product-knowledge': '知识库配置',
+  '/metrics': '价值仪表盘',
 }
 
 const menuItems = [
@@ -45,6 +53,16 @@ const menuItems = [
       { key: '/test-servers', icon: <HddOutlined />, label: '服务器' },
       { key: '/test-pipelines', icon: <PartitionOutlined />, label: '流水线' },
       { key: '/test-runs', icon: <HistoryOutlined />, label: '执行记录' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '研发 AI 助手',
+    children: [
+      { key: '/bug-runs', icon: <BugOutlined />, label: 'Bug 修复实例' },
+      { key: '/module-owners', icon: <UserSwitchOutlined />, label: '模块负责人' },
+      { key: '/product-knowledge', icon: <BookOutlined />, label: '知识库配置' },
+      { key: '/metrics', icon: <DashboardOutlined />, label: '价值仪表盘' },
     ],
   },
   {
@@ -83,7 +101,7 @@ export default function AdminLayout() {
         collapsed={collapsed}
         onCollapse={setCollapsed}
         width={200}
-        style={{ borderRight: '1px solid rgba(255,255,255,0.06)' }}
+        style={{ boxShadow: '1px 0 0 rgba(0,0,0,0.04)' }}
       >
         {/* Logo */}
         <div className="chatops-logo">
@@ -119,7 +137,7 @@ export default function AdminLayout() {
               icon={<LogoutOutlined />}
               onClick={onLogout}
               size="small"
-              style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}
+              style={{ color: '#7A8296', fontSize: 13 }}
             >
               登出
             </Button>

@@ -135,8 +135,8 @@ async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ ta
 async function verifyImageExists(harborUrl: string, harborProject: string, tag: string): Promise<boolean> {
   const harborCfg = await getConfig('harbor')
   const harbor = harborCfg?.value as Record<string, string> | undefined
-  const username = harbor?.username ?? ''
-  const password = harbor?.password ?? ''
+  const username = harbor?.registryUser ?? harbor?.username ?? ''
+  const password = harbor?.registryPassword ?? harbor?.password ?? ''
   const skipTls = harbor?.skipTlsVerify === 'true'
   const agent = skipTls ? new https.Agent({ rejectUnauthorized: false }) : undefined
 
@@ -204,8 +204,8 @@ const deployTool: AgentTool = {
 
       if (plEnv.runtime === 'docker') {
         const containerName = project.dockerContainerName || project.name
-        const harborUser = harbor?.username ?? ''
-        const harborPass = harbor?.password ?? ''
+        const harborUser = harbor?.registryUser ?? harbor?.username ?? ''
+        const harborPass = harbor?.registryPassword ?? harbor?.password ?? ''
 
         const fullImage = buildImageFullPath(harborUrl, harborProject, imageTag)
         const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
@@ -372,7 +372,7 @@ const rollbackTool: AgentTool = {
           commands
         )
         if (result.stdout.includes('NO_PREV') || result.code !== 0) {
-          return { success: false, output: '本地无上一版本镜像（:prev）。请指定镜像标签回滚，如：imageTag="develop_latest"。可用 query_deployments 查看历史版本。' }
+          return { success: false, output: '本地无上一版本镜像（:prev）。请指定镜像标签回滚，如：imageTag="develop_latest"。可用 check_environment_status 查看环境状态。' }
         }
         await recordDeployment({ project: projectName, env: envName, imageTag: 'prev', deployedBy: ctx.initiatorId, status: 'rolled_back' })
         return { success: true, output: `✅ 快速回滚成功（使用本地 :prev 镜像）\n服务器: ${sshConfig.host}\n容器: ${containerName}` }
@@ -381,8 +381,8 @@ const rollbackTool: AgentTool = {
       // Docker: 使用指定 imageTag 直接 SSH 部署（不走 branch 解析）
       const harborUrl = harbor?.url ?? ''
       if (!harborUrl) return { success: false, output: 'Harbor URL 未配置。请在系统配置中设置。' }
-      const harborUser = harbor?.username ?? ''
-      const harborPass = harbor?.password ?? ''
+      const harborUser = harbor?.registryUser ?? harbor?.username ?? ''
+      const harborPass = harbor?.registryPassword ?? harbor?.password ?? ''
       const harborProject = project.harborProject || project.name
       const registryHost = harborUrl.replace(/^https?:\/\//, '').replace(/\/$/, '')
       const fullImage = buildImageFullPath(harborUrl, harborProject, imageTag)

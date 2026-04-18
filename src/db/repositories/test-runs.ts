@@ -20,7 +20,7 @@ export interface TestRun {
 export interface StageResult {
   name: string
   type: string
-  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
+  status: 'pending' | 'running' | 'waiting' | 'success' | 'failed' | 'skipped'
   startedAt?: string
   finishedAt?: string
   durationMs?: number

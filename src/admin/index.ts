@@ -17,6 +17,13 @@ import { registerTestRunRoutes } from './routes/test-runs.js'
 import { registerStageOperationRoutes } from './routes/stage-operations.js'
 import { registerPipelineVariableRoutes } from './routes/pipeline-variables.js'
 import { registerArtifactRoutes } from './routes/artifacts.js'
+// 研发 AI 助手 Admin 路由
+import { registerModuleOwnerRoutes } from './routes/module-owners.js'
+import { registerProductKnowledgeRoutes } from './routes/product-knowledge.js'
+import { registerBugAnalysisReportRoutes } from './routes/bug-analysis-reports.js'
+import { registerMetricsRoutes } from './routes/metrics.js'
+import { registerAuditLogRoutes } from './routes/audit-log.js'
+import { registerOnboardingRoutes } from './routes/onboarding.js'
 
 export async function adminPlugin(app: FastifyInstance): Promise<void> {
   // Session middleware — must be registered before any route definition
@@ -45,4 +52,11 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerPipelineVariableRoutes(app)
   await registerArtifactRoutes(app)
   await registerAiRoutes(app)
+  // 研发 AI 助手
+  await registerModuleOwnerRoutes(app)
+  await registerProductKnowledgeRoutes(app)
+  await registerBugAnalysisReportRoutes(app)
+  await registerMetricsRoutes(app)
+  await registerAuditLogRoutes(app)
+  await registerOnboardingRoutes(app)
 }

@@ -18,6 +18,11 @@ const CapabilitiesPage       = lazy(() => import('./pages/CapabilitiesPage'))
 const TestServersPage        = lazy(() => import('./pages/TestServersPage'))
 const TestPipelinesPage      = lazy(() => import('./pages/TestPipelinesPage'))
 const TestRunsPage           = lazy(() => import('./pages/TestRunsPage'))
+// 研发 AI 助手页面
+const BugRunsPage            = lazy(() => import('./pages/BugRunsPage'))
+const ModuleOwnersPage       = lazy(() => import('./pages/ModuleOwnersPage'))
+const ProductKnowledgePage   = lazy(() => import('./pages/ProductKnowledgePage'))
+const MetricsPage            = lazy(() => import('./pages/MetricsPage'))
 
 const FONT = "'Urbanist', -apple-system, BlinkMacSystemFont, sans-serif"
 
@@ -26,36 +31,37 @@ export default function App() {
     <ConfigProvider
       locale={zhCN}
       theme={{
-        algorithm: theme.darkAlgorithm,
+        algorithm: theme.defaultAlgorithm,
         token: {
           fontFamily: FONT,
           fontSize: 14,
-          // Primary accent: electric blue
+          // Primary accent: electric blue (shared across dark sider + light content)
           colorPrimary: '#4B8BFF',
-          // Backgrounds
-          colorBgBase: '#0F1117',
-          colorTextBase: '#E6EAF3',
-          colorBgLayout: '#0F1117',
-          colorBgContainer: '#161B27',
-          colorBgElevated: '#1E2535',
-          colorBgSpotlight: '#1E2535',
+          // Light content surfaces
+          colorBgBase: '#FFFFFF',
+          colorTextBase: '#1A1F2E',
+          colorBgLayout: '#F6F7FA',
+          colorBgContainer: '#FFFFFF',
+          colorBgElevated: '#FFFFFF',
+          colorBgSpotlight: '#1A1F2E',
           // Borders
           borderRadius: 8,
           borderRadiusSM: 6,
           borderRadiusLG: 10,
-          colorBorder: 'rgba(255,255,255,0.1)',
-          colorBorderSecondary: 'rgba(255,255,255,0.06)',
-          // Shadows
-          boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
-          boxShadowSecondary: '0 2px 12px rgba(0,0,0,0.3)',
+          colorBorder: '#E4E7EE',
+          colorBorderSecondary: '#EEF0F4',
+          // Shadows — refined, not heavy
+          boxShadow: '0 4px 20px rgba(15, 23, 42, 0.06)',
+          boxShadowSecondary: '0 2px 8px rgba(15, 23, 42, 0.05)',
           // Motion
           motionDurationMid: '0.15s',
           motionDurationSlow: '0.2s',
         },
         components: {
           Layout: {
-            headerBg: '#111827',
-            bodyBg: '#0F1117',
+            // Header + body = light; sider stays dark (bicolor precision)
+            headerBg: '#FFFFFF',
+            bodyBg: '#F6F7FA',
             siderBg: '#0B0D14',
             triggerBg: '#0B0D14',
             triggerColor: 'rgba(255,255,255,0.35)',
@@ -63,6 +69,7 @@ export default function App() {
             headerPadding: '0 24px',
           },
           Menu: {
+            // Dark sider menu — untouched by light algorithm
             darkItemBg: '#0B0D14',
             darkSubMenuItemBg: '#0B0D14',
             darkItemSelectedBg: 'rgba(75,139,255,0.15)',
@@ -76,58 +83,58 @@ export default function App() {
             iconMarginInlineEnd: 10,
           },
           Table: {
-            headerBg: 'rgba(255,255,255,0.03)',
-            headerColor: '#6B7590',
+            headerBg: '#FAFBFC',
+            headerColor: '#5C6578',
             rowHoverBg: 'rgba(75,139,255,0.05)',
-            borderColor: 'rgba(255,255,255,0.07)',
+            borderColor: '#EEF0F4',
             fontSize: 13,
             headerSplitColor: 'transparent',
           },
           Card: {
-            colorBgContainer: '#161B27',
-            colorBorderSecondary: 'rgba(255,255,255,0.08)',
+            colorBgContainer: '#FFFFFF',
+            colorBorderSecondary: '#EEF0F4',
           },
           Modal: {
-            contentBg: '#161B27',
-            headerBg: '#161B27',
-            footerBg: '#161B27',
+            contentBg: '#FFFFFF',
+            headerBg: '#FFFFFF',
+            footerBg: '#FFFFFF',
           },
           Drawer: {
-            colorBgElevated: '#161B27',
+            colorBgElevated: '#FFFFFF',
           },
           Input: {
-            colorBgContainer: '#0F1117',
-            colorBgContainerDisabled: 'rgba(255,255,255,0.04)',
+            colorBgContainer: '#FFFFFF',
+            colorBgContainerDisabled: '#F6F7FA',
             hoverBorderColor: '#4B8BFF',
             activeBorderColor: '#4B8BFF',
           },
           Select: {
-            colorBgContainer: '#0F1117',
-            optionSelectedBg: 'rgba(75,139,255,0.15)',
-            colorBgElevated: '#1E2535',
+            colorBgContainer: '#FFFFFF',
+            optionSelectedBg: 'rgba(75,139,255,0.10)',
+            colorBgElevated: '#FFFFFF',
           },
           Button: {
-            defaultBg: 'transparent',
-            defaultBorderColor: 'rgba(255,255,255,0.12)',
-            defaultColor: '#C8D0E0',
-            defaultHoverBg: 'rgba(255,255,255,0.06)',
-            defaultHoverBorderColor: 'rgba(255,255,255,0.2)',
-            defaultHoverColor: '#E6EAF3',
+            defaultBg: '#FFFFFF',
+            defaultBorderColor: '#E4E7EE',
+            defaultColor: '#1A1F2E',
+            defaultHoverBg: '#F6F7FA',
+            defaultHoverBorderColor: '#C9CFDB',
+            defaultHoverColor: '#4B8BFF',
           },
           Tabs: {
-            itemColor: '#6B7590',
+            itemColor: '#5C6578',
             itemSelectedColor: '#4B8BFF',
             inkBarColor: '#4B8BFF',
-            itemHoverColor: '#E6EAF3',
-            cardBg: '#161B27',
+            itemHoverColor: '#1A1F2E',
+            cardBg: '#FFFFFF',
           },
           Form: {
-            labelColor: '#8B93A8',
+            labelColor: '#5C6578',
             labelRequiredMarkColor: '#EF4444',
           },
           Switch: {
             colorPrimary: '#4B8BFF',
-            handleBg: '#fff',
+            handleBg: '#FFFFFF',
           },
           Checkbox: {
             colorPrimary: '#4B8BFF',
@@ -136,25 +143,25 @@ export default function App() {
             fontSizeSM: 11,
           },
           Descriptions: {
-            colorTextSecondary: '#8B93A8',
+            colorTextSecondary: '#5C6578',
           },
           Timeline: {
-            colorText: '#E6EAF3',
+            colorText: '#1A1F2E',
           },
           Popconfirm: {
-            colorBgElevated: '#1E2535',
+            colorBgElevated: '#FFFFFF',
           },
           Tooltip: {
-            colorBgSpotlight: '#1E2535',
+            colorBgSpotlight: '#1A1F2E',
           },
           Dropdown: {
-            colorBgElevated: '#1E2535',
+            colorBgElevated: '#FFFFFF',
           },
           Message: {
-            colorBgElevated: '#1E2535',
+            colorBgElevated: '#FFFFFF',
           },
           Notification: {
-            colorBgElevated: '#1E2535',
+            colorBgElevated: '#FFFFFF',
           },
         },
       }}
@@ -191,6 +198,19 @@ export default function App() {
             } />
             <Route path="/test-runs" element={
               <Suspense fallback={null}><TestRunsPage /></Suspense>
+            } />
+            {/* 研发 AI 助手 */}
+            <Route path="/bug-runs" element={
+              <Suspense fallback={null}><BugRunsPage /></Suspense>
+            } />
+            <Route path="/module-owners" element={
+              <Suspense fallback={null}><ModuleOwnersPage /></Suspense>
+            } />
+            <Route path="/product-knowledge" element={
+              <Suspense fallback={null}><ProductKnowledgePage /></Suspense>
+            } />
+            <Route path="/metrics" element={
+              <Suspense fallback={null}><MetricsPage /></Suspense>
             } />
           </Route>
         </Routes>
