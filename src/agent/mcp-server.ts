@@ -30,6 +30,7 @@ import './tools/approval.js'
 import './tools/role.js'
 import './tools/autotest.js'
 import './tools/list-projects.js'
+import './tools/list-artifacts.js'
 
 const server = new Server(
   { name: 'chatops-tools', version: '1.0.0' },

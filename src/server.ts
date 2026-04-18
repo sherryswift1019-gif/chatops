@@ -29,6 +29,7 @@ import './agent/tools/approval.js'
 import './agent/tools/role.js'
 import './agent/tools/autotest.js'
 import './agent/tools/list-projects.js'
+import './agent/tools/list-artifacts.js'
 
 async function resolveProductLineId(userId: string): Promise<{ productLineId: number; role: string } | null> {
   try {

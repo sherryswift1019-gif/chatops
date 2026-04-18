@@ -37,4 +37,5 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   request_approval: ['developer', 'tester', 'ops', 'admin'],
   manage_role: ['admin'],
   list_product_line_projects: ['developer', 'tester', 'ops', 'admin'],
+  list_artifacts: ['developer', 'tester', 'ops', 'admin'],
 }
