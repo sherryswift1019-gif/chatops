@@ -27,5 +27,8 @@ const queryDeploymentsTool: AgentTool = {
   },
 }
 
-registerTool(queryDeploymentsTool)
+// Retained for two-week rollback window. Do not re-enable without restoring the
+// import in mcp-server.ts and server.ts. Rolling back also requires UPDATE
+// capabilities SET tool_names = '["query_deployments"]' WHERE key = 'view_deployments'.
+// registerTool(queryDeploymentsTool)
 export { queryDeploymentsTool }

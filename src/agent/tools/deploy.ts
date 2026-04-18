@@ -372,7 +372,7 @@ const rollbackTool: AgentTool = {
           commands
         )
         if (result.stdout.includes('NO_PREV') || result.code !== 0) {
-          return { success: false, output: '本地无上一版本镜像（:prev）。请指定镜像标签回滚，如：imageTag="develop_latest"。可用 query_deployments 查看历史版本。' }
+          return { success: false, output: '本地无上一版本镜像（:prev）。请指定镜像标签回滚，如：imageTag="develop_latest"。可用 check_environment_status 查看环境状态。' }
         }
         await recordDeployment({ project: projectName, env: envName, imageTag: 'prev', deployedBy: ctx.initiatorId, status: 'rolled_back' })
         return { success: true, output: `✅ 快速回滚成功（使用本地 :prev 镜像）\n服务器: ${sshConfig.host}\n容器: ${containerName}` }

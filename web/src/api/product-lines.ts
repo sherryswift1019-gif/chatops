@@ -19,5 +19,5 @@ export const removeMember = (plId: number, memberId: number) =>
 
 export const getProductLineEnvs = (plId: number) =>
   client.get<ProductLineEnv[]>(`/product-lines/${plId}/envs`).then(r => r.data)
-export const setProductLineEnvs = (plId: number, envs: Array<{ envId: number; runtime: string; namespace?: string; enabled?: boolean; connectionConfig?: Record<string, unknown> }>) =>
+export const setProductLineEnvs = (plId: number, envs: Array<{ envId: number; runtime: string; namespace?: string; enabled?: boolean; connectionConfig?: Record<string, unknown>; defaultBranch?: string }>) =>
   client.put<ProductLineEnv[]>(`/product-lines/${plId}/envs`, envs).then(r => r.data)
