@@ -117,7 +117,40 @@ function buildReuseMarker(): string {
   return `🔄 复用 Issue 的再次分析（${new Date().toISOString()}）`
 }
 
-async function handleAnalyzeBug(opts: TriggerOptions): Promise<TriggerResult> {
+/**
+ * 把 handleAnalyzeBug 抛出的异常按错误特征分类为错误码。
+ * 映射参考 spec "错误码汇总 → analyzer"。
+ */
+function classifyError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err)
+  const lower = msg.toLowerCase()
+  if (lower.includes('timeout') || lower.includes('超时') || lower.includes('timed out')) {
+    return 'claude_timeout'
+  }
+  if (
+    lower.includes('未返回 json') ||
+    lower.includes('未解析到 json') ||
+    lower.includes('字段缺失') ||
+    lower.includes('unexpected token') ||
+    lower.includes('json.parse') ||
+    (err instanceof SyntaxError)
+  ) {
+    return 'claude_invalid_json'
+  }
+  if (
+    lower.includes('issue') &&
+    (lower.includes('gitlab') || lower.includes('创建') || lower.includes('create') ||
+     lower.includes('40') || lower.includes('50'))
+  ) {
+    return 'issue_create_failed'
+  }
+  if (lower.includes('未配置任何 project') || lower.includes('no projects')) {
+    return 'no_projects'
+  }
+  return 'analyzer_error'
+}
+
+async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResult> {
   const startMs = Date.now()
   const { context, extraParams } = opts
   const productLineId = extraParams?.productLineId as number | undefined
@@ -341,6 +374,17 @@ async function handleAnalyzeBug(opts: TriggerOptions): Promise<TriggerResult> {
 }
 
 export { handleAnalyzeBug }
+
+async function handleAnalyzeBug(opts: TriggerOptions): Promise<TriggerResult> {
+  try {
+    return await handleAnalyzeBugInner(opts)
+  } catch (err) {
+    const code = classifyError(err)
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[AnalysisAgent] handleAnalyzeBug failed:', code, msg)
+    return { success: false, error: code, output: `分析失败: ${msg}` }
+  }
+}
 
 export function registerAnalysisBugHandler(): void {
   registerCapabilityHandler('analyze_bug', handleAnalyzeBug)

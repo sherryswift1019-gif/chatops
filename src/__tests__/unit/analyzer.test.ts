@@ -53,6 +53,7 @@ import {
 } from '../../db/repositories/bug-fix-events.js'
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { runFilterStage, runDetailStage } from '../../agent/analysis/claude-runs.js'
+import { extractJson } from '../../agent/analysis/claude-runs.js'
 import { gitlabCreateIssue, gitlabPostIssueNote } from '../../agent/analysis/gitlab-issue.js'
 
 // 保留原有的 parseAnalysisOutput / buildMarkdownReport 测试（向后兼容）
@@ -366,5 +367,25 @@ describe('analyzer multi-project support', () => {
     const issueEvents = await findByReportCode(reportId, 'create_issue')
     expect(issueEvents).toHaveLength(1)
     expect((issueEvents[0].data as { isReused: boolean }).isReused).toBe(true)
+  })
+})
+
+describe('extractJson', () => {
+  it('handles plain JSON', () => {
+    expect(extractJson('{"a": 1}')).toBe('{"a": 1}')
+  })
+
+  it('strips markdown code fence', () => {
+    expect(extractJson('```json\n{"a": 1}\n```')).toContain('"a": 1')
+    expect(JSON.parse(extractJson('```json\n{"a": 1}\n```'))).toEqual({ a: 1 })
+  })
+
+  it('handles leading natural language', () => {
+    const input = '根据分析：\n{"a": 1}'
+    expect(JSON.parse(extractJson(input))).toEqual({ a: 1 })
+  })
+
+  it('handles array response', () => {
+    expect(JSON.parse(extractJson('```\n[1,2,3]\n```'))).toEqual([1, 2, 3])
   })
 })

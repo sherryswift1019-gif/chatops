@@ -86,6 +86,34 @@ export function extractJsonFromOutput(text: string): string | null {
   return text.substring(idx, end)
 }
 
+/**
+ * 从 Claude 输出里鲁棒地提取 JSON 文本（兼容 ```json 代码块、自然语言前缀、纯 JSON、数组等情况）。
+ * 返回清洗后的 JSON 字符串（未 parse），调用方自行 JSON.parse。
+ * 如果无法识别任何 JSON 结构，则返回原始 trim 过的文本。
+ */
+export function extractJson(text: string): string {
+  // 1. 优先匹配 ```json ... ``` 或 ``` ... ``` 代码块
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/)
+  if (fenceMatch) return fenceMatch[1].trim()
+
+  // 2. 找第一个 { 到最后一个 }（对象情况）
+  const firstBrace = text.indexOf('{')
+  const lastBrace = text.lastIndexOf('}')
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return text.slice(firstBrace, lastBrace + 1).trim()
+  }
+
+  // 3. 找第一个 [ 到最后一个 ]（数组情况）
+  const firstBracket = text.indexOf('[')
+  const lastBracket = text.lastIndexOf(']')
+  if (firstBracket >= 0 && lastBracket > firstBracket) {
+    return text.slice(firstBracket, lastBracket + 1).trim()
+  }
+
+  // 4. fallback: 原样返回
+  return text.trim()
+}
+
 /** 阶段 A：筛选涉及哪些 project。 */
 export async function runFilterStage(input: FilterStageInput): Promise<FilterStageResult> {
   const candidateList = input.candidates
@@ -135,12 +163,15 @@ ${input.userMessage}
   if (!jsonStr) {
     throw new Error(`阶段 A 筛选失败：Claude 未返回 JSON。输出末尾: ${rawOutput.slice(-200)}`)
   }
-  const parsed = JSON.parse(jsonStr) as {
+  // 对 Markdown 代码块 / 自然语言前缀做一次鲁棒清洗（jsonStr 已经是从 `{` 开始到配对 `}` 的片段，
+  // 但若外层有 ``` 包裹或其它干扰字符，extractJson 能再兜一次底）。
+  const cleaned = extractJson(jsonStr)
+  const parsed = JSON.parse(cleaned) as {
     involvedProjects?: Array<{ projectPath?: string; isPrimary?: boolean; sourceBranch?: string }>
     primaryProjectPath?: string
   }
   if (!parsed.involvedProjects?.length || !parsed.primaryProjectPath) {
-    throw new Error(`阶段 A 筛选失败：JSON 字段缺失: ${jsonStr}`)
+    throw new Error(`阶段 A 筛选失败：JSON 字段缺失: ${cleaned}`)
   }
   return {
     involvedProjects: parsed.involvedProjects.map(p => ({
@@ -172,8 +203,17 @@ export async function runDetailStage(input: DetailStageInput): Promise<DetailSta
     signal: input.signal,
   })
 
-  // 从后往前找 {"classification" 开头的 JSON
-  const idx = rawOutput.lastIndexOf('{"classification"')
+  // 先找 {"classification" 开头的 JSON（不同格式：紧凑或带空格）
+  const patterns = [/\{"classification"/g, /\{\s*"classification"/g]
+  let idx = -1
+  for (const re of patterns) {
+    let lastMatch = -1
+    let m: RegExpExecArray | null
+    while ((m = re.exec(rawOutput)) !== null) {
+      lastMatch = m.index
+    }
+    if (lastMatch !== -1) { idx = lastMatch; break }
+  }
   let jsonStr: string | null = null
   if (idx !== -1) {
     let depth = 0
@@ -184,6 +224,17 @@ export async function runDetailStage(input: DetailStageInput): Promise<DetailSta
     }
     if (end !== -1) jsonStr = rawOutput.substring(idx, end)
   }
+
+  // 若仍未定位到 classification 段，兜底用 extractJson（处理 Markdown 代码块 / 自然语言前缀等）
+  if (!jsonStr) {
+    const cleaned = extractJson(rawOutput)
+    if (cleaned && cleaned.includes('"classification"')) {
+      jsonStr = cleaned
+      idx = rawOutput.indexOf(cleaned)
+      if (idx < 0) idx = 0
+    }
+  }
+
   if (!jsonStr) {
     throw new Error(`阶段 B 分析失败(${input.projectPath})：未解析到 JSON。输出末尾: ${rawOutput.slice(-200)}`)
   }
