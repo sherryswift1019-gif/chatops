@@ -39,11 +39,12 @@ export default defineConfig({
 
   // 两个 webServer 并行启动：GitLab mock、后端
   // 前端静态资源由后端 fastify-static 从 web/dist/ serve，需要用户先 cd web && pnpm build
+  // reuseExistingServer: false — 本地端口复用会误判（4001/3001 探测假阳性），强制每次新启
   webServer: [
     {
       command: `./node_modules/.bin/tsx src/__tests__/e2e/mocks/gitlab-server.ts`,
       port: MOCK_PORT,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 30_000,
       stdout: 'pipe',
       stderr: 'pipe',
@@ -54,7 +55,7 @@ export default defineConfig({
     {
       command: `./node_modules/.bin/tsx src/server.ts`,
       port: BACKEND_PORT,
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 60_000,
       stdout: 'pipe',
       stderr: 'pipe',
