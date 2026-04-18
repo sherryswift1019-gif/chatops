@@ -155,6 +155,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
       'u-trigger',
       expect.any(Function),
       { reportId: fakeReport.id },
+      expect.any(Function),
     )
     expect(setPipelineRunId).toHaveBeenCalledWith(fakeReport.id, 77)
   })

@@ -205,10 +205,19 @@ export async function handleAnalysisComplete(
     triggeredBy,
     onComplete,
     { reportId },
+    // 在 run 创建成功后立即回写 pipeline_run_id，保证后续 stage（尤其 notify_bug）能查到
+    async (rid) => {
+      try {
+        await setPipelineRunId(reportId, rid)
+        console.log(`[AgentCoordinator] report ${reportId} linked to pipeline run ${rid} (early)`)
+      } catch (err) {
+        console.error(`[AgentCoordinator] early setPipelineRunId error:`, err)
+      }
+    },
   )
 
+  // 兜底：若 onRunCreated 未跑到，这里再写一次（幂等）
   await setPipelineRunId(reportId, runId)
-  console.log(`[AgentCoordinator] report ${reportId} linked to pipeline run ${runId}`)
 }
 
 // 通知回调（server.ts 仍注入；当前链路已由 notify_bug capability 负责，保留 API 兼容性）

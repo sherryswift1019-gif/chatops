@@ -215,7 +215,8 @@ export async function runPipeline(
   triggerType: 'manual' | 'api' | 'scheduled',
   triggeredBy: string,
   onComplete?: (result: PipelineRunResult) => void,
-  triggerParams?: Record<string, unknown>
+  triggerParams?: Record<string, unknown>,
+  onRunCreated?: (runId: number) => void | Promise<void>
 ): Promise<number> {
   const pipelineStartTime = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
@@ -227,6 +228,14 @@ export async function runPipeline(
   const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment })
   const logDir = join(DATA_DIR, String(run.id))
   await mkdir(logDir, { recursive: true })
+
+  // Allow caller to link external resources (e.g. bug_analysis_reports.pipeline_run_id)
+  // BEFORE any stage runs, so downstream capability handlers can resolve the run id
+  if (onRunCreated) {
+    try { await onRunCreated(run.id) } catch (err) {
+      console.error('[Pipeline] onRunCreated hook error:', err)
+    }
+  }
 
   // Resolve server info from DB (skip for serverless pipelines)
   const hasServers = Object.keys(serverAssignment).length > 0
