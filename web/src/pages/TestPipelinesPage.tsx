@@ -7,8 +7,9 @@ import { getTestServers } from '../api/test-servers'
 import { triggerTestRun } from '../api/test-runs'
 import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getPipelineVariables } from '../api/pipeline-variables'
+import { listArtifacts } from '../api/artifacts'
 import AiCommandModal from '../components/AiCommandModal'
-import type { TestPipeline, ProductLine, TestServer } from '../types'
+import type { TestPipeline, ProductLine, TestServer, ArtifactInput } from '../types'
 
 
 export default function TestPipelinesPage() {
@@ -87,7 +88,7 @@ export default function TestPipelinesPage() {
       parallel: s.parallel ?? false,
     }))
     const variableEntries = Object.entries(r.variables ?? {}).map(([key, value]) => ({ key, value }))
-    form.setFieldsValue({ ...r, stages, variableEntries })
+    form.setFieldsValue({ ...r, stages, variableEntries, artifactInputs: r.artifactInputs ?? [] })
     setModalOpen(true)
   }
 
@@ -107,6 +108,7 @@ export default function TestPipelinesPage() {
       ...values,
       serverRoles,
       variables,
+      artifactInputs: (values.artifactInputs ?? []) as ArtifactInput[],
       stages: values.stages.map((s: any) => ({
         name: s.name,
         stageType: s.stageType ?? 'script',
@@ -121,14 +123,18 @@ export default function TestPipelinesPage() {
       })),
     }
     delete (payload as any).variableEntries
-    if (editing) {
-      await updateTestPipeline(editing.id, payload)
-      message.success('更新成功')
-    } else {
-      await createTestPipeline(payload)
-      message.success('创建成功')
+    try {
+      if (editing) {
+        await updateTestPipeline(editing.id, payload)
+        message.success('更新成功')
+      } else {
+        await createTestPipeline(payload)
+        message.success('创建成功')
+      }
+      setModalOpen(false); await load()
+    } catch (e: any) {
+      message.error(e?.response?.data?.error ?? '保存失败')
     }
-    setModalOpen(false); await load()
   }
 
   async function handleDelete(id: number) {
@@ -212,6 +218,64 @@ export default function TestPipelinesPage() {
                   ))}
                   <Button type="dashed" size="small" onClick={() => addVar({ key: '', value: '' })} icon={<PlusOutlined />}>
                     添加变量
+                  </Button>
+                </>
+              )}
+            </Form.List>
+          </div>
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>
+              制品输入 <span style={{ fontWeight: 'normal', color: '#999', fontSize: 12 }}>（触发前选包；定时/API 触发须填 default 或 defaultStrategy）</span>
+            </div>
+            <Form.List name="artifactInputs">
+              {(fields, { add: addArt, remove: removeArt }) => (
+                <>
+                  {fields.map(({ key, name: aName }) => (
+                    <Card key={key} size="small" style={{ marginBottom: 8 }}
+                      extra={<DeleteOutlined onClick={() => removeArt(aName)} style={{ color: 'red' }} />}>
+                      <Space style={{ display: 'flex', flexWrap: 'wrap' }}>
+                        <Form.Item name={[aName, 'name']} label="名称" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
+                          <Input style={{ width: 180 }} placeholder="选择 PAM Docker 包" />
+                        </Form.Item>
+                        <Form.Item name={[aName, 'outputVar']} label="输出变量" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
+                          <Input style={{ width: 180 }} placeholder="PACKAGE_URL" addonBefore="vars." />
+                        </Form.Item>
+                        <Form.Item name={[aName, 'valueFrom']} label="取值" initialValue="url" style={{ marginBottom: 4 }}>
+                          <Select style={{ width: 100 }} options={[
+                            { value: 'url', label: 'url' },
+                            { value: 'name', label: 'name' },
+                            { value: 'path', label: 'path' },
+                          ]} />
+                        </Form.Item>
+                      </Space>
+                      <Space style={{ display: 'flex', flexWrap: 'wrap' }}>
+                        <Form.Item name={[aName, 'listUrl']} label="仓库 URL" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
+                          <Input style={{ width: 380 }} placeholder="http://10.10.2.234:8000/pam/deploy" />
+                        </Form.Item>
+                        <Form.Item name={[aName, 'glob']} label="过滤模式" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
+                          <Input style={{ width: 260 }} placeholder="PAM-Docker-*.tar.gz" />
+                        </Form.Item>
+                        <Form.Item label=" " style={{ marginBottom: 4 }}>
+                          <ArtifactPreviewButton form={form} fieldName={aName} />
+                        </Form.Item>
+                      </Space>
+                      <Space style={{ display: 'flex', flexWrap: 'wrap' }}>
+                        <Form.Item name={[aName, 'default']} label="默认值" style={{ marginBottom: 4 }}>
+                          <Input style={{ width: 380 }} placeholder="可选：字面值，优先级高于 strategy" />
+                        </Form.Item>
+                        <Form.Item name={[aName, 'defaultStrategy']} label="自动策略" style={{ marginBottom: 4 }}>
+                          <Select allowClear style={{ width: 200 }} options={[
+                            { value: 'latest-by-mtime', label: 'latest-by-mtime' },
+                            { value: 'first-match', label: 'first-match' },
+                          ]} placeholder="定时触发时自动挑选" />
+                        </Form.Item>
+                      </Space>
+                    </Card>
+                  ))}
+                  <Button type="dashed" size="small" onClick={() => addArt({
+                    name: '', listUrl: '', glob: '', outputVar: '', valueFrom: 'url',
+                  })} icon={<PlusOutlined />}>
+                    添加制品输入
                   </Button>
                 </>
               )}
@@ -351,4 +415,32 @@ function StageTypeFields({ stageIndex, form, variableCatalog, dingtalkUsers }: {
         onCancel={() => setAiModalOpen(false)} />
     </div>
   )
+}
+
+function ArtifactPreviewButton({ form, fieldName }: { form: any; fieldName: number }) {
+  const [loading, setLoading] = useState(false)
+  async function handleClick() {
+    const listUrl = form.getFieldValue(['artifactInputs', fieldName, 'listUrl'])
+    const glob = form.getFieldValue(['artifactInputs', fieldName, 'glob'])
+    if (!listUrl) { message.warning('请先填写仓库 URL'); return }
+    setLoading(true)
+    try {
+      const files = await listArtifacts(listUrl, glob || undefined)
+      if (files.length === 0) {
+        message.info(`没有匹配 ${glob || '*'} 的文件`)
+        return
+      }
+      const head = files.slice(0, 5).map(f => `${f.name} (${new Date(f.mtime).toISOString().slice(0, 10)})`).join('\n')
+      Modal.info({
+        title: `匹配 ${files.length} 个文件（按 mtime 倒序，展示前 5）`,
+        content: <pre style={{ margin: 0, fontFamily: 'monospace' }}>{head}</pre>,
+        width: 600,
+      })
+    } catch (e: any) {
+      message.error(e?.response?.data?.error ?? '请求失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+  return <Button size="small" loading={loading} onClick={handleClick}>预览匹配</Button>
 }
