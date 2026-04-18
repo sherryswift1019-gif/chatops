@@ -10,12 +10,12 @@
 CREATE TABLE IF NOT EXISTS bug_fix_events (
   id            SERIAL PRIMARY KEY,
   report_id     INTEGER NOT NULL REFERENCES bug_analysis_reports(id),
-  project_path  VARCHAR(200),
-  code          VARCHAR(50) NOT NULL,
+  project_path  TEXT,
+  code          VARCHAR(50) NOT NULL,  -- 允许值：analysis / scope_identified / create_issue / fix_attempt / create_mr / ai_review / approval / notify / lifecycle_sync
   status        VARCHAR(20) NOT NULL DEFAULT 'success',
   duration_ms   INTEGER,
-  data          JSONB DEFAULT '{}',
-  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  data          JSONB NOT NULL DEFAULT '{}',
+  created_at    TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_bug_fix_events_report
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_bug_fix_events_project
 -- ============================================================
 ALTER TABLE bug_analysis_reports
   ADD COLUMN IF NOT EXISTS pipeline_run_id INTEGER REFERENCES test_runs(id),
-  ADD COLUMN IF NOT EXISTS primary_project_path VARCHAR(200);
+  ADD COLUMN IF NOT EXISTS primary_project_path TEXT;
 
 -- status 字段是 VARCHAR，无需改 enum；业务层使用以下取值：
 -- 'draft' | 'published' | 'pipeline_success' | 'completed' | 'aborted'
@@ -36,17 +36,17 @@ ALTER TABLE bug_analysis_reports
 -- ============================================================
 -- 3. capabilities 表新增 3 条记录
 -- ============================================================
-INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval)
+INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system)
 VALUES
   ('approve_l3', 'L3 方案审批',
    'L3 Bug 修复方案审批：给主仓库 owner 发审批 DM，给从仓库 owner 发知情 DM',
-   'action', '[]'::jsonb, true),
+   'action', '[]'::jsonb, true, true),
   ('create_mr', '创建 MR',
    '对每个涉及的 project 创建 GitLab Merge Request，description 引用主 Issue',
-   'action', '[]'::jsonb, false),
+   'action', '[]'::jsonb, false, true),
   ('notify_bug', '修复完成通知',
    'Pipeline 终态通知：成功/失败 DM 给 project 负责人和触发人',
-   'action', '[]'::jsonb, false)
+   'action', '[]'::jsonb, false, true)
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================
