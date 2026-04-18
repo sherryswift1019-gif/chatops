@@ -16,6 +16,7 @@ import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
 import { registerTestRunRoutes } from './routes/test-runs.js'
 import { registerStageOperationRoutes } from './routes/stage-operations.js'
 import { registerPipelineVariableRoutes } from './routes/pipeline-variables.js'
+import { registerArtifactRoutes } from './routes/artifacts.js'
 
 export async function adminPlugin(app: FastifyInstance): Promise<void> {
   // Session middleware — must be registered before any route definition
@@ -42,5 +43,6 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerTestRunRoutes(app)
   await registerStageOperationRoutes(app)
   await registerPipelineVariableRoutes(app)
+  await registerArtifactRoutes(app)
   await registerAiRoutes(app)
 }
