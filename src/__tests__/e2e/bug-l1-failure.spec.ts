@@ -1,0 +1,162 @@
+/**
+ * Task 18 Phase 3A — 场景 1：L1 修复失败 → pipeline aborted
+ *
+ * 流程：
+ *   1. 触发 analyze_bug → level=l1
+ *   2. L1 pipeline 第一个 stage fix_bug_l1 fix 失败（runFixForProject 返回 testPassed=false）
+ *   3. fix_bug_l1 stage retryCount=0 + onFailure=stop → pipeline 直接 aborted
+ *   4. coordinator.onComplete(failed) → 补发 notify_bug capability（补发仍进入 decideScenario，
+ *      但失败场景 shouldNotifyOwners=false 不发 DM；这是当前代码真实行为）
+ *   5. UI 打开 BugRunsPage：report 状态徽标 "aborted"，EventTimeline 含 "❌ ... 修复" 文案
+ *   6. DB 断言：events 含 analysis / scope_identified / create_issue / fix_attempt(failed)
+ *      且 不含 create_mr / ai_review
+ */
+import { test, expect, type APIRequestContext } from '@playwright/test'
+import { Pool } from 'pg'
+import { resetPerTest, seedClaudeMock } from './helpers/per-test.js'
+
+const GITLAB_MOCK = process.env.E2E_GITLAB_MOCK_URL ?? 'http://localhost:4001'
+
+async function loginAsAdmin(request: APIRequestContext): Promise<void> {
+  await dbQuery(`UPDATE admin_users SET must_change_password = FALSE WHERE username = 'admin'`)
+  const r = await request.post('/admin/auth/login', {
+    data: { username: 'admin', password: 'admin' },
+  })
+  expect(r.ok()).toBe(true)
+}
+
+async function dbQuery<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL })
+  try {
+    const { rows } = await pool.query(sql, params)
+    return rows as T[]
+  } finally {
+    await pool.end()
+  }
+}
+
+test.describe('L1 修复失败 → aborted', () => {
+  test.beforeEach(async ({ request }) => {
+    await resetPerTest(request, GITLAB_MOCK)
+  })
+
+  test('analyze → L1 pipeline fix 失败 → aborted + UI 显示 error 标签', async ({ request, page }) => {
+    await loginAsAdmin(request)
+
+    const plRows = await dbQuery<{ id: number }>(
+      `SELECT id FROM product_lines WHERE name = 'pam'`,
+    )
+    expect(plRows.length).toBe(1)
+    const productLineId = plRows[0].id
+
+    // ── 1. 塞 claude mock 响应 ─────────────────────────────────────────────
+    await seedClaudeMock(request, 'analyze_bug-filter', {
+      involvedProjects: [
+        { projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'test' },
+      ],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    await seedClaudeMock(request, 'analyze_bug-detail', {
+      classification: 'bug',
+      level: 'l1',
+      confidence: 'high',
+      confidenceScore: 0.9,
+      rootCause: {
+        type: 'config',
+        summary: '配置缺失',
+        file: 'app.properties',
+        lineRange: [10, 10],
+      },
+      solutions: [
+        { id: 'a', summary: '补配置', recommended: true, risk: 'low', effort: 'low' },
+      ],
+      affectedModules: ['config'],
+      analysisSteps: ['检查配置'],
+      markdown: '# L1 分析\n配置缺失',
+    })
+    // fix 失败：testPassed=false（fix_bug_l1 retryCount=0 → 一次失败即 stop）
+    await seedClaudeMock(request, 'fix-PAM/pas-api', {
+      branch: 'fix/issue-1-pas-api',
+      testPassed: false,
+      error: '编译错误：SomeClass cannot be resolved',
+      output: '编译错误，测试未通过',
+    })
+    // 补发 notify_bug：fix_failed 场景 shouldNotifyOwners=false，不会真发 DM，
+    // 但保险起见给 review 也一个 fallback（代码路径里补发 notify 不走 review）
+
+    // ── 2. 触发链路（同步：handleAnalysisComplete await runPipeline） ───────
+    test.setTimeout(60_000)
+    const dispatch = await request.post('/admin/_e2e/analyze-and-dispatch', {
+      data: { productLineId, message: 'L1 失败用例：配置补了依然编不过' },
+    })
+    expect(dispatch.ok()).toBe(true)
+    const dispatchBody = await dispatch.json()
+    expect(dispatchBody.success).toBe(true)
+    const { reportId, pipelineRunId, classification, level } = dispatchBody.data as {
+      reportId: number
+      pipelineRunId: number
+      classification: string
+      level: string
+    }
+    expect(classification).toBe('bug')
+    expect(level).toBe('l1')
+    expect(reportId).toBeGreaterThan(0)
+    expect(pipelineRunId).toBeGreaterThan(0)
+
+    // ── 3. DB 断言：状态 aborted，events 含 fix_attempt=failed，不含 create_mr ──
+    const reportRows = await dbQuery<{ status: string; pipeline_run_id: number }>(
+      `SELECT status, pipeline_run_id FROM bug_analysis_reports WHERE id = $1`,
+      [reportId],
+    )
+    expect(reportRows[0].status).toBe('aborted')
+
+    const events = await dbQuery<{ code: string; status: string; project_path: string | null }>(
+      `SELECT code, status, project_path FROM bug_fix_events WHERE report_id = $1 ORDER BY id`,
+      [reportId],
+    )
+    const codes = events.map(e => e.code)
+    for (const expected of ['analysis', 'scope_identified', 'create_issue', 'fix_attempt']) {
+      expect(codes, `events 缺少 ${expected}`).toContain(expected)
+    }
+    // 失败后应无 MR / review（pipeline onFailure=stop）
+    expect(codes).not.toContain('create_mr')
+    expect(codes).not.toContain('ai_review')
+
+    // fix_attempt 必须是 failed
+    const fixAttempt = events.find(e => e.code === 'fix_attempt')
+    expect(fixAttempt?.status).toBe('failed')
+    expect(fixAttempt?.project_path).toBe('PAM/pas-api')
+
+    // ── 4. UI：BugRunsPage 状态徽标 "aborted" + 失败事件 ────────────────────
+    const loginResp = await page.request.post('/admin/auth/login', {
+      data: { username: 'admin', password: 'admin' },
+    })
+    expect(loginResp.ok()).toBe(true)
+
+    await page.goto('/bug-runs')
+    const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
+    await expect(pageCard).toBeVisible({ timeout: 10_000 })
+
+    await pageCard.locator('.ant-select').click()
+    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+
+    // IssueCard 标题：Issue #N
+    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
+    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
+
+    // 状态标签 "aborted"（RoundHeader 里的 Tag）
+    await expect(page.locator('.ant-tag').filter({ hasText: /^aborted$/ }).first()).toBeVisible({
+      timeout: 10_000,
+    })
+
+    // 时间线含 "❌ PAM/pas-api 修复" （EventContent fix_attempt + status=failed）
+    await expect(
+      page.locator('.ant-timeline').getByText(/❌ PAM\/pas-api 修复/).first(),
+    ).toBeVisible({ timeout: 10_000 })
+
+    // 时间线含 "分析完成"
+    await expect(
+      page.locator('.ant-timeline').getByText(/分析完成/).first(),
+    ).toBeVisible({ timeout: 10_000 })
+  })
+})

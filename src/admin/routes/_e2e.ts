@@ -6,9 +6,12 @@
  *   POST /admin/_e2e/reset             清空所有 mock 响应 + sent messages
  *   GET  /admin/_e2e/messages?kind&to  查询 MockIMAdapter 收到的发送记录
  *   GET  /admin/_e2e/health            返回 { e2eMode, claudeMock }
- *   POST /admin/_e2e/analyze-and-dispatch { productLineId, message, initiatorId? }
+ *   POST /admin/_e2e/approve           { issueIid, decision } →
+ *                                      封装 PipelineApprovalManager.tryHandleCommand
+ *   POST /admin/_e2e/analyze-and-dispatch { productLineId, message, initiatorId?, async? }
  *        — 完整触发 analyze_bug + handleAnalysisComplete（bug 类型会触发 Pipeline）
  *          返回 { reportId, classification, level, pipelineRunId }
+ *          async=true 时 handleAnalysisComplete 不 await，用于 L3 审批 block 场景
  *
  * 无需 auth（E2E_MODE 本身就是开关，生产模式不会装载此路由）。
  */
@@ -60,14 +63,47 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
   })
 
   /**
-   * 完整触发 analyze_bug → handleAnalysisComplete 链路。
-   * bug 分类会触发 Pipeline（runPipeline 内部 await 直到 pipeline 跑完），
-   * 返回时 report 已经到达终态（pipeline_success / aborted）。
+   * 触发 PipelineApprovalManager.tryHandleCommand（群内审批命令封装）。
+   * 用于 L3 审批 e2e 场景：dispatch 异步 block 在审批时，通过此端点模拟
+   * 用户在群里发 `approve #<issueIid>` / `reject #<issueIid>` / `reanalyze #<issueIid>`。
+   *
+   * 入参：
+   *   { issueIid: string|number, decision: 'approve'|'reject'|'reanalyze' }
+   * 返回：
+   *   { ok: true, handled: boolean }
    */
   app.post<{
-    Body: { productLineId: number; message: string; initiatorId?: string }
+    Body: { issueIid: string | number; decision: 'approve' | 'reject' | 'reanalyze' }
+  }>('/_e2e/approve', async (req, reply) => {
+    const { issueIid, decision } = req.body ?? ({} as any)
+    if (issueIid === undefined || !decision) {
+      return reply.status(400).send({ error: 'issueIid and decision required' })
+    }
+    const { PipelineApprovalManager } = await import('../../pipeline/approval-manager.js')
+    const mgr = PipelineApprovalManager.getInstance()
+    const handled = mgr.tryHandleCommand(`${decision} #${issueIid}`)
+    return reply.send({ ok: true, handled })
+  })
+
+  /**
+   * 完整触发 analyze_bug → handleAnalysisComplete 链路。
+   *
+   * 默认同步模式：bug 分类会触发 Pipeline（runPipeline 内部 await 直到 pipeline 跑完），
+   *   返回时 report 已经到达终态（pipeline_success / aborted）。
+   *
+   * 异步模式（async=true）：analyze 完成后立即返回 reportId，handleAnalysisComplete
+   *   在后台继续执行（不 await）。测试侧可 poll 事件或 report.status 判断进度。
+   *   用于 L3 审批场景：pipeline 会 block 在 approve_l3 stage 等待审批命令。
+   */
+  app.post<{
+    Body: {
+      productLineId: number
+      message: string
+      initiatorId?: string
+      async?: boolean
+    }
   }>('/_e2e/analyze-and-dispatch', async (req, reply) => {
-    const { productLineId, message, initiatorId } = req.body ?? ({} as any)
+    const { productLineId, message, initiatorId, async: asyncMode } = req.body ?? ({} as any)
     if (!productLineId || !message) {
       return reply.status(400).send({ error: 'productLineId and message required' })
     }
@@ -100,16 +136,30 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
     const level = data.level as string
     const classification = data.classification as string
 
-    let pipelineRunId: number | undefined
-    if (classification === 'bug') {
-      await handleAnalysisComplete(reportId, level, classification, initiator)
-      // handleAnalysisComplete 内部 await runPipeline 到 onComplete 回调之前都完成
-      const { getBugAnalysisReportById } = await import(
-        '../../db/repositories/bug-analysis-reports.js'
-      )
-      const reloaded = await getBugAnalysisReportById(reportId)
-      pipelineRunId = reloaded?.pipelineRunId ?? undefined
+    if (classification !== 'bug') {
+      return reply.send({
+        success: true,
+        data: { reportId, classification, level, pipelineRunId: undefined },
+      })
     }
+
+    if (asyncMode) {
+      // 不 await：让 handleAnalysisComplete 在后台跑，pipeline 可在审批处 block
+      void handleAnalysisComplete(reportId, level, classification, initiator).catch(err => {
+        console.error('[e2e] async handleAnalysisComplete error:', err)
+      })
+      return reply.send({
+        success: true,
+        data: { reportId, classification, level, pipelineRunId: undefined, async: true },
+      })
+    }
+
+    await handleAnalysisComplete(reportId, level, classification, initiator)
+    const { getBugAnalysisReportById } = await import(
+      '../../db/repositories/bug-analysis-reports.js'
+    )
+    const reloaded = await getBugAnalysisReportById(reportId)
+    const pipelineRunId = reloaded?.pipelineRunId ?? undefined
 
     return reply.send({
       success: true,
