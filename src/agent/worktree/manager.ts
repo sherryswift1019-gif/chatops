@@ -18,6 +18,7 @@ export interface Worktree {
   version: string
   sessionId: string
   repoUrl: string
+  projectPath?: string
   createdAt: Date
   expiresAt: Date
 }
@@ -28,11 +29,36 @@ export interface AcquireOptions {
   version: string
   sessionId: string
   repoUrl: string
+  /**
+   * 可选。多 project 并行修复场景下必传，避免不同 project 的同分支 clone 到同一目录产生冲突。
+   * 例如 'PAM/pas-6.0'、'PAM/java-code/pas-api'。
+   */
+  projectPath?: string
+}
+
+/**
+ * 生成 worktree 的唯一 key（也用作目录名）。
+ * key = `${productLineId}-${projectPath with '/' → '-'}-${branch with '/' → '-'}`
+ * 不同 project 的同分支产生不同 key，保证多 project 并行修复不冲突。
+ */
+export function makeWorktreeKey(params: {
+  productLineId: number | string
+  projectPath: string
+  branch: string
+}): string {
+  const safeProject = params.projectPath.replace(/\//g, '-')
+  const safeBranch = params.branch.replace(/\//g, '-')
+  return `${params.productLineId}-${safeProject}-${safeBranch}`
 }
 
 const activeWorktrees = new Map<string, Worktree>()
 
 function buildId(opts: AcquireOptions): string {
+  if (opts.projectPath) {
+    const safeProject = opts.projectPath.replace(/\//g, '-')
+    const safeVersion = opts.version.replace(/\//g, '-')
+    return `${opts.userId}-${opts.product}-${safeProject}-${safeVersion}-${opts.sessionId}`
+  }
   return `${opts.userId}-${opts.product}-${opts.version}-${opts.sessionId}`
 }
 
@@ -93,6 +119,7 @@ export async function acquire(opts: AcquireOptions): Promise<Worktree> {
     version: opts.version,
     sessionId: opts.sessionId,
     repoUrl: opts.repoUrl,
+    projectPath: opts.projectPath,
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + DEFAULT_TTL_MS),
   }
