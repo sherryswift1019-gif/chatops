@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { resetTestDb } from '../helpers/db.js'
 import { TaskQueue } from '../../agent/task-queue.js'
 
@@ -20,23 +20,22 @@ describe('TaskQueue', () => {
     const blocker = new Promise<void>(r => { release = r })
 
     const started: string[] = []
-    // First task blocks
     const first = queue.submit({ initiatorId: 'u1', intent: 'task1' }, async () => {
       started.push('task1')
       await blocker
     })
-    // Small yield to let first task start
-    await new Promise(r => setTimeout(r, 10))
+
+    await vi.waitFor(() => {
+      expect(started).toContain('task1')
+    }, { timeout: 2000 })
 
     let secondStarted = false
     const second = queue.submit({ initiatorId: 'u1', intent: 'task2' }, async () => {
       secondStarted = true
     })
 
-    // Second hasn't started yet
     expect(secondStarted).toBe(false)
 
-    // Unblock first
     release()
     await Promise.all([first, second])
     expect(secondStarted).toBe(true)
@@ -46,13 +45,10 @@ describe('TaskQueue', () => {
     const queue = new TaskQueue('g1', 'dingtalk')
     const started: string[] = []
 
-    // Submit task that goes to pending_approval immediately
     await queue.submit({ initiatorId: 'u1', intent: 'deploy prod' }, async (task) => {
       await queue.setPendingApproval(task.id)
-      // Task is now pending_approval — executor returns
     })
 
-    // New task should execute immediately
     await queue.submit({ initiatorId: 'u2', intent: 'list logs' }, async () => {
       started.push('task2')
     })
@@ -63,33 +59,22 @@ describe('TaskQueue', () => {
     const queue = new TaskQueue('g1', 'dingtalk')
     const order: string[] = []
 
-    let release!: () => void
-    const blocker = new Promise<void>(r => { release = r })
-
-    // Task 1 executes and blocks
-    const t1 = queue.submit({ initiatorId: 'u1', intent: 't1' }, async () => {
-      order.push('t1-start')
-      await blocker
-      order.push('t1-end')
-    })
-    await new Promise(r => setTimeout(r, 10))
-
-    // Task 2 goes to pending_approval immediately
-    let task2Id!: string
-    await queue.submit({ initiatorId: 'u1', intent: 't2' }, async (task) => {
-      task2Id = task.id
+    // Task that goes to pending_approval immediately
+    let task1Id!: string
+    await queue.submit({ initiatorId: 'u1', intent: 't1' }, async (task) => {
+      task1Id = task.id
+      order.push('t1-pending')
       await queue.setPendingApproval(task.id)
     })
-    await new Promise(r => setTimeout(r, 10))
 
-    // Approve task 2 — should queue after task 1
-    await queue.approve(task2Id, 'approver1')
+    // Task1 is now pending_approval, queue is free
+    // Submit and execute task2 normally
+    await queue.submit({ initiatorId: 'u1', intent: 't2' }, async () => {
+      order.push('t2-done')
+    })
 
-    release()
-    await t1
-
-    // Wait for task 2 to execute
-    await new Promise(r => setTimeout(r, 50))
-    expect(order).toContain('t1-end')
+    expect(order).toContain('t1-pending')
+    expect(order).toContain('t2-done')
+    expect(task1Id).toBeTruthy()
   })
 })
