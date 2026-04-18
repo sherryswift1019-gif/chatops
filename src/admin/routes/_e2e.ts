@@ -6,6 +6,9 @@
  *   POST /admin/_e2e/reset             清空所有 mock 响应 + sent messages
  *   GET  /admin/_e2e/messages?kind&to  查询 MockIMAdapter 收到的发送记录
  *   GET  /admin/_e2e/health            返回 { e2eMode, claudeMock }
+ *   POST /admin/_e2e/analyze-and-dispatch { productLineId, message, initiatorId? }
+ *        — 完整触发 analyze_bug + handleAnalysisComplete（bug 类型会触发 Pipeline）
+ *          返回 { reportId, classification, level, pipelineRunId }
  *
  * 无需 auth（E2E_MODE 本身就是开关，生产模式不会装载此路由）。
  */
@@ -54,5 +57,63 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
 
   app.get('/_e2e/health', async (_req, reply) => {
     return reply.send({ e2eMode: isE2EMode(), claudeMock: isClaudeMock() })
+  })
+
+  /**
+   * 完整触发 analyze_bug → handleAnalysisComplete 链路。
+   * bug 分类会触发 Pipeline（runPipeline 内部 await 直到 pipeline 跑完），
+   * 返回时 report 已经到达终态（pipeline_success / aborted）。
+   */
+  app.post<{
+    Body: { productLineId: number; message: string; initiatorId?: string }
+  }>('/_e2e/analyze-and-dispatch', async (req, reply) => {
+    const { productLineId, message, initiatorId } = req.body ?? ({} as any)
+    if (!productLineId || !message) {
+      return reply.status(400).send({ error: 'productLineId and message required' })
+    }
+    const { handleAnalyzeBug } = await import('../../agent/analysis/analyzer.js')
+    const { handleAnalysisComplete } = await import('../../agent/coordinator.js')
+
+    const initiator = initiatorId ?? 'u-trigger'
+    const analyzerResult = await handleAnalyzeBug({
+      capabilityKey: 'analyze_bug',
+      context: {
+        taskId: `e2e-${Date.now()}`,
+        groupId: 'e2e',
+        platform: 'e2e',
+        initiatorId: initiator,
+        initiatorRole: 'developer',
+      },
+      extraParams: { productLineId, message },
+    })
+
+    if (!analyzerResult.success) {
+      return reply.send({
+        success: false,
+        error: analyzerResult.error,
+        output: analyzerResult.output,
+      })
+    }
+
+    const data = (analyzerResult.data ?? {}) as Record<string, unknown>
+    const reportId = data.reportId as number
+    const level = data.level as string
+    const classification = data.classification as string
+
+    let pipelineRunId: number | undefined
+    if (classification === 'bug') {
+      await handleAnalysisComplete(reportId, level, classification, initiator)
+      // handleAnalysisComplete 内部 await runPipeline 到 onComplete 回调之前都完成
+      const { getBugAnalysisReportById } = await import(
+        '../../db/repositories/bug-analysis-reports.js'
+      )
+      const reloaded = await getBugAnalysisReportById(reportId)
+      pipelineRunId = reloaded?.pipelineRunId ?? undefined
+    }
+
+    return reply.send({
+      success: true,
+      data: { reportId, classification, level, pipelineRunId },
+    })
   })
 }

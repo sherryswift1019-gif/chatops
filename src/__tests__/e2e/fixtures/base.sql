@@ -64,6 +64,12 @@ FROM product_lines pl, capabilities c
 WHERE pl.name = 'pam'
 ON CONFLICT DO NOTHING;
 
+-- 给 analyze_bug / fix_bug_l1/l2/l3 / ai_review_mr 等 capability 设置 system_prompt，
+-- 否则 analyzer / reviewer 会因 systemPrompt 为空直接返回错误（生产由 seed.sql 注入，
+-- 但 resetTestDb 不跑 seed.sql，故在这里为 e2e 最小化补齐）。
+UPDATE capabilities SET system_prompt = COALESCE(system_prompt, '你是 Bug 分析/修复专家（e2e stub prompt）。')
+ WHERE key IN ('analyze_bug','fix_bug_l1','fix_bug_l2','fix_bug_l3','ai_review_mr','search_knowledge');
+
 -- ============================================================
 -- 7. test_pipelines — L1/L2/L3/L4，stages JSON 与 schema-v11.sql 等价
 -- ============================================================

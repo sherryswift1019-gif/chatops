@@ -100,6 +100,25 @@ export async function acquire(opts: AcquireOptions): Promise<Worktree> {
     return existing
   }
 
+  // E2E 模式：返回虚拟 worktree，绕过真实 clone / fetch（mock GitLab server 不提供 git 协议）
+  if (process.env.E2E_MODE === '1') {
+    const worktree: Worktree = {
+      id,
+      path: wtPath,
+      userId: opts.userId,
+      product: opts.product,
+      version: opts.version,
+      sessionId: opts.sessionId,
+      repoUrl: opts.repoUrl,
+      projectPath: opts.projectPath,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + DEFAULT_TTL_MS),
+    }
+    activeWorktrees.set(id, worktree)
+    console.log(`[Worktree] E2E acquired (stub): ${wtPath}`)
+    return worktree
+  }
+
   const mainRepoPath = await ensureMainRepo(opts.product, opts.repoUrl)
 
   if (existsSync(wtPath)) {

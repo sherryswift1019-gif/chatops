@@ -31,7 +31,6 @@ export async function resetPerTest(
     TRUNCATE bug_fix_events CASCADE;
     TRUNCATE bug_analysis_reports CASCADE;
     TRUNCATE test_runs CASCADE;
-    TRUNCATE test_run_stage_results CASCADE;
   `)
 }
 
