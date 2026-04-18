@@ -3773,6 +3773,80 @@ EOF
 
 **Which approach?**
 
+---
+
+## E2E 验收完成报告（2026-04-19 追加）
+
+Task 18 最终范围（用户决定后扩展）：**文档 + Growth Backlog + E2E 验收（18 场景）**。按 subagent-driven-development 流程执行完成，全部场景绿。
+
+### Phase 拆分 + commit
+
+| Phase | 内容 | Commit | 状态 |
+|---|---|---|---|
+| 1.1 | Playwright 装 + 目录 + config | c4eeead | ✅ |
+| 1.2 | base.sql fixture（pam / 4 pipelines / 2 projects） | ea7fcac | ✅ |
+| 1.3 | Claude mock 分叉 + `_e2e` 端点 + MockIMAdapter（11 单测） | 0a6d1ee | ✅ |
+| 1.4 | GitLab mock server + globalSetup + playwright webServer | 5bd9399 | ✅ |
+| 1.5 | health.spec 6/6 + 修 1.3/1.4 遗留（auth bypass / reuse / GITLAB_URL 冲突 / vitest exclude） | 2f02f2d | ✅ |
+| 2 | bug-l1-full-flow 样板脚本（严格 UI 全通） | 44d3a52 | ✅ |
+| 3A-W1 | L1 失败 / L2 全链路 / L3 approve / L3 reject | fab3a3e | ✅ |
+| 3A-W2 | L3 超时[降级-DB] / 多 project / 重试 UI / MR close | 8cfed74 | ✅ |
+| 3B | BugRunsPage 5 场景（3 个[降级-UI gap 产品侧]） | d67821e | ✅ |
+| 3C | approval cmd approve/reject/reanalyze（[简化-跳过 intent]） | f48fdf6 | ✅ |
+
+### 最终绿灯指标
+
+- `pnpm test`（vitest）：**295 pass / 4 skipped**（与 Task 17 完成时相同，无倒退）
+- `pnpm test:e2e`（Playwright）：**23 pass**（6 smoke + 17 业务 + 0 flaky）
+- `npx tsc --noEmit`：零错误
+- 硬约束文件（executor.ts / types.ts / approval-manager.ts / webhook-waiter.ts / test-runs repo / test-pipelines repo）**零改动**
+
+### E2E 基础设施
+
+**产品代码增量**（e2e-only 分支，默认不触发，生产零影响）：
+- `src/agent/mocks/e2e-store.ts` — in-memory mock 响应队列 + 消息记录
+- `src/adapters/im/mock.ts` — MockIMAdapter（含入站模拟）
+- `src/admin/routes/_e2e.ts` — 7 个控制端点（claude / reset / messages / health / analyze-and-dispatch / approve / im/incoming）
+- `src/agent/analysis/claude-runs.ts` / `fix-logic.ts` / `claude-review.ts` — `CLAUDE_MOCK=1` 短路分叉
+- `src/agent/worktree/manager.ts` — `E2E_MODE=1` 返回虚拟 worktree
+- `src/admin/auth/session-plugin.ts` — `/_e2e/*` 前缀白名单
+- `src/server.ts` — `E2E_MODE=1` 时用 MockIMAdapter 替代 DingTalk/Feishu
+
+**测试代码**（23 个 spec）：
+- 1 个 smoke: `health.spec.ts`
+- 17 个业务: `bug-l1/l2/l3/l4-*` + `bug-retry` + `bug-mr-close` + `bugpage-*` + `approval-cmd-*`
+- fixture: `base.sql`
+- helpers: `global-setup.ts` / `global-teardown.ts` / `per-test.ts`
+- mock: `gitlab-server.ts`
+
+### 产品 Backlog（E2E 跑出的 gap，用户后续决策）
+
+以下是 e2e 降级/简化处所暴露的产品侧待决策项，**都不阻塞本次 plan 收尾**：
+
+| # | 项目 | 发现处 | 现状 | 建议 |
+|---|---|---|---|---|
+| G1 | `approve_l3` timeout 不可测 | Phase 3A 场景 5 | handler 硬编码 `timeoutMs=3600000`，stage `timeoutSeconds` 未透传；stage-level timeout 先触发但 handler 不监听 signal | 后续改 handler：从 `capabilityParams.approvalTimeoutMs` 读，或监听 `opts.signal` 自写 aborted 事件 |
+| G2 | BugRunsPage 无 status 筛选 | Phase 3B B1 | DB status 有 5 态但前端只当 Tag 显示 | PRD 补需求 |
+| G3 | BugRunsPage 无分页器 | Phase 3B B2 | 前端硬编码 `limit=50`，后端 API 无 offset/page | 需求 + 后端 API 扩参 |
+| G4 | 无"查看分析报告 markdown"弹窗 | Phase 3B B4 | `analysis_steps` / `solutions_json` 等结构化数据未渲染 | 需求 + 前端组件 |
+| G5 | `fix_failed` / `approval_rejected` 不发失败 DM | Phase 3A W1 | `notify_bug` 里 `shouldNotifyOwners=false`，失败场景触发人/owner 都不知情 | 产品层决策：失败是否通知 owner |
+| G6 | ClaudeRunner intent 检测无法在 e2e mock | Phase 3C 简化 | `detectIntent` 会 spawn 真 claude CLI | 可选：intent 检测也加 `CLAUDE_MOCK` 分叉 |
+
+### Node 环境
+
+本机默认 Node 18.20.8 跑 vitest 4 报 `node:util.styleText` 导出缺失。临时方案：测试时 `export PATH=/opt/homebrew/opt/node@22/bin:$PATH`。未升级全局 Node（按用户早期意向）。
+
+### 跑 e2e 的前置条件
+
+1. Postgres 起、`DATABASE_URL` 设好
+2. 前端 build 好：`cd web && pnpm build`
+3. `export PATH=/opt/homebrew/opt/node@22/bin:$PATH`
+4. `pnpm test:e2e` — Playwright 自动启 mock server + 后端（E2E_MODE / CLAUDE_MOCK / GITLAB_URL 指 mock / PORT=3001 / fake token）
+
+### 已关闭 → 不再推进的项
+
+- ~~Task 18 "PR"~~ — 用户未授权 push，保留本地 commit。后续用户自行决定 push/PR 时机。
+
 
 
 
