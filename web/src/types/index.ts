@@ -11,6 +11,7 @@ export interface ProductLineEnv {
   id: number; productLineId: number; envId: number
   runtime: 'kubernetes' | 'docker'; namespace: string; enabled: boolean
   connectionConfig: Record<string, unknown>
+  defaultBranch: string
 }
 
 export interface Project {

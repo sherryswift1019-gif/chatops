@@ -4,7 +4,7 @@ import { getAllTools } from '../../agent/tools/index.js'
 import { DEFAULT_TOOL_ROLES } from '../../agent/tools/types.js'
 
 // Import all tool modules to ensure they're registered
-import '../../agent/tools/query-deployments.js'
+import '../../agent/tools/check-env-status.js'
 import '../../agent/tools/list-images.js'
 import '../../agent/tools/get-gitlab-commits.js'
 import '../../agent/tools/get-logs.js'
