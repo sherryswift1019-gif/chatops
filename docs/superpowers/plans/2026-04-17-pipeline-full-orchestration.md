@@ -12,6 +12,20 @@
 
 ---
 
+## 实施修订说明（Task 17 执行过程中产生）
+
+以下变更在实施过程中用户明确修订，**以下描述优先于 plan 正文**：
+
+1. **取消触发人 DM 功能**（`notify_bug` 仅通知 project 负责人）
+   - 原因：触发人通过 Bug 修复实例页面查看状态和事件时间线，不依赖 IM 推送
+   - 影响范围：plan/spec 里所有"触发人 DM"相关描述失效
+   - 具体规则：
+     - `fix_success` / `fix_success_review_concerns`：发给 project owner（保留）
+     - `l4_created` / `approval_rejected` / `approval_timeout` / `approval_retry_analysis` / `fix_failed`：**不发任何 DM**（handler 直接返回 success，不写 notify 事件）
+   - 代码已按此规则实施（commit `6682c06`），相关单测和集成测试已同步
+
+---
+
 ## File Structure
 
 ### 新建文件
