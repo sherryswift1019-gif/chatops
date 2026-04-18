@@ -34,5 +34,9 @@ await pool.query(schemaV8)
 const schemaV9 = readFileSync(join(__dirname, 'schema-v9.sql'), 'utf8')
 await pool.query(schemaV9)
 
+const schemaV11 = readFileSync(join(__dirname, 'schema-v11.sql'), 'utf8')
+await pool.query(schemaV11)
+console.log('[migrate] schema-v11 applied')
+
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v9)')
+console.log('✅ Database schema applied (v1 ~ v11, 含 bug_fix_events)')
