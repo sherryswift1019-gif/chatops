@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { ApprovalRouter } from '../../approval/router.js'
 import type { ApprovalRule } from '../../db/repositories/approval-rules.js'
 
@@ -10,7 +10,11 @@ const rules: ApprovalRule[] = [
 ]
 
 describe('ApprovalRouter', () => {
-  const router = new ApprovalRouter(rules)
+  let router: ApprovalRouter
+
+  beforeEach(() => {
+    router = new ApprovalRouter(rules)
+  })
 
   it('prefers exact action+env match over wildcards', () => {
     const result = router.route('deploy', 'prod')

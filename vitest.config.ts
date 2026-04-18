@@ -8,5 +8,6 @@ export default defineConfig({
     // Tests share a single Postgres schema; running files concurrently
     // causes DROP SCHEMA races. Run files serially.
     fileParallelism: false,
+    exclude: ['**/node_modules/**', '**/.git/**', '**/.claude/**'],
   },
 })

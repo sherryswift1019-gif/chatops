@@ -30,6 +30,25 @@ import './agent/tools/role.js'
 import './agent/tools/autotest.js'
 import './agent/tools/list-projects.js'
 
+// 研发 AI 助手工具
+import './agent/tools/read-code.js'
+import './agent/tools/download-image.js'
+import './agent/tools/switch-version.js'
+import './agent/tools/create-issue.js'
+import './agent/tools/search-knowledge.js'
+import './agent/tools/fix-code.js'
+import './agent/tools/run-tests.js'
+import './agent/tools/create-mr.js'
+import './agent/tools/update-ai-summary.js'
+import './agent/tools/review-mr-diff.js'
+
+// 研发 AI 助手 Agent handler 注册
+import { registerAnalysisBugHandler, setClaudeRunner } from './agent/analysis/analyzer.js'
+import { registerFixHandlers, setFixClaudeRunner } from './agent/fix/fix-runner.js'
+import { registerReviewHandler, setReviewClaudeRunner } from './agent/review/reviewer.js'
+import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
+import { setApprovalGate } from './agent/coordinator.js'
+
 async function resolveProductLineId(userId: string): Promise<{ productLineId: number; role: string } | null> {
   try {
     const memberships = await getMembershipsByUserId(userId)
@@ -69,6 +88,7 @@ async function main(): Promise<void> {
   // Approval gate
   const gate = new ApprovalGate(adapters)
   await gate.initialize()
+  setApprovalGate(gate)
 
   // Claude runner
   const runner = new ClaudeRunner()
@@ -123,6 +143,19 @@ async function main(): Promise<void> {
       }
     )
   })
+
+  // 注入 ClaudeRunner 到各 Agent handler
+  setClaudeRunner(runner)
+  setFixClaudeRunner(runner)
+  setReviewClaudeRunner(runner)
+
+  // 注册 Agent capability handler
+  registerAnalysisBugHandler()
+  registerFixHandlers()
+  registerReviewHandler()
+
+  // 启动 worktree 清理调度器
+  startCleanupScheduler()
 
   // Session manager — processes each message
   const sessionManager = new SessionManager(

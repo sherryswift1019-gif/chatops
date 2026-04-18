@@ -4,4 +4,6 @@ dist/
 .env
 web/node_modules/
 web/dist/
+.agent/
 .claude/
+_bmad/

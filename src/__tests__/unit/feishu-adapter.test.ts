@@ -1,9 +1,13 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { FeishuAdapter } from '../../adapters/im/feishu.js'
 
 describe('FeishuAdapter', () => {
-  const adapter = new FeishuAdapter({
-    appId: 'cli_test', appSecret: 'secret', verificationToken: 'vtok'
+  let adapter: FeishuAdapter
+
+  beforeEach(() => {
+    adapter = new FeishuAdapter({
+      appId: 'cli_test', appSecret: 'secret', verificationToken: 'vtok'
+    })
   })
 
   it('handles URL verification challenge', async () => {
@@ -36,7 +40,8 @@ describe('FeishuAdapter', () => {
     }, {})
 
     expect(messages).toHaveLength(1)
-    const msg = messages[0] as { text: string }
+    const msg = messages[0] as { text: string; platform: string }
     expect(msg.text).toBe('deploy payment-service')
+    expect(msg.platform).toBe('feishu')
   })
 })

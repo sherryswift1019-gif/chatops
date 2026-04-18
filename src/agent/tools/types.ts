@@ -7,7 +7,8 @@ export interface TaskContext {
   platform: string
   initiatorId: string
   initiatorRole: Role | null
-  productLineId?: number
+  cwd?: string  // worktree 工作目录（分析/修复 Agent 用）
+  productLineId?: number  // 产品线 ID
   originalPrompt?: string
 }
 
@@ -38,4 +39,20 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   request_approval: ['developer', 'tester', 'ops', 'admin'],
   manage_role: ['admin'],
   list_product_line_projects: ['developer', 'tester', 'ops', 'admin'],
+
+  // 研发 AI 助手工具
+  read_code: ['developer', 'tester', 'ops', 'admin'],
+  download_image: ['developer', 'tester', 'ops', 'admin'],
+  switch_version: ['developer', 'tester', 'ops', 'admin'],
+  create_issue: ['developer', 'tester', 'ops', 'admin'],
+  search_knowledge: ['developer', 'tester', 'ops', 'admin'],
+
+  // 修复 Agent 工具（系统内部触发，不直接暴露给用户）
+  fix_code: ['developer', 'ops', 'admin'],
+  run_tests: ['developer', 'tester', 'ops', 'admin'],
+  create_mr: ['developer', 'ops', 'admin'],
+  update_ai_summary: ['developer', 'ops', 'admin'],
+
+  // Review Agent 工具
+  review_mr_diff: ['developer', 'tester', 'ops', 'admin'],
 }
