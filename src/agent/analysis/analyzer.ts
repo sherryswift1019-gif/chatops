@@ -1,16 +1,29 @@
-import { registerCapabilityHandler, handleAnalysisComplete } from '../coordinator.js'
-import { acquire, release } from '../worktree/manager.js'
-import { createBugAnalysisReport, updateReportStatus } from '../../db/repositories/bug-analysis-reports.js'
+import { registerCapabilityHandler } from '../coordinator.js'
+import { acquire, release, makeWorktreeKey } from '../worktree/manager.js'
+import {
+  createBugAnalysisReport,
+  updateReportStatus,
+} from '../../db/repositories/bug-analysis-reports.js'
 import { createStat } from '../../db/repositories/bug-analysis-stats.js'
-import { getByProductLineId } from '../../db/repositories/product-knowledge-repos.js'
+import { getByProductLineId as getKnowledgeRepoByProductLineId } from '../../db/repositories/product-knowledge-repos.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
-import { runClaudeCli } from '../claude-cli.js'
-import { mask } from '../masking/sensitive-info.js'
-import axios from 'axios'
-import type { BugLevel, BugClassification, ConfidenceLevel, Solution } from '../../db/repositories/bug-analysis-reports.js'
+import { listProjects } from '../../db/repositories/projects-repo.js'
+import { createEvent } from '../../db/repositories/bug-fix-events.js'
+import { runFilterStage, runDetailStage, mergeDetailResults } from './claude-runs.js'
+import { gitlabCreateIssue, gitlabPostIssueNote } from './gitlab-issue.js'
+import type {
+  BugLevel,
+  BugClassification,
+  ConfidenceLevel,
+  Solution,
+} from '../../db/repositories/bug-analysis-reports.js'
 import type { TriggerOptions, TriggerResult } from '../coordinator.js'
 
-interface AnalysisOutput {
+/**
+ * 保留原有 parseAnalysisOutput 导出签名供老测试和老集成测试使用。
+ * 本 Task 的新流程走 claude-runs.ts 内部的解析逻辑，这里仅用于向后兼容。
+ */
+export interface AnalysisOutput {
   classification: BugClassification
   level: BugLevel
   confidence: ConfidenceLevel
@@ -26,24 +39,20 @@ interface AnalysisOutput {
   analysis_steps: string[]
 }
 
-function parseAnalysisOutput(text: string): AnalysisOutput | null {
+export function parseAnalysisOutput(text: string): AnalysisOutput | null {
   try {
-    // 从后往前找 JSON——Claude 输出中报告在前、JSON 在最后
-    const idx = text.lastIndexOf('{"classification"')
-    if (idx === -1) return null
-
-    // 找到 JSON 结尾的 }
+    // 匹配 `{` 后允许空白再接 `"classification"`（兼容格式化过的 JSON）
+    const match = text.match(/\{\s*"classification"/)
+    if (!match || match.index === undefined) return null
+    const idx = match.index
     let depth = 0
     let end = -1
     for (let i = idx; i < text.length; i++) {
       if (text[i] === '{') depth++
-      if (text[i] === '}') depth--
-      if (depth === 0) { end = i + 1; break }
+      if (text[i] === '}') { depth--; if (depth === 0) { end = i + 1; break } }
     }
     if (end === -1) return null
-
-    const jsonStr = text.substring(idx, end)
-    const data = JSON.parse(jsonStr)
+    const data = JSON.parse(text.substring(idx, end))
     const required = ['classification', 'level', 'confidence', 'root_cause', 'solutions']
     if (!required.every(k => k in data)) return null
     if (!data.root_cause?.summary || !Array.isArray(data.solutions)) return null
@@ -53,161 +62,287 @@ function parseAnalysisOutput(text: string): AnalysisOutput | null {
   }
 }
 
-function extractProjectPath(codeRepoUrl: string): string {
-  const url = codeRepoUrl.replace(/\.git$/, '')
-  const httpMatch = url.match(/https?:\/\/[^/]+\/(.+)/)
-  if (httpMatch) return httpMatch[1]
-  const sshMatch = url.match(/[^:]+:(.+)/)
-  if (sshMatch) return sshMatch[1]
-  return url
+const LEVEL_LABEL: Record<BugLevel, string> = {
+  l1: 'L1 配置类',
+  l2: 'L2 简单代码',
+  l3: 'L3 业务逻辑',
+  l4: 'L4 架构级',
 }
 
-async function createGitLabIssue(opts: {
-  projectPath: string
-  title: string
-  description: string
-  labels: string
-}): Promise<{ iid: number; url: string } | null> {
-  const gitlabUrl = process.env.GITLAB_URL
-  const gitlabToken = process.env.GITLAB_TOKEN
-  if (!gitlabUrl || !gitlabToken) return null
+/**
+ * 从 AnalysisOutput（老的单 project 结构）生成 Markdown 报告。保留导出以兼容现有
+ * 集成测试 (`full-analysis-flow`, `full-bug-fix-flow`, `analyze-bug-flow`)。
+ */
+export function buildMarkdownReport(output: AnalysisOutput): string {
+  const pct = Math.round((output.confidence_score ?? 0) * 100)
+  const modules = output.affected_modules?.length ? output.affected_modules.join(', ') : '-'
+  const solutions = output.solutions
+    .map(s => `- **${s.id}** ${s.recommended ? '（推荐）' : ''}：${s.summary} [风险 ${s.risk}, 规模 ${s.effort}]`)
+    .join('\n')
+  const steps = (output.analysis_steps ?? []).map(s => `- ${s}`).join('\n')
+  return `## AI 分析报告
 
-  try {
-    const response = await axios.post(
-      `${gitlabUrl}/api/v4/projects/${encodeURIComponent(opts.projectPath)}/issues`,
-      { title: opts.title, description: opts.description, labels: opts.labels },
-      { headers: { 'PRIVATE-TOKEN': gitlabToken }, timeout: 15_000 }
-    )
-    const issue = response.data
-    console.log(`[AnalysisAgent] Issue #${issue.iid} 已创建: ${issue.web_url}`)
-    return { iid: issue.iid, url: issue.web_url }
-  } catch (err) {
-    console.error('[AnalysisAgent] 创建 Issue 失败:', err instanceof Error ? err.message : String(err))
-    return null
-  }
+**分类**: ${output.classification}
+**等级**: ${LEVEL_LABEL[output.level] ?? output.level}
+**置信度**: ${output.confidence} (${pct}%)
+
+### 根因
+
+${output.root_cause.summary}
+
+文件：\`${output.root_cause.file}\`（行 ${output.root_cause.line_range.join('-')}）
+
+### 方案
+
+${solutions}
+
+### 影响模块
+
+${modules}
+
+### 分析步骤
+
+${steps}
+`
+}
+
+/** 提取主 Issue 标题（取根因摘要前 80 字）。 */
+function buildIssueTitle(summary: string): string {
+  const s = summary.trim().replace(/\n+/g, ' ')
+  return `[AI 分析] ${s.substring(0, 80)}`
+}
+
+/** 计算 reuse 模式的 N（基于已有 create_issue 事件数量）—— 简单记录次数的字符串。 */
+function buildReuseMarker(): string {
+  return `🔄 复用 Issue 的再次分析（${new Date().toISOString()}）`
 }
 
 async function handleAnalyzeBug(opts: TriggerOptions): Promise<TriggerResult> {
+  const startMs = Date.now()
   const { context, extraParams } = opts
   const productLineId = extraParams?.productLineId as number | undefined
   const userMessage = extraParams?.message as string | undefined
+  const reuseIssueId = extraParams?.reuseIssueId as number | undefined
 
   if (!productLineId || !userMessage) {
     console.error('[AnalysisAgent] 缺少参数:', { productLineId, hasMessage: !!userMessage })
     return { success: false, error: '缺少 productLineId 或 message' }
   }
 
-  const knowledgeRepo = await getByProductLineId(productLineId)
+  const knowledgeRepo = await getKnowledgeRepoByProductLineId(productLineId)
   if (!knowledgeRepo) {
-    return { success: false, error: `产品线 ${productLineId} 未配置代码仓库` }
+    return { success: false, error: `产品线 ${productLineId} 未配置代码仓库（product_knowledge_repos）` }
   }
 
-  const version = extraParams?.version as string | undefined
-  if (!version) {
-    return { success: false, error: '请指定分支，例如：pas test 堡垒机访问报错' }
-  }
+  const defaultBranch =
+    (extraParams?.version as string | undefined) ?? knowledgeRepo.codeDefaultBranch ?? 'master'
 
   const capabilityRow = await getCapabilityByKey('analyze_bug')
   if (!capabilityRow?.systemPrompt) {
     return { success: false, error: 'analyze_bug 未配置 systemPrompt，请在管理后台配置' }
   }
 
-  let worktree
+  const projects = await listProjects(productLineId)
+  if (projects.length === 0) {
+    return { success: false, error: `产品线 ${productLineId} 下未配置任何 project` }
+  }
+
+  const gitlabUrlBase = process.env.GITLAB_URL ?? ''
+
+  // ========== 阶段 A：clone 主仓库 + 让 Claude 筛选涉及的 project ==========
+  let mainWorktree
   try {
-    worktree = await acquire({
-      userId: context.initiatorId,
+    mainWorktree = await acquire({
+      userId: context.initiatorId || 'system',
       product: `pl-${productLineId}`,
-      version,
-      sessionId: context.taskId,
+      version: defaultBranch,
+      sessionId: `${context.taskId}-filter`,
       repoUrl: knowledgeRepo.codeRepoUrl,
     })
   } catch (err) {
-    console.error('[AnalysisAgent] 创建 worktree 失败:', err instanceof Error ? err.message : String(err))
-    return { success: false, error: `创建 worktree 失败: ${err instanceof Error ? err.message : String(err)}` }
+    const msg = err instanceof Error ? err.message : String(err)
+    return { success: false, error: `阶段A 主仓库 clone 失败: ${msg}` }
   }
 
+  let filterResult
   try {
-    const startMs = Date.now()
-
-    const prompt = `${capabilityRow.systemPrompt}\n\n代码仓库路径: ${worktree.path}\n\n用户问题: ${userMessage}`
-
-    // 直接调 claude CLI（和 pam-smart 同方式）
-    const rawOutput = await runClaudeCli({
-      prompt,
-      allowedTools: 'Read,Glob,Grep',
-      timeoutMs: 20 * 60_000,
-      onEvent: (e) => console.log(`[AnalysisAgent] ${e.type}: ${e.message}`),
+    filterResult = await runFilterStage({
+      userMessage,
+      candidates: projects.map(p => ({
+        projectPath: p.gitlabPath,
+        name: p.name,
+        displayName: p.displayName,
+        description: p.description,
+      })),
+      mainRepoWorktreePath: mainWorktree.path,
+      defaultBranch,
+      systemPrompt: capabilityRow.systemPrompt,
       signal: opts.signal,
     })
-
-    const durationMs = Date.now() - startMs
-    const maskedOutput = mask(rawOutput)
-
-    // 解析 JSON
-    const analysisOutput = parseAnalysisOutput(maskedOutput)
-
-    if (!analysisOutput) {
-      console.warn('[AnalysisAgent] 未解析到 JSON，返回纯文本。输出最后200字:', maskedOutput.substring(maskedOutput.length - 200))
-      return { success: true, output: maskedOutput }
-    }
-
-    console.log(`[AnalysisAgent] JSON 解析成功: classification=${analysisOutput.classification}, level=${analysisOutput.level}, confidence=${analysisOutput.confidence}`)
-
-    // 去掉回复中的 JSON 部分，只保留中文报告
-    const reportText = maskedOutput.replace(/\{[\s\S]*"classification"[\s\S]*\}/, '').trim()
-
-    // Bug 类型：存 DB + 创建 Issue + 触发修复
-    if (analysisOutput.classification === 'bug') {
-      console.log(`[AnalysisAgent] Bug 类型，开始创建 Issue 和触发修复`)
-      const projectPath = extractProjectPath(knowledgeRepo.codeRepoUrl)
-
-      // 创建 GitLab Issue
-      const issue = await createGitLabIssue({
-        projectPath,
-        title: `[AI 分析] ${analysisOutput.root_cause.summary.substring(0, 80)}`,
-        description: `## AI 分析报告\n\n${reportText}\n\n---\n\n等级: ${analysisOutput.level}\n置信度: ${analysisOutput.confidence} (${analysisOutput.confidence_score})\n影响模块: ${analysisOutput.affected_modules.join(', ')}`,
-        labels: `ai-analyzed,level-${analysisOutput.level},needs-analysis`,
-      })
-
-      // 存分析报告到 DB
-      const report = await createBugAnalysisReport({
-        issueId: issue?.iid ?? 0,
-        issueUrl: issue?.url ?? '',
-        productLineId,
-        agentSessionId: context.taskId,
-        level: analysisOutput.level,
-        classification: analysisOutput.classification,
-        confidence: analysisOutput.confidence,
-        confidenceScore: analysisOutput.confidence_score,
-        rootCauseSummary: analysisOutput.root_cause.summary,
-        solutionsJson: analysisOutput.solutions,
-        affectedModules: analysisOutput.affected_modules,
-        analysisSteps: analysisOutput.analysis_steps,
-        metadata: analysisOutput as any,
-      })
-
-      await updateReportStatus(report.id, 'published')
-      await createStat({ reportId: report.id, durationMs, cacheHit: false, tokenCount: null }).catch(() => {})
-
-      // 触发后续修复流程
-      await handleAnalysisComplete(report.id, analysisOutput.level, issue?.iid ?? 0)
-
-      // 返回带 Issue URL 的报告
-      const issueInfo = issue ? `\n\n---\nGitLab Issue: ${issue.url}` : ''
-      return { success: true, output: `${reportText}${issueInfo}` }
-    }
-
-    // 非 Bug（config_issue / usage_issue）直接返回
-    console.log(`[AnalysisAgent] 非 Bug 类型 (${analysisOutput.classification})，不创建 Issue`)
-    return { success: true, output: reportText || maskedOutput }
+  } catch (err) {
+    release(mainWorktree)
+    const msg = err instanceof Error ? err.message : String(err)
+    return { success: false, error: `阶段A 筛选失败: ${msg}` }
   } finally {
-    release(worktree)
+    // 主仓库 worktree 筛选结束即可释放（阶段 B 按 project 独立 clone）
+    release(mainWorktree)
+  }
+
+  // ========== 阶段 B：并行对每个涉及 project 做详细分析 ==========
+  const projectByPath = new Map(projects.map(p => [p.gitlabPath, p]))
+
+  const detailRuns = await Promise.all(
+    filterResult.involvedProjects.map(async (p) => {
+      const pj = projectByPath.get(p.projectPath)
+      if (!pj) throw new Error(`筛选出的 project 未在候选列表中: ${p.projectPath}`)
+      // 每个 project 独立 clone（worktree manager 新 key 里带 projectPath）
+      const projectRepoUrl = `${gitlabUrlBase.replace(/\/$/, '')}/${p.projectPath}.git`
+      const key = makeWorktreeKey({
+        productLineId,
+        projectPath: p.projectPath,
+        branch: p.sourceBranch,
+      })
+      const wt = await acquire({
+        userId: context.initiatorId || 'system',
+        product: `pl-${productLineId}`,
+        version: p.sourceBranch,
+        sessionId: `${context.taskId}-detail-${key}`,
+        repoUrl: projectRepoUrl,
+        projectPath: p.projectPath,
+      })
+      try {
+        const detail = await runDetailStage({
+          userMessage,
+          projectPath: p.projectPath,
+          worktreePath: wt.path,
+          sourceBranch: p.sourceBranch,
+          systemPrompt: capabilityRow.systemPrompt!,
+          signal: opts.signal,
+        })
+        return { projectPath: p.projectPath, detail }
+      } finally {
+        release(wt)
+      }
+    }),
+  )
+
+  const merged = mergeDetailResults(detailRuns)
+  const durationMs = Date.now() - startMs
+
+  // ========== 创建 Issue（或复用）========== 仅在 classification=bug 时
+  let issueIid = 0
+  let issueUrl = ''
+  let isReused = false
+
+  if (merged.classification === 'bug') {
+    if (reuseIssueId) {
+      // 复用模式：向原 Issue 追加 comment
+      const body = `${buildReuseMarker()}\n\n${merged.markdownFull}`
+      const note = await gitlabPostIssueNote({
+        projectPath: filterResult.primaryProjectPath,
+        issueIid: reuseIssueId,
+        body,
+      })
+      issueIid = reuseIssueId
+      issueUrl = note.issueUrl
+      isReused = true
+    } else {
+      const created = await gitlabCreateIssue({
+        projectPath: filterResult.primaryProjectPath,
+        title: buildIssueTitle(merged.rootCauseSummary),
+        description: merged.markdownFull,
+        labels: `ai-analyzed,level-${merged.level},needs-analysis`,
+      })
+      issueIid = created.iid
+      issueUrl = created.url
+    }
+  }
+
+  // ========== 写 bug_analysis_reports ==========
+  const report = await createBugAnalysisReport({
+    issueId: issueIid,
+    issueUrl: issueUrl,
+    productLineId,
+    agentSessionId: context.taskId,
+    level: merged.level,
+    classification: merged.classification,
+    confidence: merged.confidence,
+    confidenceScore: merged.confidenceScore,
+    rootCauseSummary: merged.rootCauseSummary,
+    solutionsJson: merged.solutionsJson,
+    affectedModules: merged.affectedModules,
+    analysisSteps: merged.analysisSteps,
+    metadata: merged.metadata,
+    primaryProjectPath: filterResult.primaryProjectPath,
+  })
+
+  // ========== 写 bug_fix_events: analysis（Bug 级，projectPath=NULL） ==========
+  await createEvent({
+    reportId: report.id,
+    projectPath: null,
+    code: 'analysis',
+    durationMs,
+    data: {
+      level: merged.level,
+      classification: merged.classification,
+      confidence: merged.confidence,
+      confidenceScore: merged.confidenceScore,
+      rootCauseSummary: merged.rootCauseSummary,
+      productLineId,
+      projects: filterResult.involvedProjects.map(p => ({
+        projectPath: p.projectPath,
+        sourceBranch: p.sourceBranch,
+        isPrimary: p.isPrimary,
+        affectedModules: merged.affectedModulesByProject[p.projectPath] ?? [],
+      })),
+    },
+  })
+
+  // ========== status + 后续事件（仅 bug） ==========
+  if (merged.classification !== 'bug') {
+    await updateReportStatus(report.id, 'completed')
+    await createStat({ reportId: report.id, durationMs, cacheHit: false, tokenCount: null }).catch(() => {})
+    return {
+      success: true,
+      output: `非 bug 类型 (${merged.classification})，分析完成。`,
+      data: { reportId: report.id, classification: merged.classification, level: merged.level },
+    }
+  }
+
+  await updateReportStatus(report.id, 'published')
+
+  for (const p of filterResult.involvedProjects) {
+    await createEvent({
+      reportId: report.id,
+      projectPath: p.projectPath,
+      code: 'scope_identified',
+      data: {
+        sourceBranch: p.sourceBranch,
+        affectedModules: merged.affectedModulesByProject[p.projectPath] ?? [],
+        isPrimary: p.isPrimary,
+      },
+    })
+  }
+
+  await createEvent({
+    reportId: report.id,
+    projectPath: filterResult.primaryProjectPath,
+    code: 'create_issue',
+    data: { issueIid, issueUrl, isPrimary: true, isReused },
+  })
+
+  await createStat({ reportId: report.id, durationMs, cacheHit: false, tokenCount: null }).catch(() => {})
+
+  return {
+    success: true,
+    output: `Bug 分析完成: ${merged.classification} / ${merged.level}，涉及 ${filterResult.involvedProjects.length} 个 project`,
+    data: { reportId: report.id, classification: merged.classification, level: merged.level },
   }
 }
+
+export { handleAnalyzeBug }
 
 export function registerAnalysisBugHandler(): void {
   registerCapabilityHandler('analyze_bug', handleAnalyzeBug)
   console.log('[AnalysisAgent] analyze_bug handler registered')
 }
-
-export { parseAnalysisOutput }
