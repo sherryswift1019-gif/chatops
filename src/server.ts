@@ -46,6 +46,7 @@ import './agent/tools/review-mr-diff.js'
 import { registerAnalysisBugHandler } from './agent/analysis/analyzer.js'
 import { registerFixHandlers } from './agent/fix/fix-runner.js'
 import { registerReviewHandler } from './agent/review/reviewer.js'
+import { registerApproveL3Handler } from './agent/approval/approve-l3-handler.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
 import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
 
@@ -158,6 +159,7 @@ async function main(): Promise<void> {
   registerAnalysisBugHandler()
   registerFixHandlers()
   registerReviewHandler()
+  registerApproveL3Handler()
 
   // 启动 worktree 清理调度器
   startCleanupScheduler()
