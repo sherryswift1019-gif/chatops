@@ -167,5 +167,5 @@ SELECT
   '{}'::jsonb AS trigger_params,
   '{}'::jsonb AS variables
 FROM product_lines
-WHERE name = 'PAM'
+WHERE name = 'pam'
   AND NOT EXISTS (SELECT 1 FROM test_pipelines WHERE name = 'L4-复杂问题');
