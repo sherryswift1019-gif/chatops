@@ -1,32 +1,40 @@
 import { useEffect, useState, useRef } from 'react'
-import { Card, Tabs, Form, Input, Button, Space, Upload, message, Spin } from 'antd'
-import { DownloadOutlined, UploadOutlined } from '@ant-design/icons'
+import { Card, Tabs, Form, Input, Button, Space, Select, Upload, message, Spin } from 'antd'
+import { DownloadOutlined, UploadOutlined, EditOutlined, CloseOutlined } from '@ant-design/icons'
 import { getSystemConfig, updateSystemConfig, exportAllData, importAllData } from '../api/system-config'
 import type { SystemConfigEntry } from '../types'
 
-const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; label: string; secret?: boolean }[] }> = {
+type FieldType = 'text' | 'secret' | 'boolean'
+
+interface FieldSchema {
+  name: string
+  label: string
+  type?: FieldType
+}
+
+const CONFIG_SCHEMA: Record<string, { label: string; fields: FieldSchema[] }> = {
   dingtalk: {
     label: '钉钉配置',
     fields: [
       { name: 'clientId', label: 'Client ID' },
-      { name: 'clientSecret', label: 'Client Secret', secret: true },
+      { name: 'clientSecret', label: 'Client Secret', type: 'secret' },
     ],
   },
   gitlab: {
     label: 'GitLab 配置',
     fields: [
       { name: 'url', label: 'GitLab URL' },
-      { name: 'token', label: 'Private Token', secret: true },
-      { name: 'skipTlsVerify', label: '跳过证书验证 (自签名证书设为 true)' },
+      { name: 'token', label: 'Private Token', type: 'secret' },
+      { name: 'skipTlsVerify', label: '跳过证书验证（自签名证书）', type: 'boolean' },
     ],
   },
   harbor: {
     label: 'Harbor 配置',
     fields: [
       { name: 'url', label: 'Harbor URL' },
-      { name: 'username', label: '用户名' },
-      { name: 'password', label: '密码', secret: true },
-      { name: 'skipTlsVerify', label: '跳过证书验证 (自签名证书设为 true)' },
+      { name: 'registryUser', label: '用户名' },
+      { name: 'registryPassword', label: '密码', type: 'secret' },
+      { name: 'skipTlsVerify', label: '跳过证书验证（自签名证书）', type: 'boolean' },
       { name: 'caCert', label: 'CA 证书 (PEM 格式，可选)' },
     ],
   },
@@ -34,7 +42,7 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; lab
     label: 'Kubernetes 配置',
     fields: [
       { name: 'apiServer', label: 'API Server 地址' },
-      { name: 'token', label: 'Bearer Token', secret: true },
+      { name: 'token', label: 'Bearer Token', type: 'secret' },
       { name: 'caCert', label: 'CA 证书 (Base64)' },
       { name: 'kubeconfig', label: 'Kubeconfig (Base64)' },
     ],
@@ -42,7 +50,7 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: { name: string; lab
   claude: {
     label: 'Claude 配置',
     fields: [
-      { name: 'CLAUDE_CODE_OAUTH_TOKEN', label: 'CLAUDE_CODE_OAUTH_TOKEN', secret: true },
+      { name: 'CLAUDE_CODE_OAUTH_TOKEN', label: 'CLAUDE_CODE_OAUTH_TOKEN', type: 'secret' },
       { name: 'ANTHROPIC_BASE_URL', label: 'ANTHROPIC_BASE_URL（可选）' },
       { name: 'model', label: '模型' },
     ],
@@ -166,27 +174,115 @@ export default function SystemConfigPage() {
 
 function ConfigForm({ configKey: _configKey, schema, values, saving, onSave }: {
   configKey: string
-  schema: { fields: { name: string; label: string; secret?: boolean }[] }
+  schema: { fields: FieldSchema[] }
   values: Record<string, unknown>
   saving: boolean
   onSave: (values: Record<string, string>) => void
 }) {
   const [form] = Form.useForm()
 
+  // 非 secret 字段的当前值预填到表单（secret 字段被后端 mask 成 ****xxxx，不能作为 initialValue）
+  useEffect(() => {
+    const initial: Record<string, string> = {}
+    for (const f of schema.fields) {
+      const v = values[f.name]
+      if (v == null || v === '') continue
+      if (f.type === 'secret') continue
+      initial[f.name] = String(v)
+    }
+    form.resetFields()
+    form.setFieldsValue(initial)
+  }, [values, schema, form])
+
   return (
-    <Form form={form} layout="vertical" style={{ maxWidth: 500 }} onFinish={onSave}>
-      {schema.fields.map((field) => (
-        <Form.Item key={field.name} name={field.name} label={field.label}>
-          {field.secret ? (
-            <Input.Password placeholder={values[field.name] ? String(values[field.name]) : '未设置'} />
-          ) : (
-            <Input placeholder={values[field.name] ? String(values[field.name]) : '未设置'} />
-          )}
-        </Form.Item>
-      ))}
+    <Form form={form} layout="vertical" style={{ maxWidth: 500 }} onFinish={onSave} autoComplete="off">
+      {schema.fields.map((field) => {
+        const type: FieldType = field.type ?? 'text'
+        return (
+          <Form.Item key={field.name} name={field.name} label={field.label}>
+            {type === 'secret' ? (
+              <SecretInput maskedValue={values[field.name] ? String(values[field.name]) : ''} />
+            ) : type === 'boolean' ? (
+              <Select
+                placeholder="请选择"
+                allowClear
+                options={[
+                  { value: 'true', label: 'true（启用）' },
+                  { value: 'false', label: 'false（禁用）' },
+                ]}
+              />
+            ) : (
+              <Input placeholder="未设置" autoComplete="off" />
+            )}
+          </Form.Item>
+        )
+      })}
       <Form.Item>
         <Button type="primary" htmlType="submit" loading={saving}>保存</Button>
       </Form.Item>
     </Form>
+  )
+}
+
+/**
+ * 受控 secret 输入组件。查看态仅渲染脱敏文本 + 修改按钮；
+ * 点击修改后才渲染真正的 Input.Password。
+ * 目的：让浏览器 DOM 在"查看"时不存在 type=password 输入框，
+ * 彻底规避 Chrome/Safari 的登录凭据 autofill。
+ */
+function SecretInput({ value, onChange, maskedValue }: {
+  value?: string
+  onChange?: (v: string) => void
+  maskedValue?: string
+}) {
+  const [editing, setEditing] = useState(false)
+
+  // 保存成功后父组件会刷新 maskedValue：自动退回查看态
+  useEffect(() => {
+    setEditing(false)
+  }, [maskedValue])
+
+  if (!editing) {
+    return (
+      <Space size={8}>
+        <span style={{
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 13,
+          color: maskedValue ? '#5C6578' : '#8B93A8',
+          fontStyle: maskedValue ? 'normal' : 'italic',
+        }}>
+          {maskedValue || '未设置'}
+        </span>
+        <Button
+          type="link"
+          size="small"
+          icon={<EditOutlined />}
+          onClick={() => setEditing(true)}
+          style={{ paddingInline: 0 }}
+        >
+          {maskedValue ? '修改' : '设置'}
+        </Button>
+      </Space>
+    )
+  }
+
+  return (
+    <Space.Compact style={{ width: '100%' }}>
+      <Input.Password
+        value={value ?? ''}
+        onChange={(e) => onChange?.(e.target.value)}
+        autoFocus
+        autoComplete="new-password"
+        placeholder={maskedValue ? `当前 ${maskedValue}，输入新值替换` : '输入新值'}
+      />
+      <Button
+        icon={<CloseOutlined />}
+        onClick={() => {
+          onChange?.('')
+          setEditing(false)
+        }}
+        title="取消修改"
+      />
+    </Space.Compact>
   )
 }

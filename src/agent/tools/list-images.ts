@@ -19,8 +19,8 @@ async function getHarborConfig(): Promise<{ url: string; username: string; passw
   const v = cfg.value as Record<string, string>
   return {
     url: v.url ?? '',
-    username: v.username ?? '',
-    password: v.password ?? '',
+    username: v.registryUser ?? v.username ?? '',
+    password: v.registryPassword ?? v.password ?? '',
     skipTlsVerify: v.skipTlsVerify === 'true' || v.skipTlsVerify === true as unknown as string,
     caCert: v.caCert,
   }
