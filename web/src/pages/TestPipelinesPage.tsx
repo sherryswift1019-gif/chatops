@@ -26,6 +26,7 @@ export default function TestPipelinesPage() {
   const [triggerPipeline, setTriggerPipeline] = useState<TestPipeline | null>(null)
   const [triggerServers, setTriggerServers] = useState<TestServer[]>([])
   const [triggerServerMap, setTriggerServerMap] = useState<Record<string, string[]>>({})
+  const [triggerRuntimeVars, setTriggerRuntimeVars] = useState<Record<string, string>>({})
   const [form] = Form.useForm()
 
   useEffect(() => { load(); loadProductLines(); loadDingtalkUsers(); loadVariableCatalog() }, [])
@@ -144,6 +145,7 @@ export default function TestPipelinesPage() {
   async function openTrigger(r: TestPipeline) {
     setTriggerPipeline(r)
     setTriggerServerMap({})
+    setTriggerRuntimeVars({})
     try {
       const servers = await getTestServers(r.productLineId)
       setTriggerServers(servers)
@@ -159,11 +161,25 @@ export default function TestPipelinesPage() {
         message.warning(`请为角色「${role}」选择服务器`); return
       }
     }
+    for (const input of triggerPipeline.artifactInputs ?? []) {
+      const hasValue = !!triggerRuntimeVars[input.outputVar]
+      const hasFallback = !!input.default || !!input.defaultStrategy
+      if (!hasValue && !hasFallback) {
+        message.warning(`请为「${input.name}」选择或填写值`); return
+      }
+    }
     try {
-      const res = await triggerTestRun({ pipelineId: triggerPipeline.id, servers: triggerServerMap, triggeredBy: 'manual' })
+      const res = await triggerTestRun({
+        pipelineId: triggerPipeline.id,
+        servers: triggerServerMap,
+        triggeredBy: 'manual',
+        runtimeVars: triggerRuntimeVars,
+      })
       message.success(`流水线已触发，执行 ID: ${res.runId}`)
       setTriggerModalOpen(false)
-    } catch { message.error('触发失败') }
+    } catch (e: any) {
+      message.error(e?.response?.data?.error ?? '触发失败')
+    }
   }
 
   const columns = [
@@ -343,7 +359,20 @@ export default function TestPipelinesPage() {
           </Form.List>
         </Form>
       </Modal>
-      <Modal title={`触发执行: ${triggerPipeline?.name ?? ''}`} open={triggerModalOpen} onOk={handleTrigger} onCancel={() => setTriggerModalOpen(false)} destroyOnClose width={500}>
+      <Modal title={`触发执行: ${triggerPipeline?.name ?? ''}`} open={triggerModalOpen} onOk={handleTrigger} onCancel={() => setTriggerModalOpen(false)} destroyOnClose width={600}>
+        {triggerPipeline && (triggerPipeline.artifactInputs ?? []).length > 0 && (
+          <div style={{ marginBottom: 16, padding: 12, background: '#fafafa', borderRadius: 4 }}>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>制品输入</div>
+            {(triggerPipeline.artifactInputs ?? []).map(input => (
+              <RuntimeVarPicker
+                key={input.outputVar}
+                input={input}
+                value={triggerRuntimeVars[input.outputVar] ?? ''}
+                onChange={v => setTriggerRuntimeVars(prev => ({ ...prev, [input.outputVar]: v }))}
+              />
+            ))}
+          </div>
+        )}
         {triggerPipeline && Object.entries(triggerPipeline.serverRoles ?? {}).map(([role, cfg]) => (
           <div key={role} style={{ marginBottom: 12 }}>
             <div style={{ marginBottom: 4, fontWeight: 500 }}>{role} <span style={{ fontWeight: 'normal', color: '#999' }}>（需要 {(cfg as any).count} 台）</span></div>
@@ -443,4 +472,59 @@ function ArtifactPreviewButton({ form, fieldName }: { form: any; fieldName: numb
     }
   }
   return <Button size="small" loading={loading} onClick={handleClick}>预览匹配</Button>
+}
+
+function RuntimeVarPicker({ input, value, onChange }: {
+  input: ArtifactInput
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [loading, setLoading] = useState(false)
+  async function openPicker() {
+    setLoading(true)
+    try {
+      const files = await listArtifacts(input.listUrl, input.glob)
+      if (files.length === 0) { message.info('没有匹配的文件'); return }
+      Modal.info({
+        title: `选择：${input.name}`,
+        width: 700,
+        content: (
+          <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+            {files.slice(0, 20).map(f => {
+              const picked = input.valueFrom === 'name' ? f.name : input.valueFrom === 'path' ? f.path : f.downloadUrl
+              return (
+                <div key={f.path} style={{ display: 'flex', justifyContent: 'space-between', padding: 6, borderBottom: '1px solid #eee' }}>
+                  <div>
+                    <div style={{ fontFamily: 'monospace' }}>{f.name}</div>
+                    <div style={{ fontSize: 11, color: '#999' }}>{new Date(f.mtime).toISOString().slice(0, 16).replace('T', ' ')}</div>
+                  </div>
+                  <Button size="small" onClick={() => { onChange(picked); Modal.destroyAll() }}>选</Button>
+                </div>
+              )
+            })}
+          </div>
+        ),
+      })
+    } catch (e: any) {
+      message.error(e?.response?.data?.error ?? '仓库不可达')
+    } finally {
+      setLoading(false)
+    }
+  }
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4, fontSize: 12 }}>
+        <strong>{input.name}</strong> <span style={{ color: '#999' }}>→ vars.{input.outputVar}</span>
+      </div>
+      <Space.Compact style={{ width: '100%' }}>
+        <Input
+          placeholder={input.default ? `默认: ${input.default}` : '从仓库选或直接粘贴值'}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          style={{ flex: 1 }}
+        />
+        <Button loading={loading} onClick={openPicker}>从仓库选</Button>
+      </Space.Compact>
+    </div>
+  )
 }
