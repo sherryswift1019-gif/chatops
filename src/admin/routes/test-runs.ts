@@ -50,14 +50,18 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     pipelineId: number
     servers: Record<string, string[]>
     triggeredBy?: string
+    runtimeVars?: Record<string, string>
   } }>('/test-runs', async (req, reply) => {
-    const { pipelineId, servers, triggeredBy } = req.body
+    const { pipelineId, servers, triggeredBy, runtimeVars } = req.body
     if (!pipelineId || !servers) {
       return reply.status(400).send({ error: 'pipelineId and servers required' })
     }
-    // Run pipeline in background — don't await
-    const runId = await runPipeline(pipelineId, servers, 'api', triggeredBy ?? 'api')
-    return reply.status(201).send({ runId, message: 'Pipeline started' })
+    try {
+      const runId = await runPipeline(pipelineId, servers, 'api', triggeredBy ?? 'api', runtimeVars ?? {})
+      return reply.status(201).send({ runId, message: 'Pipeline started' })
+    } catch (e) {
+      return reply.status(400).send({ error: (e as Error).message })
+    }
   })
 
   // View HTML report in browser
