@@ -205,8 +205,10 @@ describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
     const mrCalls = (gitlabCreateMr as any).mock.calls as any[][]
     const primaryCall = mrCalls.find(c => c[0].projectPath === 'PAM/pas-api')
     const secondaryCall = mrCalls.find(c => c[0].projectPath === 'PAM/pas-web')
-    expect(primaryCall[0].description).toContain('Closes #99')
-    expect(secondaryCall[0].description).toContain('Related to PAM/pas-api#99')
+    expect(primaryCall).toBeDefined()
+    expect(secondaryCall).toBeDefined()
+    expect(primaryCall![0].description).toContain('Closes #99')
+    expect(secondaryCall![0].description).toContain('Related to PAM/pas-api#99')
 
     // ── notify_bug 只发给 2 个 owner（触发人 DM 已取消） ──
     const events = await findByReport(reportId)
