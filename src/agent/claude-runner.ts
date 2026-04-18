@@ -610,7 +610,7 @@ ${capList}
       envVars: buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
     })) {
       if ('sessionId' in msg && msg.sessionId && sessionKey) {
-        this.saveSessionId(sessionKey, msg.sessionId as string)
+        this.saveSession(sessionKey, msg.sessionId as string, tools)
       }
       if (msg.type === 'assistant' && 'content' in msg) {
         textBuffer += String(msg.content)

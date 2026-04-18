@@ -52,7 +52,19 @@ export interface TestPipeline {
   id: number; productLineId: number; name: string; description: string
   stages: StageDefinition[]; serverRoles: Record<string, { count: number }>
   variables?: Record<string, string>
+  artifactInputs?: ArtifactInput[]
   schedule: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
+}
+
+export interface ArtifactInput {
+  name: string
+  listUrl: string
+  glob: string
+  outputVar: string
+  valueFrom: 'url' | 'name' | 'path'
+  default?: string
+  defaultStrategy?: 'latest-by-mtime' | 'first-match'
+  authHeaders?: Record<string, string>
 }
 
 export interface StageDefinition {

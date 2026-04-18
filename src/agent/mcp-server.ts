@@ -30,6 +30,8 @@ import './tools/approval.js'
 import './tools/role.js'
 import './tools/autotest.js'
 import './tools/list-projects.js'
+import './tools/list-artifacts.js'
+import './tools/get-pipeline-artifact-inputs.js'
 
 // 研发 AI 助手工具
 import './tools/read-code.js'

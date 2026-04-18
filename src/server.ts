@@ -29,6 +29,8 @@ import './agent/tools/approval.js'
 import './agent/tools/role.js'
 import './agent/tools/autotest.js'
 import './agent/tools/list-projects.js'
+import './agent/tools/list-artifacts.js'
+import './agent/tools/get-pipeline-artifact-inputs.js'
 
 // 研发 AI 助手工具
 import './agent/tools/read-code.js'

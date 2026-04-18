@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { listTestPipelines, getTestPipelineById, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../../db/repositories/test-pipelines.js'
 import { getPool } from '../../db/client.js'
+import { validateArtifactInputsForTrigger, mergePipelineForValidation } from './artifact-validation.js'
+import type { ArtifactInput } from '../../pipeline/types.js'
 
 // Auto-register/update a pipeline as a capability + enable for its product line
 async function syncPipelineCapability(pipelineId: number, name: string, productLineId: number): Promise<void> {
@@ -44,10 +46,17 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
     productLineId: number; name: string; description?: string
     stages: unknown[]; serverRoles: Record<string, { count: number }>
     schedule?: string; enabled?: boolean
+    triggerParams?: Record<string, unknown>
+    artifactInputs?: ArtifactInput[]
   } }>('/test-pipelines', async (req, reply) => {
-    const { productLineId, name, stages, serverRoles } = req.body
+    const { productLineId, name, stages, serverRoles, artifactInputs, schedule, triggerParams } = req.body
     if (!productLineId || !name || !stages || !serverRoles) {
       return reply.status(400).send({ error: 'productLineId, name, stages, serverRoles required' })
+    }
+    try {
+      validateArtifactInputsForTrigger(artifactInputs ?? [], { schedule, triggerParams })
+    } catch (e) {
+      return reply.status(400).send({ error: (e as Error).message })
     }
     const item = await createTestPipeline(req.body)
     await syncPipelineCapability(item.id, item.name, item.productLineId)
@@ -55,7 +64,23 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
   })
 
   app.put<{ Params: { id: string }; Body: Record<string, unknown> }>('/test-pipelines/:id', async (req, reply) => {
-    const item = await updateTestPipeline(Number(req.params.id), req.body as any)
+    const id = Number(req.params.id)
+    const existing = await getTestPipelineById(id)
+    if (!existing) return reply.status(404).send({ error: 'not found' })
+
+    const body = req.body as {
+      artifactInputs?: ArtifactInput[]
+      schedule?: string
+      triggerParams?: Record<string, unknown>
+    }
+    const merged = mergePipelineForValidation(body, existing)
+    try {
+      validateArtifactInputsForTrigger(merged.artifactInputs, merged)
+    } catch (e) {
+      return reply.status(400).send({ error: (e as Error).message })
+    }
+
+    const item = await updateTestPipeline(id, req.body as any)
     if (!item) return reply.status(404).send({ error: 'not found' })
     await syncPipelineCapability(item.id, item.name, item.productLineId)
     return reply.send(item)

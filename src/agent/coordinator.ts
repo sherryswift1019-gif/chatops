@@ -92,6 +92,7 @@ export async function handleAnalysisComplete(reportId: number, level: string, is
       {},  // 无需服务器（capability-only pipeline）
       'api',
       'agent-coordinator',
+      {},  // runtimeVarsInput
       (result) => {
         console.log(`[AgentCoordinator] pipeline "${pipelineName}" completed: ${result.status}`, {
           issueId, reportId, runId: result.runId,

@@ -16,6 +16,7 @@ import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
 import { registerTestRunRoutes } from './routes/test-runs.js'
 import { registerStageOperationRoutes } from './routes/stage-operations.js'
 import { registerPipelineVariableRoutes } from './routes/pipeline-variables.js'
+import { registerArtifactRoutes } from './routes/artifacts.js'
 // 研发 AI 助手 Admin 路由
 import { registerModuleOwnerRoutes } from './routes/module-owners.js'
 import { registerProductKnowledgeRoutes } from './routes/product-knowledge.js'
@@ -49,6 +50,7 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerTestRunRoutes(app)
   await registerStageOperationRoutes(app)
   await registerPipelineVariableRoutes(app)
+  await registerArtifactRoutes(app)
   await registerAiRoutes(app)
   // 研发 AI 助手
   await registerModuleOwnerRoutes(app)
