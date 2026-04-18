@@ -10,6 +10,7 @@ export interface TestRun {
   currentStage: number
   stageResults: StageResult[]
   reportPath: string
+  summary: string
   startedAt: Date | null
   finishedAt: Date | null
   errorMessage: string
@@ -38,6 +39,7 @@ function mapRow(r: Record<string, unknown>): TestRun {
     currentStage: r.current_stage as number,
     stageResults: (r.stage_results ?? []) as StageResult[],
     reportPath: (r.report_path ?? '') as string,
+    summary: (r.summary ?? '') as string,
     startedAt: r.started_at as Date | null,
     finishedAt: r.finished_at as Date | null,
     errorMessage: (r.error_message ?? '') as string,
@@ -82,13 +84,13 @@ export async function getTestRunById(id: number): Promise<TestRun | null> {
 
 export async function createTestRun(data: {
   pipelineId: number; triggerType: TestRun['triggerType']; triggeredBy: string
-  servers: Record<string, string[]>
+  servers: Record<string, string[]>; summary?: string
 }): Promise<TestRun> {
   const pool = getPool()
   const { rows } = await pool.query(
-    `INSERT INTO test_runs (pipeline_id, trigger_type, triggered_by, servers, status, started_at)
-     VALUES ($1,$2,$3,$4,'running',NOW()) RETURNING *`,
-    [data.pipelineId, data.triggerType, data.triggeredBy, JSON.stringify(data.servers)]
+    `INSERT INTO test_runs (pipeline_id, trigger_type, triggered_by, servers, status, summary, started_at)
+     VALUES ($1,$2,$3,$4,'running',$5,NOW()) RETURNING *`,
+    [data.pipelineId, data.triggerType, data.triggeredBy, JSON.stringify(data.servers), data.summary || '']
   )
   return mapRow(rows[0])
 }

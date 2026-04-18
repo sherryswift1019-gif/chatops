@@ -19,14 +19,36 @@ import type { StageResult } from '../db/repositories/test-runs.js'
 
 const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
-async function executeApprovalStage(stage: StageDefinition): Promise<StageExecutionResult> {
+async function executeApprovalStage(stage: StageDefinition, triggerParams?: Record<string, unknown>): Promise<StageExecutionResult> {
   const approverIds = stage.approverIds ?? []
   if (approverIds.length === 0) return { status: 'failed', output: '未配置审批人', error: 'no approvers' }
-  const description = stage.approvalDescription ?? stage.name
+
+  // 构建审批描述，包含 Issue 信息
+  const issueId = triggerParams?.issueId
+  const gitlabUrl = process.env.GITLAB_URL ?? ''
+  let description = stage.approvalDescription ?? stage.name
+  if (issueId) {
+    // 查询分析报告获取详情
+    try {
+      const { getBugAnalysisReportByIssueId } = await import('../db/repositories/bug-analysis-reports.js')
+      const { getByProductLineId } = await import('../db/repositories/product-knowledge-repos.js')
+      const report = await getBugAnalysisReportByIssueId(Number(issueId))
+      if (report) {
+        const knowledgeRepo = await getByProductLineId(report.productLineId)
+        const projectPath = knowledgeRepo ? knowledgeRepo.codeRepoUrl.replace(/\.git$/, '').replace(/https?:\/\/[^/]+\//, '') : ''
+        const issueUrl = `${gitlabUrl}/${projectPath}/-/issues/${issueId}`
+        const solutionsSummary = report.solutionsJson
+          ?.map((s: any) => `- ${s.recommended ? '⭐' : '•'} ${s.summary}（风险:${s.risk}）`)
+          .join('\n') ?? ''
+        description = `${description}\n\nIssue: ${issueUrl}\n等级: ${report.level}\n根因: ${report.rootCauseSummary}\n\n修复方案:\n${solutionsSummary}`
+      }
+    } catch {}
+  }
+
   const timeoutMs = (stage.timeoutSeconds ?? 3600) * 1000
   try {
     const mgr = PipelineApprovalManager.getInstance()
-    const decision = await mgr.requestApproval(approverIds, description, timeoutMs)
+    const decision = await mgr.requestApproval(approverIds, description, timeoutMs, issueId ? String(issueId) : undefined)
     if (decision === 'approved') return { status: 'success', output: '审批通过' }
     if (decision === 'timeout') return { status: 'failed', output: '审批超时', error: 'timeout' }
     return { status: 'failed', output: '审批被拒绝', error: 'rejected' }
@@ -65,6 +87,8 @@ async function executeCapabilityStage(stage: StageDefinition, ctx: StageContext,
   const resolvedParams = resolveCapabilityParams(stage.capabilityParams, triggerParams)
   console.log(`[Pipeline] capability stage: ${capabilityKey} (timeout ${timeoutMs}ms)`)
 
+  const abortController = new AbortController()
+
   try {
     const capabilityPromise = triggerCapability({
       capabilityKey,
@@ -76,11 +100,17 @@ async function executeCapabilityStage(stage: StageDefinition, ctx: StageContext,
         initiatorRole: 'admin',
       },
       extraParams: resolvedParams,
+      signal: abortController.signal,
     })
 
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('capability 执行超时')), timeoutMs)
-    )
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timer = setTimeout(() => {
+        abortController.abort()
+        reject(new Error('capability 执行超时'))
+      }, timeoutMs)
+      // 如果 capability 先完成，清除 timer
+      capabilityPromise.finally(() => clearTimeout(timer))
+    })
 
     const result = await Promise.race([capabilityPromise, timeoutPromise])
 
@@ -90,6 +120,7 @@ async function executeCapabilityStage(stage: StageDefinition, ctx: StageContext,
       error: result.error,
     }
   } catch (err) {
+    abortController.abort()
     return { status: 'failed', output: `capability 执行失败: ${String(err)}`, error: String(err) }
   }
 }
@@ -184,7 +215,8 @@ export async function runPipeline(
   triggerType: 'manual' | 'api' | 'scheduled',
   triggeredBy: string,
   onComplete?: (result: PipelineRunResult) => void,
-  triggerParams?: Record<string, unknown>
+  triggerParams?: Record<string, unknown>,
+  summary?: string
 ): Promise<number> {
   const pipelineStartTime = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
@@ -193,7 +225,7 @@ export async function runPipeline(
   const productLine = await getProductLineById(pipeline.productLineId)
 
   // Create run record
-  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment })
+  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment, summary })
   const logDir = join(DATA_DIR, String(run.id))
   await mkdir(logDir, { recursive: true })
 
@@ -231,7 +263,7 @@ export async function runPipeline(
         stageResults[i] = { ...stageResults[i], status: 'running', startedAt: new Date().toISOString() }
         await updateTestRunStage(run.id, i, stageResults)
 
-        const result = await executeApprovalStage(stage)
+        const result = await executeApprovalStage(stage, triggerParams)
         stageResults[i] = {
           ...stageResults[i], status: result.status, finishedAt: new Date().toISOString(),
           durationMs: Date.now() - startTime, output: result.output, error: result.error,

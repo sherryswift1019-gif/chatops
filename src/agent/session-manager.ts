@@ -45,15 +45,8 @@ export class SessionManager {
       return
     }
 
-    // Immediate ack
-    try {
-      await adapter.sendMessage(
-        { type: 'group', id: msg.groupId },
-        { text: `🤖 收到，处理中...` }
-      )
-    } catch (err) {
-      console.error('[SessionManager] Failed to send ack:', err)
-    }
+    // ACK 由 claude-runner.ts 的 handler 路径发送（带 @提问人）
+    console.log(`[SessionManager] Ack sent`)
 
     // queue key = userId（同一用户跨群共享队列，串行执行）
     const queueKey = msg.userId

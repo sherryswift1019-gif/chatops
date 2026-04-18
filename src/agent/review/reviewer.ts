@@ -1,35 +1,10 @@
 import { registerCapabilityHandler } from '../coordinator.js'
-import { getTool } from '../tools/index.js'
 import { mask } from '../masking/sensitive-info.js'
 import { updateMrLabels } from '../../adapters/gitlab/labels.js'
+import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
+import { runClaudeCli } from '../claude-cli.js'
+import axios from 'axios'
 import type { TriggerOptions, TriggerResult } from '../coordinator.js'
-import type { ClaudeRunner } from '../claude-runner.js'
-
-let runner: ClaudeRunner | null = null
-export function setReviewClaudeRunner(r: ClaudeRunner): void { runner = r }
-
-const REVIEW_SYSTEM_PROMPT = `你是一个独立的代码审查专家。你的职责是审查 Merge Request 的 diff，从"这个改动有没有问题"的视角检查。
-
-## 审查清单
-1. **方案一致性**：改动是否与分析报告中的推荐方案一致？
-2. **遗漏检查**：是否还有遗漏的修改点？
-3. **代码质量**：变量命名、代码结构、错误处理是否合理？
-4. **安全检查**：是否引入 SQL 注入、XSS、敏感信息泄露等风险？
-5. **副作用**：改动是否影响其他模块？
-
-## 输出格式
-对每个问题给出：
-- 文件名 + 行号
-- 问题描述
-- 风险等级（high / medium / low）
-- 建议
-
-## 最终结论
-- **ai-approved**：无高风险问题，可以合并
-- **ai-needs-attention**：存在需要人工关注的问题
-
-你必须使用 review_mr_diff 工具读取 MR diff。
-`
 
 async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResult> {
   const mrIid = opts.extraParams?.mrIid as number | undefined
@@ -41,16 +16,41 @@ async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResult> {
 
   console.log(`[ReviewAgent] reviewing MR !${mrIid} in ${projectPath}`)
 
-  if (!runner) return { success: false, error: 'ClaudeRunner 未初始化' }
+  const capabilityRow = await getCapabilityByKey('ai_review_mr')
+  if (!capabilityRow?.systemPrompt) {
+    return { success: false, error: 'ai_review_mr 未配置 systemPrompt，请在管理后台配置' }
+  }
 
-  const tools = [getTool('review_mr_diff')].filter(Boolean) as any[]
+  // 获取 MR diff
+  const gitlabUrl = process.env.GITLAB_URL
+  const gitlabToken = process.env.GITLAB_TOKEN
+  let diffText = ''
+  if (gitlabUrl && gitlabToken) {
+    try {
+      const resp = await axios.get(
+        `${gitlabUrl}/api/v4/projects/${encodeURIComponent(projectPath)}/merge_requests/${mrIid}/changes`,
+        { headers: { 'PRIVATE-TOKEN': gitlabToken }, timeout: 30_000 }
+      )
+      const changes = resp.data.changes ?? []
+      diffText = changes.map((c: any) => `--- ${c.old_path}\n+++ ${c.new_path}\n${c.diff}`).join('\n\n')
+    } catch (err) {
+      console.error(`[ReviewAgent] 获取 MR diff 失败:`, err instanceof Error ? err.message : String(err))
+    }
+  }
 
-  const rawOutput = await runner.executeCapabilityDirect({
-    prompt: `请审查 MR !${mrIid}（项目 ${projectPath}）。使用 review_mr_diff 工具读取 diff 后给出审查结论。`,
-    systemPrompt: REVIEW_SYSTEM_PROMPT,
-    context: opts.context,
-    tools,
-    sessionKey: `review-mr-${mrIid}`,
+  if (!diffText) {
+    return { success: false, error: '无法获取 MR diff' }
+  }
+
+  // 直接调 claude CLI 审查
+  const prompt = `${capabilityRow.systemPrompt}\n\nMR !${mrIid}（项目 ${projectPath}）的 diff：\n\n${diffText}`
+
+  const rawOutput = await runClaudeCli({
+    prompt,
+    allowedTools: 'Read,Glob,Grep',
+    timeoutMs: 5 * 60_000,
+    onEvent: (e) => console.log(`[ReviewAgent] ${e.type}: ${e.message}`),
+    signal: opts.signal,
   })
 
   const output = mask(rawOutput)
@@ -61,6 +61,8 @@ async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResult> {
   await updateMrLabels(projectPath, mrIid, { add: [label] }).catch(err =>
     console.error(`[ReviewAgent] MR !${mrIid} label 更新失败:`, err)
   )
+
+  // 通知由 coordinator.handleFixComplete 处理
 
   return {
     success: true,
@@ -73,5 +75,3 @@ export function registerReviewHandler(): void {
   registerCapabilityHandler('ai_review_mr', handleReviewMr)
   console.log('[ReviewAgent] ai_review_mr handler registered')
 }
-
-export { REVIEW_SYSTEM_PROMPT }

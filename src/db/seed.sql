@@ -77,7 +77,7 @@ WHERE key = 'search_knowledge' AND system_prompt IS NULL;
 
 -- L1 配置类 Bug 修复（不重试，一次搞定）
 INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-SELECT id, 'ai-fix-l1', 'L1 配置类 Bug 自动修复',
+SELECT id, 'L1-配置类', '不改代码，改配置/SQL/参数就能修。如初始化SQL缺失、错误码没加',
   '[{"name":"L1 修复","stageType":"capability","capabilityKey":"fix_bug_l1","timeoutSeconds":600,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
   '{}'::jsonb, '', true,
   '{"reportId":null,"issueId":null}'::jsonb,
@@ -87,8 +87,8 @@ ON CONFLICT DO NOTHING;
 
 -- L2 简单代码 Bug 修复（含重试，最多 3 次）
 INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-SELECT id, 'ai-fix-l2', 'L2 简单代码 Bug 自动修复（含重试）',
-  '[{"name":"L2 修复","stageType":"capability","capabilityKey":"fix_bug_l2","timeoutSeconds":1200,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
+SELECT id, 'L2-代码缺陷', '代码有明确bug，修复方式确定。如并发缺同步、空指针、类型转换错误',
+  '[{"name":"L2 修复","stageType":"capability","capabilityKey":"fix_bug_l2","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
   '{}'::jsonb, '', true,
   '{"reportId":null,"issueId":null}'::jsonb,
   '{}'::jsonb
@@ -97,8 +97,8 @@ ON CONFLICT DO NOTHING;
 
 -- L3 业务逻辑 Bug 修复（审批 + 修复）
 INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-SELECT id, 'ai-fix-l3', 'L3 业务逻辑 Bug 修复（需审批）',
-  '[{"name":"方案审批","stageType":"approval","timeoutSeconds":86400,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"approvalDescription":"L3 Bug 修复方案审批"},{"name":"L3 修复","stageType":"capability","capabilityKey":"fix_bug_l3","timeoutSeconds":1200,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
+SELECT id, 'L3-业务逻辑', '需要理解业务上下文才能判断对错。如流程判断错误、权限规则遗漏、状态机转换错误',
+  '[{"name":"方案审批","stageType":"approval","timeoutSeconds":86400,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"approvalDescription":"L3 Bug 修复方案审批"},{"name":"L3 修复","stageType":"capability","capabilityKey":"fix_bug_l3","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
   '{}'::jsonb, '', true,
   '{"reportId":null,"issueId":null}'::jsonb,
   '{}'::jsonb

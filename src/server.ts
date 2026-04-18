@@ -43,11 +43,11 @@ import './agent/tools/update-ai-summary.js'
 import './agent/tools/review-mr-diff.js'
 
 // 研发 AI 助手 Agent handler 注册
-import { registerAnalysisBugHandler, setClaudeRunner } from './agent/analysis/analyzer.js'
-import { registerFixHandlers, setFixClaudeRunner } from './agent/fix/fix-runner.js'
-import { registerReviewHandler, setReviewClaudeRunner } from './agent/review/reviewer.js'
+import { registerAnalysisBugHandler } from './agent/analysis/analyzer.js'
+import { registerFixHandlers } from './agent/fix/fix-runner.js'
+import { registerReviewHandler } from './agent/review/reviewer.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
-import { setApprovalGate } from './agent/coordinator.js'
+import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
 
 async function resolveProductLineId(userId: string): Promise<{ productLineId: number; role: string } | null> {
   try {
@@ -89,6 +89,14 @@ async function main(): Promise<void> {
   const gate = new ApprovalGate(adapters)
   await gate.initialize()
   setApprovalGate(gate)
+
+  // 注入钉钉 DM 通知回调（Review 完成后通知模块负责人）
+  const primaryAdapter = adapters[0]
+  if (primaryAdapter) {
+    setNotifyDmFn(async (userId: string, message: string) => {
+      await primaryAdapter.sendDirectMessage(userId, { text: message })
+    })
+  }
 
   // Claude runner
   const runner = new ClaudeRunner()
@@ -144,10 +152,7 @@ async function main(): Promise<void> {
     )
   })
 
-  // 注入 ClaudeRunner 到各 Agent handler
-  setClaudeRunner(runner)
-  setFixClaudeRunner(runner)
-  setReviewClaudeRunner(runner)
+  // analyzer/fix/review 均已改用 runClaudeCli，不再需要注入 ClaudeRunner
 
   // 注册 Agent capability handler
   registerAnalysisBugHandler()
@@ -179,6 +184,8 @@ async function main(): Promise<void> {
             platform: msg.platform,
             adapter,
             productLineId: membership?.productLineId,
+            userName: msg.userName,
+            senderDingtalkId: (msg.rawPayload as any)?.senderId,
           })
         }
       )
@@ -238,6 +245,31 @@ async function main(): Promise<void> {
   })
 
   app.get('/health', async () => ({ status: 'ok' }))
+
+  // 测试端点：通过 triggerCapability 触发完整分析流程（含 Issue 创建）
+  app.post('/api/test/analyze', async (req, reply) => {
+    const body = req.body as { message: string; version?: string; productLineId?: number }
+    if (!body.message) return reply.status(400).send({ error: 'message required' })
+
+    const { triggerCapability } = await import('./agent/coordinator.js')
+    const result = await triggerCapability({
+      capabilityKey: 'analyze_bug',
+      context: {
+        taskId: `test-${Date.now()}`,
+        groupId: 'test',
+        platform: 'test',
+        initiatorId: '183832601538060368',
+        initiatorRole: 'admin',
+      },
+      extraParams: {
+        message: body.message,
+        productLineId: body.productLineId ?? 1,
+        version: body.version,
+      },
+    })
+
+    return reply.send(result)
+  })
 
   // Serve frontend SPA static files (production build)
   const __dirname = dirname(fileURLToPath(import.meta.url))

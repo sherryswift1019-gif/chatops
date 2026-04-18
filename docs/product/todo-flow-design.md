@@ -210,3 +210,12 @@ Issue #42 fix 分支合并了
 | 6 | 分析报告不准 → 补充信息重新分析 | P3 | Growth | 待开发 |
 | 7 | MR 创建前 rebase 检测 + 冲突通知 | P2 | MVP | ✅ 已完成 |
 | 8 | Issue 评论触发分析/修复（不仅 label） | P3 | Growth | 待开发 |
+| 9 | 借鉴 OpenHands：Docker 沙箱隔离（跑测试时防副作用） | P3 | Growth | 待评估 |
+| 10 | 借鉴 OpenHands：修复重试改为"观察→思考→行动"循环，而非简单重跑 | P2 | M2 | 待开发 |
+| 11 | 借鉴 OpenHands：建内部 Benchmark，用历史已修复 Bug 量化 AI 修复成功率 | P2 | M3 | 待开发 |
+| 12 | 借鉴 Aider：AI 摘要自动化生成（Repo Map 思路），减少人工维护 | P2 | M1 | 待开发 |
+| 13 | 借鉴 SWE-agent：打磨 MCP 工具输出格式（ACI 思路），让 AI 更容易理解代码结构 | P2 | M1 | 待开发 |
+| 14 | 通知内容模板配置：DM 通知和审批消息支持管理后台可配置模板 | P2 | Growth | 待开发 |
+| 15 | MR 打回自动重试：AI 生成的 MR 被 close 后自动触发重新分析/修复（GitLab Webhook） | P2 | Growth | 待开发 |
+| 16 | 知识库健康度检查：分析前评估项目文档充足度，不足时提示补充 | P2 | Growth | 待开发 |
+| 17 | 执行记录增强：流程实例完整视图、关联 Issue/MR 链接、手动重试 | P2 | Growth | 待开发 |

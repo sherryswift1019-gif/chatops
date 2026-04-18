@@ -136,6 +136,32 @@ export async function cleanup(): Promise<number> {
   return cleaned
 }
 
+/** 兜底清理：移除所有 worktree（凌晨 3 点调用，防磁盘泄漏） */
+export async function cleanupAll(): Promise<number> {
+  let cleaned = 0
+  for (const [id, wt] of activeWorktrees) {
+    await remove(wt).catch(err => {
+      console.error(`[Worktree] cleanupAll error for ${wt.path}:`, err)
+    })
+    cleaned++
+  }
+  // 清理孤立目录
+  try {
+    const { readdirSync, rmSync } = await import('fs')
+    if (existsSync(WORKTREE_BASE)) {
+      for (const dir of readdirSync(WORKTREE_BASE)) {
+        const fullPath = join(WORKTREE_BASE, dir)
+        rmSync(fullPath, { recursive: true, force: true })
+        cleaned++
+      }
+    }
+  } catch (err) {
+    console.error('[Worktree] cleanupAll dir cleanup error:', err)
+  }
+  console.log(`[Worktree] cleanupAll: removed ${cleaned} items`)
+  return cleaned
+}
+
 export function getActive(): Worktree[] {
   return [...activeWorktrees.values()]
 }

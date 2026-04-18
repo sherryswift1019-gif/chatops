@@ -42,7 +42,9 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     const run = await getTestRunById(Number(req.params.id))
     if (!run) return reply.status(404).send({ error: 'not found' })
     const u = await getDingTalkUserById(run.triggeredBy).catch(() => null)
-    return reply.send({ ...run, triggeredByName: u?.name, triggeredByAvatar: u?.avatar })
+    const reportDir = run.reportPath || join(DATA_DIR, String(run.id))
+    const hasReport = await stat(join(reportDir, 'report.html')).then(() => true, () => false)
+    return reply.send({ ...run, triggeredByName: u?.name, triggeredByAvatar: u?.avatar, hasReport })
   })
 
   // Trigger a pipeline run

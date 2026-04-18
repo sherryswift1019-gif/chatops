@@ -84,12 +84,6 @@ export class DingTalkAdapter implements IMAdapter {
       keepAlive: true,
     })
 
-    // Log ALL events for debugging
-    this.client.registerAllEventListener((res: DWClientDownStream) => {
-      console.log('[DingTalk] Event received:', res.type, res.headers?.topic, res.headers?.messageId)
-      return { status: EventAck.SUCCESS }
-    })
-
     this.client
       .registerCallbackListener(TOPIC_ROBOT, (res: DWClientDownStream) => {
         console.log('[DingTalk] Robot message received:', res.headers.messageId)
@@ -119,12 +113,21 @@ export class DingTalkAdapter implements IMAdapter {
 
   // ── Sending ──────────────────────────────────────────────────────────────
 
-  async sendMessage(target: MessageTarget, content: TextContent): Promise<void> {
+  async sendMessage(target: MessageTarget, content: TextContent & { atDingtalkIds?: string[] }): Promise<void> {
     const webhook = this.getWebhook(target)
-    await axios.post(webhook, {
-      msgtype: 'markdown',
-      markdown: { title: 'ChatOps', text: content.text },
-    })
+    if (content.atDingtalkIds && content.atDingtalkIds.length > 0) {
+      // sessionWebhook + text + at.atDingtalkIds = 蓝色 @ 效果
+      await axios.post(webhook, {
+        msgtype: 'text',
+        text: { content: content.text },
+        at: { atDingtalkIds: content.atDingtalkIds, isAtAll: false },
+      })
+    } else {
+      await axios.post(webhook, {
+        msgtype: 'markdown',
+        markdown: { title: 'ChatOps', text: content.text },
+      })
+    }
   }
 
   async sendCard(target: MessageTarget, card: InteractiveCard): Promise<void> {
@@ -138,26 +141,21 @@ export class DingTalkAdapter implements IMAdapter {
 
   async sendDirectMessage(userId: string, content: TextContent | InteractiveCard): Promise<void> {
     const token = await this.getAccessToken()
-    const isCard = 'actions' in content
-    const msgBody = isCard
-      ? {
-          msgtype: 'markdown',
-          markdown: {
-            title: (content as InteractiveCard).title,
-            text: this.cardToMarkdown(content as InteractiveCard),
-          },
-        }
-      : { msgtype: 'text', text: { content: (content as TextContent).text } }
+    const text = 'actions' in content
+      ? `${(content as InteractiveCard).title}\n\n${(content as InteractiveCard).body}`
+      : (content as TextContent).text
 
     await axios.post(
-      'https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2',
+      'https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend',
       {
-        agent_id: this.cfg.clientId,
-        userid_list: userId,
-        msg: msgBody,
+        robotCode: this.cfg.clientId,
+        userIds: [userId],
+        msgKey: 'sampleMarkdown',
+        msgParam: JSON.stringify({ title: 'ChatOps 通知', text }),
       },
       { headers: { 'x-acs-dingtalk-access-token': token } }
     )
+    console.log(`[DingTalk] DM sent to ${userId}`)
   }
 
   async getUserInfo(userId: string): Promise<UserInfo> {
@@ -188,33 +186,50 @@ export class DingTalkAdapter implements IMAdapter {
       if (first) this.processedMsgIds.delete(first)
     }
 
-    console.log('[DingTalk] Message from:', msg.senderNick, '| conversationId:', msg.conversationId, '| msgtype:', msg.msgtype)
+    console.log('[DingTalk] 原始消息:', JSON.stringify(msg, null, 2))
 
     // Cache sessionWebhook so we can reply to this conversation later
     if (msg.sessionWebhook) {
       this.webhookCache.set(msg.conversationId, msg.sessionWebhook)
     }
 
-    // ── 提取文本 ──────────────────────────────────────────
+    // ── @ mention 过滤：精确删除 @机器人名（从 conversationTitle 无法拿到，用 robotCode 查不到名字）
+    // 方案：从 atUsers 里找到 chatbotUserId 对应的条目，然后在文本里匹配 @+任意字符直到下一个空格
+    // 但钉钉可能不在 @ 后面加空格。最终方案：不删 @，直接传给 Claude，在 Step 0 里用前几个词提取 project/branch
     let text = ''
     const contentObj = typeof msg.content === 'string' ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : msg.content
 
     if (msg.msgtype === 'richText' && contentObj?.richText) {
-      // richText 图文混排：从 content.richText[] 提取文本
       text = contentObj.richText
         .filter((item: RichTextItem) => item.text || (item.type === 'text' && item.content))
         .map((item: RichTextItem) => item.text || item.content || '')
         .join('')
-        .replace(/@\S+/g, '').trim()
+        .trim()
     } else {
-      text = (msg.text?.content ?? '').replace(/@\S+/g, '').trim()
+      text = (msg.text?.content ?? '').trim()
+    }
+
+    // 钉钉图文混排消息（文字+图片+文字）会被包装成 msgtype=text + repliedMsg.richText 结构
+    // 当 text.content 为空但有 repliedMsg 时，从 repliedMsg.richText 提取用户的完整消息
+    const repliedMsg = msg.text?.repliedMsg
+    if (!text && repliedMsg) {
+      const repliedContent = typeof repliedMsg.content === 'string'
+        ? (() => { try { return JSON.parse(repliedMsg.content) } catch { return null } })()
+        : repliedMsg.content
+
+      if (repliedContent?.richText) {
+        text = repliedContent.richText
+          .filter((item: RichTextItem) => (item.msgType === 'text' || item.type === 'text') && item.content)
+          .map((item: RichTextItem) => item.content || '')
+          .join('\n')
+          .trim()
+      }
     }
 
     // ── 提取图片 ──────────────────────────────────────────
     const images: string[] = []
 
-    // 1. 引用回复中的图片（优先级最高，因为用户明确引用了某条消息）
-    const repliedMsg = msg.text?.repliedMsg
+    // 1. repliedMsg 中的图片（图文混排或引用回复）
     if (repliedMsg) {
       const repliedContent = typeof repliedMsg.content === 'string'
         ? (() => { try { return JSON.parse(repliedMsg.content) } catch { return null } })()
@@ -225,11 +240,6 @@ export class DingTalkAdapter implements IMAdapter {
         for (const item of repliedContent.richText) {
           if (item.msgType === 'picture' && item.downloadCode) {
             images.push(item.downloadCode)
-          }
-          // 同时提取引用消息的文本
-          if (item.msgType === 'text' && item.content) {
-            const cleanText = item.content.replace(/@\S+\s*/g, '').trim()
-            if (cleanText) text = cleanText + '\n' + text
           }
         }
       }
