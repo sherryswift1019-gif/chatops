@@ -7,3 +7,5 @@ web/dist/
 .agent/
 .claude/
 _bmad/
+test-results/
+playwright-report/
