@@ -9,7 +9,8 @@ import { resolveVariables, type VariableContext } from './variables.js'
 import { analyzeFailure } from './failure-analyzer.js'
 import { PipelineApprovalManager } from './approval-manager.js'
 import { getStageType } from './types.js'
-import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult } from './types.js'
+import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, ArtifactInput } from './types.js'
+import { resolveArtifact } from './artifact-resolver.js'
 import { sshExec } from './ssh.js'
 import { writeFile } from 'fs/promises'
 import { getDingTalkUserById } from '../db/repositories/dingtalk-users.js'
@@ -97,6 +98,7 @@ export async function runPipeline(
   serverAssignment: Record<string, string[]>,
   triggerType: 'manual' | 'api' | 'scheduled',
   triggeredBy: string,
+  runtimeVarsInput: Record<string, string> = {},
   onComplete?: (result: PipelineRunResult) => void
 ): Promise<number> {
   const pipelineStartTime = Date.now()
@@ -105,8 +107,17 @@ export async function runPipeline(
 
   const productLine = await getProductLineById(pipeline.productLineId)
 
+  // Resolve artifact inputs before creating the run
+  const artifactInputs = (pipeline.artifactInputs ?? []) as ArtifactInput[]
+  const runtimeVars: Record<string, string> = { ...runtimeVarsInput }
+  for (const input of artifactInputs) {
+    const provided = runtimeVars[input.outputVar]
+    const value = await resolveArtifact(input, provided)
+    runtimeVars[input.outputVar] = value
+  }
+
   // Create run record
-  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment })
+  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment, runtimeVars })
   const logDir = join(DATA_DIR, String(run.id))
   await mkdir(logDir, { recursive: true })
 
@@ -187,7 +198,7 @@ export async function runPipeline(
           productLine: productLine ? { name: productLine.name, displayName: productLine.displayName } : undefined,
           pipeline: { id: pipeline.id, name: pipeline.name },
           run: { id: run.id, triggeredBy, triggerType },
-          variables: pipeline.variables ?? {},
+          variables: { ...(pipeline.variables ?? {}), ...runtimeVars },
         }
 
         if (stage.parallel && targetServers.length > 1) {

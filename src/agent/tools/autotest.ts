@@ -24,15 +24,22 @@ const autotestTool: AgentTool = {
         type: 'object',
         description: '服务器角色分配 (trigger_run 必填)，格式: {"db": ["192.168.1.10"], "app": ["192.168.1.11"]}',
       },
+      runtimeVars: {
+        type: 'object',
+        description: '运行时变量（对应 pipeline.artifactInputs 的 outputVar，如 {"PACKAGE_URL": "http://..."}），会覆盖 pipeline 的静态 variables',
+        additionalProperties: { type: 'string' },
+      },
       runId: { type: 'number', description: '执行记录ID (get_status/get_report 必填)' },
     },
     required: ['action'],
   },
 
   async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
-    const { action, pipelineId, productLineId, servers, runId } = params as {
+    const { action, pipelineId, productLineId, servers, runtimeVars, runId } = params as {
       action: string; pipelineId?: number; productLineId?: number
-      servers?: Record<string, string[]>; runId?: number
+      servers?: Record<string, string[]>
+      runtimeVars?: Record<string, string>
+      runId?: number
     }
 
     switch (action) {
@@ -73,7 +80,7 @@ const autotestTool: AgentTool = {
               return { success: false, output: '没有可用的空闲服务器，无法自动分配' }
             }
           }
-          const id = await runPipeline(pipelineId, serverMap, 'manual', ctx.initiatorId, (result) => {
+          const id = await runPipeline(pipelineId, serverMap, 'manual', ctx.initiatorId, runtimeVars ?? {}, (result) => {
             // Store completion result for later query - onComplete is fire-and-forget
             console.log(`[autotest] Pipeline ${pipelineId} run #${result.runId} completed: ${result.status} in ${result.durationMs}ms`)
           })
