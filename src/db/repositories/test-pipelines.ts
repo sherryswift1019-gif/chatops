@@ -11,6 +11,7 @@ export interface TestPipeline {
   enabled: boolean
   triggerParams: Record<string, unknown>
   variables: Record<string, string>
+  artifactInputs: unknown[]
   createdAt: Date
   updatedAt: Date
 }
@@ -23,6 +24,7 @@ function mapRow(r: Record<string, unknown>): TestPipeline {
     schedule: (r.schedule ?? '') as string, enabled: r.enabled as boolean,
     triggerParams: (r.trigger_params ?? {}) as Record<string, unknown>,
     variables: (r.variables ?? {}) as Record<string, string>,
+    artifactInputs: (r.artifact_inputs ?? []) as unknown[],
     createdAt: r.created_at as Date, updatedAt: r.updated_at as Date,
   }
 }
@@ -48,14 +50,16 @@ export async function createTestPipeline(data: {
   stages: unknown[]; serverRoles: Record<string, { count: number }>
   schedule?: string; enabled?: boolean; triggerParams?: Record<string, unknown>
   variables?: Record<string, string>
+  artifactInputs?: unknown[]
 }): Promise<TestPipeline> {
   const pool = getPool()
   const { rows } = await pool.query(
-    `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables, artifact_inputs)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [data.productLineId, data.name, data.description ?? '', JSON.stringify(data.stages),
      JSON.stringify(data.serverRoles), data.schedule ?? '', data.enabled ?? true,
-     JSON.stringify(data.triggerParams ?? {}), JSON.stringify(data.variables ?? {})]
+     JSON.stringify(data.triggerParams ?? {}), JSON.stringify(data.variables ?? {}),
+     JSON.stringify(data.artifactInputs ?? [])]
   )
   return mapRow(rows[0])
 }
@@ -64,6 +68,7 @@ export async function updateTestPipeline(id: number, data: Partial<{
   name: string; description: string; stages: unknown[]
   serverRoles: Record<string, { count: number }>; schedule: string; enabled: boolean
   triggerParams: Record<string, unknown>; variables: Record<string, string>
+  artifactInputs: unknown[]
 }>): Promise<TestPipeline | null> {
   const pool = getPool()
   const { rows } = await pool.query(
@@ -73,6 +78,7 @@ export async function updateTestPipeline(id: number, data: Partial<{
        schedule = COALESCE($6, schedule), enabled = COALESCE($7, enabled),
        trigger_params = COALESCE($8, trigger_params),
        variables = COALESCE($9, variables),
+       artifact_inputs = COALESCE($10, artifact_inputs),
        updated_at = NOW()
      WHERE id = $1 RETURNING *`,
     [id, data.name ?? null, data.description ?? null,
@@ -80,7 +86,8 @@ export async function updateTestPipeline(id: number, data: Partial<{
      data.serverRoles ? JSON.stringify(data.serverRoles) : null,
      data.schedule ?? null, data.enabled ?? null,
      data.triggerParams ? JSON.stringify(data.triggerParams) : null,
-     data.variables ? JSON.stringify(data.variables) : null]
+     data.variables ? JSON.stringify(data.variables) : null,
+     data.artifactInputs ? JSON.stringify(data.artifactInputs) : null]
   )
   return rows[0] ? mapRow(rows[0]) : null
 }
