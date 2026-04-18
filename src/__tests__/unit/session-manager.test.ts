@@ -24,20 +24,22 @@ describe('SessionManager', () => {
     }, { timeout: 2000 })
   })
 
-  it('sends immediate ack message on receiving a request', async () => {
+  it('invokes processMessage for each received request', async () => {
+    // 说明：ack 消息（"收到，处理中..."）的发送职责已从 SessionManager 下移到
+    // claude-runner.ts 的 handler 路径（见 session-manager.ts 注释）。
+    // 这里仅验证 SessionManager 正确路由消息到 processMessage。
+    const processed: string[] = []
     const adapter = createMockAdapter('dingtalk')
     const manager = new SessionManager(
       [adapter],
-      async () => { await new Promise(r => setTimeout(r, 100)) }
+      async (msg) => { processed.push(msg.text); await new Promise(r => setTimeout(r, 100)) }
     )
     manager.start()
 
     adapter.simulateMessage({ groupId: 'g1', text: 'deploy something' })
 
     await vi.waitFor(() => {
-      expect(adapter.sentMessages.length).toBeGreaterThan(0)
-      const ack = adapter.sentMessages[0].content as { text: string }
-      expect(ack.text).toContain('收到')
+      expect(processed).toContain('deploy something')
     }, { timeout: 2000 })
   })
 })

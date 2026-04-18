@@ -172,13 +172,16 @@ describe('DingTalkAdapter (Stream mode)', () => {
     expect(msg.groupId).toBe('cid-001')
     expect(msg.userId).toBe('staff-001')
     expect(msg.userName).toBe('张三')
-    expect(msg.text).toBe('deploy payment-service')
+    // 当前实现不剥离 @mention，原样透传给下游（由 Claude 在 Step 0 处理）
+    expect(msg.text).toBe('@bot deploy payment-service')
     expect(msg.timestamp).toBe(1712836800000)
   })
 
-  // ── @mention stripping ─────────────────────────────────────────────────────
+  // ── @mention 透传（不剥离） ─────────────────────────────────────────────────
+  // 说明：早期版本在 adapter 层剥 @bot 前缀，现已废弃（见 dingtalk.ts 注释）。
+  // 文本原样传给 SessionManager/Claude，由下游识别 @。
 
-  it('strips @mention prefix from message text', async () => {
+  it('preserves @mention prefix in message text (pass-through)', async () => {
     const messages: unknown[] = []
     adapter.onMessage(m => { messages.push(m) })
 
@@ -186,10 +189,11 @@ describe('DingTalkAdapter (Stream mode)', () => {
     await Promise.resolve()
 
     const msg = messages[0] as { text: string }
-    expect(msg.text).toBe('deploy service')
+    // trim 仍然保留（去除首尾空白），但 @bot 不剥离
+    expect(msg.text).toBe('@bot  deploy service')
   })
 
-  it('strips multiple @mentions leaving remaining text intact', async () => {
+  it('preserves multiple @mentions in message text (pass-through)', async () => {
     const messages: unknown[] = []
     adapter.onMessage(m => { messages.push(m) })
 
@@ -197,19 +201,21 @@ describe('DingTalkAdapter (Stream mode)', () => {
     await Promise.resolve()
 
     const msg = messages[0] as { text: string }
-    expect(msg.text).toBe('hello')
+    expect(msg.text).toBe('@bot hello @world')
   })
 
-  // ── Empty message skipped ──────────────────────────────────────────────────
+  // ── @mention-only 消息仍进入 handler（不再过滤为空） ──────────────────────
+  // 说明：由于 adapter 不剥 @，"@bot" 本身是非空文本，会正常进入 handler。
+  // 过滤 @bot-only 的职责下移到 claude-runner / SessionManager。
 
-  it('does NOT call messageHandler when text is only @mention, but still ACKs', async () => {
+  it('calls messageHandler even when text is only @mention (no stripping), and ACKs', async () => {
     const handler = vi.fn()
     adapter.onMessage(handler)
 
     mockClient._trigger(TOPIC_ROBOT, makeRobotDownStream({ text: '@bot', messageId: 'msg-empty' }))
     await Promise.resolve()
 
-    expect(handler).not.toHaveBeenCalled()
+    expect(handler).toHaveBeenCalledOnce()
     expect(mockClient.send).toHaveBeenCalledWith('msg-empty', { status: 'SUCCESS' })
   })
 

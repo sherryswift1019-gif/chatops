@@ -46,8 +46,11 @@ describe('Integration: Webhook → Handler → Coordinator', () => {
   })
 
   // ─── Issue approved → 触发 fix_bug_l3 ───────────────
+  // Task 12 废除：label 驱动 fix_bug_l3 分发已移除，改由 Pipeline 内部驱动。
+  // 新行为（MR merge/close → lifecycle_sync，Issue approved 忽略）已在
+  // src/__tests__/unit/issue-handler.test.ts 中覆盖。
 
-  it('Issue label 变为 approved → 触发 fix_bug_l3', async () => {
+  it.skip('Issue label 变为 approved → 触发 fix_bug_l3 [已废除：见 issue-handler.test.ts]', async () => {
     // 先创建分析报告（handler 需要查 DB）
     await createBugAnalysisReport({
       issueId: 3,
@@ -105,8 +108,11 @@ describe('Integration: Webhook → Handler → Coordinator', () => {
   })
 
   // ─── MR ai-generated → 触发 ai_review_mr ────────────
+  // Task 12 废除：MR open + ai-generated label 触发 ai_review_mr 已移除，改由 Pipeline 驱动。
+  // 新行为（仅 MR merge/close 触发 lifecycle_sync，其它 action 忽略）已在
+  // src/__tests__/unit/issue-handler.test.ts 中覆盖。
 
-  it('MR 创建 + ai-generated label → 触发 ai_review_mr', async () => {
+  it.skip('MR 创建 + ai-generated label → 触发 ai_review_mr [已废除：见 issue-handler.test.ts]', async () => {
     const triggered: string[] = []
     registerCapabilityHandler('ai_review_mr', async (opts) => {
       triggered.push(opts.capabilityKey)
