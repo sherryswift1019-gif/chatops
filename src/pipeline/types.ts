@@ -44,3 +44,14 @@ export interface StageExecutionResult {
   error?: string
   artifacts?: string[]
 }
+
+export interface ArtifactInput {
+  name: string
+  listUrl: string
+  glob: string
+  outputVar: string
+  valueFrom: 'url' | 'name' | 'path'
+  default?: string
+  defaultStrategy?: 'latest-by-mtime' | 'first-match'
+  authHeaders?: Record<string, string>
+}
