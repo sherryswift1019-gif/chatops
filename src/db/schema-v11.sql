@@ -1,4 +1,4 @@
--- schema-v10.sql: artifact inputs for pipelines + runtime vars record
+-- schema-v11.sql: artifact inputs for pipelines + runtime vars record
 ALTER TABLE test_pipelines
   ADD COLUMN IF NOT EXISTS artifact_inputs JSONB NOT NULL DEFAULT '[]';
 
