@@ -174,7 +174,7 @@ describe('notify_bug handler', () => {
     vi.restoreAllMocks()
   })
 
-  it('fix_success: triggers owner DM + triggered_by DM', async () => {
+  it('fix_success: sends DM to project owner only', async () => {
     const productLineId = await seedProductLine()
     await seedProject(productLineId, {
       name: 'pas-api',
@@ -197,33 +197,25 @@ describe('notify_bug handler', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(2)
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
     const calls = mockAdapter.sendDirectMessage.mock.calls
     const ownerCall = calls.find(c => c[0] === 'u-api')
-    const triggerCall = calls.find(c => c[0] === 'u-trigger')
     expect(ownerCall).toBeTruthy()
-    expect(triggerCall).toBeTruthy()
+    // 不应再给触发人发 DM
+    expect(calls.find(c => c[0] === 'u-trigger')).toBeUndefined()
     const ownerText = (ownerCall![1] as { text: string }).text
-    const triggerText = (triggerCall![1] as { text: string }).text
     expect(ownerText).toContain('PAM/pas-api')
     expect(ownerText).toContain('/merge_requests/55')
     expect(ownerText).toContain('ai-approved')
-    expect(triggerText).toContain('Bug 已自动修复')
-    expect(triggerText).toContain('/merge_requests/55')
 
     const events = await findByReportCode(report.id, 'notify')
-    expect(events).toHaveLength(2)
+    expect(events).toHaveLength(1)
     expect(events.every(e => e.status === 'success')).toBe(true)
     const ownerEvent = events.find(e => (e.data as Record<string, unknown>).userId === 'u-api')
     expect(ownerEvent?.data).toMatchObject({
       role: 'owner',
       messageKind: 'fix_success',
       mrIids: [55],
-    })
-    const triggerEvent = events.find(e => (e.data as Record<string, unknown>).userId === 'u-trigger')
-    expect(triggerEvent?.data).toMatchObject({
-      role: 'initiator',
-      messageKind: 'fix_success',
     })
   })
 
@@ -259,7 +251,7 @@ describe('notify_bug handler', () => {
     expect(ownerText).toContain('AI Review 发现问题')
   })
 
-  it('fix_failed: only triggered_by gets DM with failure reason', async () => {
+  it('fix_failed: no DM sent, returns success (owner-only channel, fix_failed skipped)', async () => {
     const productLineId = await seedProductLine()
     await seedProject(productLineId, {
       name: 'pas-api',
@@ -293,14 +285,12 @@ describe('notify_bug handler', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith('u-trigger', expect.anything())
-    const [, content] = mockAdapter.sendDirectMessage.mock.calls[0]
-    expect((content as { text: string }).text).toContain('修复失败')
-    expect((content as { text: string }).text).toContain('patch 应用冲突')
+    expect(mockAdapter.sendDirectMessage).not.toHaveBeenCalled()
+    const events = await findByReportCode(report.id, 'notify')
+    expect(events).toHaveLength(0)
   })
 
-  it('l4_created: only triggered_by DM with Issue link', async () => {
+  it('l4_created: no DM sent, returns success', async () => {
     const productLineId = await seedProductLine()
     const report = await seedReport({
       productLineId,
@@ -317,16 +307,12 @@ describe('notify_bug handler', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
-    const [userId, content] = mockAdapter.sendDirectMessage.mock.calls[0]
-    expect(userId).toBe('u-trigger')
-    expect((content as { text: string }).text).toContain('AI 无法自动修复')
-    expect((content as { text: string }).text).toContain(report.issueUrl)
+    expect(mockAdapter.sendDirectMessage).not.toHaveBeenCalled()
     const events = await findByReportCode(report.id, 'notify')
-    expect((events[0].data as Record<string, unknown>).messageKind).toBe('l4_created')
+    expect(events).toHaveLength(0)
   })
 
-  it('approval_rejected / timeout / retry_analysis: only triggered_by', async () => {
+  it('approval_rejected / timeout / retry_analysis: no DM sent, returns success', async () => {
     for (const decision of ['rejected', 'timeout', 'retry_analysis'] as const) {
       await resetTestDb()
       mockAdapter = makeMockAdapter()
@@ -358,20 +344,16 @@ describe('notify_bug handler', () => {
         data: { decision },
       })
 
-      await handleNotify({
+      const result = await handleNotify({
         capabilityKey: 'notify_bug',
         context: baseCtx,
         extraParams: { reportId: report.id },
       })
 
-      expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
-      expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith('u-trigger', expect.anything())
+      expect(result.success).toBe(true)
+      expect(mockAdapter.sendDirectMessage).not.toHaveBeenCalled()
       const events = await findByReportCode(report.id, 'notify')
-      expect(events).toHaveLength(1)
-      const expectedKind = decision === 'rejected'
-        ? 'approval_rejected'
-        : decision === 'timeout' ? 'approval_timeout' : 'approval_retry_analysis'
-      expect((events[0].data as Record<string, unknown>).messageKind).toBe(expectedKind)
+      expect(events).toHaveLength(0)
     }
   })
 
@@ -418,7 +400,7 @@ describe('notify_bug handler', () => {
     expect(ownerText).toContain('/merge_requests/2')
   })
 
-  it('DM failure: records failed event, continues other recipients, returns im_api_error', async () => {
+  it('DM failure: records failed event and returns im_api_error', async () => {
     const productLineId = await seedProductLine()
     await seedProject(productLineId, {
       name: 'pas-api',
@@ -434,9 +416,7 @@ describe('notify_bug handler', () => {
     await seedFixSuccessWithMr(report.id, 'PAM/pas-api', true, 33)
     await seedReviewEvent(report.id, 'PAM/pas-api', 'ai-approved')
 
-    mockAdapter.sendDirectMessage
-      .mockRejectedValueOnce(new Error('网络错误'))
-      .mockResolvedValueOnce(undefined)
+    mockAdapter.sendDirectMessage.mockRejectedValueOnce(new Error('网络错误'))
 
     const result = await handleNotify({
       capabilityKey: 'notify_bug',
@@ -446,17 +426,15 @@ describe('notify_bug handler', () => {
 
     expect(result.success).toBe(false)
     expect(result.error).toBe('im_api_error')
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(2)
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
     const events = await findByReportCode(report.id, 'notify')
-    expect(events).toHaveLength(2)
+    expect(events).toHaveLength(1)
     const failed = events.filter(e => e.status === 'failed')
-    const success = events.filter(e => e.status === 'success')
     expect(failed).toHaveLength(1)
-    expect(success).toHaveLength(1)
     expect((failed[0].data as Record<string, unknown>).error).toContain('网络错误')
   })
 
-  it('no owner configured: skips that owner silently, still sends to triggered_by', async () => {
+  it('no owner configured (empty ownerId) → no_recipients, no DM sent', async () => {
     const productLineId = await seedProductLine()
     await seedProject(productLineId, {
       name: 'pas-api',
@@ -478,12 +456,11 @@ describe('notify_bug handler', () => {
       extraParams: { reportId: report.id },
     })
 
-    expect(result.success).toBe(true)
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith('u-trigger', expect.anything())
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('no_recipients')
+    expect(mockAdapter.sendDirectMessage).not.toHaveBeenCalled()
     const events = await findByReportCode(report.id, 'notify')
-    expect(events).toHaveLength(1)
-    expect((events[0].data as Record<string, unknown>).role).toBe('initiator')
+    expect(events).toHaveLength(0)
   })
 
   it('missing reportId → returns missing_reportId', async () => {
@@ -506,7 +483,7 @@ describe('notify_bug handler', () => {
     expect(result.error).toBe('report_not_found')
   })
 
-  it('no recipients (no owner + no triggered_by) → returns no_recipients', async () => {
+  it('no recipients (no owner + owner channel applies) → returns no_recipients', async () => {
     const productLineId = await seedProductLine()
     await seedProject(productLineId, {
       name: 'pas-api',

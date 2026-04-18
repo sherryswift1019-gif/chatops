@@ -174,12 +174,10 @@ describe('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
     expect(approvalEvents).toHaveLength(1)
     expect((approvalEvents[0].data as any).decision).toBe('timeout')
 
-    // 补发 notify_bug 事件
+    // 补发 notify_bug：approval_timeout 场景不再发 DM（触发人通道已取消，owner 也不收），
+    // 因此不会产生 notify 事件
     const notifyEvents = await findByReportCode(reportId, 'notify')
-    expect(notifyEvents.length).toBeGreaterThan(0)
-    // notify 对象包含 trigger（owner 在 approval_timeout 场景下不收）
-    const kinds = new Set(notifyEvents.map(e => (e.data as any).messageKind))
-    expect(kinds.has('approval_timeout')).toBe(true)
+    expect(notifyEvents).toHaveLength(0)
 
     // ── Step 2: 调用 retry endpoint ──
     // 启用 retry mock：第二轮走"审批被批准"路径，让 pipeline 一路到 notify

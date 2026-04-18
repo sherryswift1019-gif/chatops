@@ -11,7 +11,6 @@ import {
 } from '../../db/repositories/bug-fix-events.js'
 import { getProjectByGitlabPath } from '../../db/repositories/projects-repo.js'
 import { findOwner } from '../../db/repositories/module-owners.js'
-import { getTestRunById } from '../../db/repositories/test-runs.js'
 import { PipelineApprovalManager } from '../../pipeline/approval-manager.js'
 import type { IMAdapter } from '../../adapters/im/types.js'
 
@@ -45,7 +44,7 @@ interface Scenario {
 }
 
 interface MessageCtx {
-  role: 'owner' | 'initiator'
+  role: 'owner'
   report: BugAnalysisReport
   scenario: Scenario
   projectPaths: string[]
@@ -56,6 +55,8 @@ interface MessageCtx {
 
 /**
  * notify_bug capability handler：Pipeline 最后一个 stage，统一发终态 DM。
+ * 只向各 project owner 推送修复成功类消息；其他场景（l4_created / approval_* / fix_failed）
+ * 不再发 DM，信息由前端通过状态和事件展示。
  * 对每个接收人尝试 adapter.sendDirectMessage 并写 bug_fix_events(code='notify')。
  * DM 失败不阻断其他接收人；只要有一个 notify 事件 status=failed，handler 返回 im_api_error。
  */
@@ -70,17 +71,17 @@ export async function handleNotify(opts: TriggerOptions): Promise<TriggerResult>
     return { success: false, error: 'report_not_found', output: `报告 ${reportId} 不存在` }
   }
 
-  const triggeredBy = await getTriggeredByFromRun(report.pipelineRunId)
   const projectMrs = await gatherProjects(reportId)
   const scenario = await decideScenario(reportId, report, projectMrs)
+
+  // 场景过滤：owner 只接收修复成功类消息；其他场景直接跳过发送
+  if (!shouldNotifyOwners(scenario.kind)) {
+    return { success: true, output: `场景 ${scenario.kind}：无需发送 DM（信息由前端展示）` }
+  }
+
   const ownerMap = await buildOwnerMap(projectMrs, report.productLineId)
-
-  // 场景过滤：某些场景 owner 不收通知
-  const ownerChannelAllowed = shouldNotifyOwners(scenario.kind)
-  const effectiveOwners = ownerChannelAllowed ? ownerMap : new Map<string, OwnerEntry>()
-
-  if (effectiveOwners.size === 0 && !triggeredBy) {
-    return { success: false, error: 'no_recipients', output: '无可通知的接收人（触发人和 owner 均空）' }
+  if (ownerMap.size === 0) {
+    return { success: false, error: 'no_recipients', output: '无可通知的接收人（project owner 均空）' }
   }
 
   const mgr = PipelineApprovalManager.getInstance()
@@ -93,7 +94,7 @@ export async function handleNotify(opts: TriggerOptions): Promise<TriggerResult>
   let sentCount = 0
 
   // 各 project owner
-  for (const [ownerId, entry] of effectiveOwners) {
+  for (const [ownerId, entry] of ownerMap) {
     const text = buildMessage(scenario.kind, {
       role: 'owner',
       report,
@@ -115,39 +116,6 @@ export async function handleNotify(opts: TriggerOptions): Promise<TriggerResult>
       sentCount += 1
     } else {
       failures.push(`owner ${ownerId}: ${ok.error}`)
-    }
-  }
-
-  // 触发人汇总
-  if (triggeredBy) {
-    const allMrIids = projectMrs
-      .map(p => p.mrIid)
-      .filter((n): n is number => typeof n === 'number')
-    const allMrUrls = projectMrs
-      .map(p => p.mrUrl)
-      .filter((u): u is string => !!u)
-    const allLabels = projectMrs.map(p => p.review.label)
-    const text = buildMessage(scenario.kind, {
-      role: 'initiator',
-      report,
-      scenario,
-      projectPaths: projectMrs.map(p => p.projectPath),
-      mrIids: allMrIids,
-      mrUrls: allMrUrls,
-      reviewLabels: allLabels,
-    })
-    if (text) {
-      const ok = await sendOne(adapter, triggeredBy, text, {
-        reportId,
-        role: 'initiator',
-        messageKind: scenario.kind,
-        mrIids: allMrIids,
-      })
-      if (ok.success) {
-        sentCount += 1
-      } else {
-        failures.push(`initiator ${triggeredBy}: ${ok.error}`)
-      }
     }
   }
 
@@ -230,13 +198,6 @@ async function collectProjectPaths(reportId: number): Promise<string[]> {
     if (s.projectPath) set.add(s.projectPath)
   }
   return Array.from(set)
-}
-
-async function getTriggeredByFromRun(runId: number | null): Promise<string | null> {
-  if (!runId) return null
-  const run = await getTestRunById(runId)
-  if (!run || !run.triggeredBy) return null
-  return run.triggeredBy
 }
 
 async function decideScenario(
@@ -338,129 +299,42 @@ function shouldNotifyOwners(kind: MessageKind): boolean {
 }
 
 /**
- * 消息模板构造（spec "DM 通知策略" 章节）。role='owner' 时只列该 owner 负责 project 的 MR。
+ * 消息模板构造（spec "DM 通知策略" 章节）。
+ * 只为 fix_success / fix_success_review_concerns 两类场景构造给 owner 的消息。
+ * 其他场景在 handleNotify 里通过 shouldNotifyOwners 过滤掉了，因此这里无需处理。
  * 文案里的 emoji 属于 spec 用户可见部分，保留。
  */
 export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null {
-  const { role, report, scenario } = ctx
+  const { report } = ctx
   switch (kind) {
     case 'fix_success': {
-      if (role === 'owner') {
-        const mrLines = ctx.projectPaths.map((path, i) => {
-          const url = ctx.mrUrls[i] ?? `MR !${ctx.mrIids[i] ?? '?'}`
-          return `- ${path}: ${url}`
-        })
-        const summary = (report.rootCauseSummary ?? '').slice(0, 200)
-        return [
-          `✅ 你负责的服务已自动修复，MR 等待合并：`,
-          ...mrLines,
-          '',
-          `📋 修复方案：${summary}`,
-          '',
-          `AI Review 结论：✅ ai-approved`,
-        ].join('\n')
-      }
-      // initiator
-      const lines = [
-        `✅ Bug 已自动修复`,
-        '',
-        `Issue: ${report.issueUrl}`,
-        `等级: ${report.level.toUpperCase()}`,
-        `涉及服务 (${ctx.projectPaths.length} 个):`,
-      ]
-      ctx.projectPaths.forEach((path, i) => {
+      const mrLines = ctx.projectPaths.map((path, i) => {
         const url = ctx.mrUrls[i] ?? `MR !${ctx.mrIids[i] ?? '?'}`
-        lines.push(`- ${path}: ${url}`)
+        return `- ${path}: ${url}`
       })
-      lines.push('', `AI Review 结论：${summarizeLabels(ctx.reviewLabels)}`)
-      return lines.join('\n')
-    }
-    case 'fix_success_review_concerns': {
-      if (role === 'owner') {
-        const mrLines = ctx.projectPaths.map((path, i) => {
-          const url = ctx.mrUrls[i] ?? `MR !${ctx.mrIids[i] ?? '?'}`
-          return `- ${path}: ${url}`
-        })
-        return [
-          `⚠️ AI Review 发现问题`,
-          '',
-          `你负责的服务已修复并创建 MR：`,
-          ...mrLines,
-          '',
-          `AI Review 标签：⚠️ ai-needs-attention`,
-          `请关注并决定是否合并。`,
-        ].join('\n')
-      }
-      const lines = [
-        `⚠️ Bug 已修复但 AI Review 有关注点`,
-        '',
-        `Issue: ${report.issueUrl}`,
-        `等级: ${report.level.toUpperCase()}`,
-        `涉及服务 (${ctx.projectPaths.length} 个):`,
-      ]
-      ctx.projectPaths.forEach((path, i) => {
-        const url = ctx.mrUrls[i] ?? `MR !${ctx.mrIids[i] ?? '?'}`
-        lines.push(`- ${path}: ${url}`)
-      })
-      lines.push('', `AI Review 结论：${summarizeLabels(ctx.reviewLabels)}`)
-      return lines.join('\n')
-    }
-    case 'fix_failed': {
-      if (role !== 'initiator') return null
-      return [
-        `❌ Bug 修复失败`,
-        '',
-        `Issue: ${report.issueUrl}`,
-        `等级: ${report.level.toUpperCase()}`,
-        `失败原因: ${scenario.lastFixError ?? '未知'}`,
-        '',
-        `Pipeline 已终止，可在 Bug 修复实例页面点重试。`,
-      ].join('\n')
-    }
-    case 'l4_created': {
-      if (role !== 'initiator') return null
       const summary = (report.rootCauseSummary ?? '').slice(0, 200)
       return [
-        `ℹ️ 问题太复杂，AI 无法自动修复`,
+        `✅ 你负责的服务已自动修复，MR 等待合并：`,
+        ...mrLines,
         '',
-        `Issue 已创建: ${report.issueUrl}`,
-        `等级: L4`,
-        `根因摘要: ${summary}`,
+        `📋 修复方案：${summary}`,
         '',
-        `请人工介入处理。`,
+        `AI Review 结论：✅ ai-approved`,
       ].join('\n')
     }
-    case 'approval_rejected': {
-      if (role !== 'initiator') return null
+    case 'fix_success_review_concerns': {
+      const mrLines = ctx.projectPaths.map((path, i) => {
+        const url = ctx.mrUrls[i] ?? `MR !${ctx.mrIids[i] ?? '?'}`
+        return `- ${path}: ${url}`
+      })
       return [
-        `❌ L3 修复方案审批被拒绝`,
+        `⚠️ AI Review 发现问题`,
         '',
-        `Issue: ${report.issueUrl}`,
-        `等级: ${report.level.toUpperCase()}`,
+        `你负责的服务已修复并创建 MR：`,
+        ...mrLines,
         '',
-        `Pipeline 已终止，可在 Bug 修复实例页面点重试或人工介入。`,
-      ].join('\n')
-    }
-    case 'approval_timeout': {
-      if (role !== 'initiator') return null
-      return [
-        `❌ L3 修复方案审批超时`,
-        '',
-        `Issue: ${report.issueUrl}`,
-        `等级: ${report.level.toUpperCase()}`,
-        '',
-        `Pipeline 已终止，可在 Bug 修复实例页面点重试。`,
-      ].join('\n')
-    }
-    case 'approval_retry_analysis': {
-      if (role !== 'initiator') return null
-      return [
-        `ℹ️ L3 修复方案要求重新分析`,
-        '',
-        `Issue: ${report.issueUrl}`,
-        `等级: ${report.level.toUpperCase()}`,
-        '',
-        `新一轮分析将自动开始。`,
+        `AI Review 标签：⚠️ ai-needs-attention`,
+        `请关注并决定是否合并。`,
       ].join('\n')
     }
     default:
@@ -468,21 +342,9 @@ export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null 
   }
 }
 
-function summarizeLabels(labels: Array<'ai-approved' | 'ai-needs-attention' | null>): string {
-  if (labels.length === 0) return 'Review 已跳过'
-  const approved = labels.filter(l => l === 'ai-approved').length
-  const concerns = labels.filter(l => l === 'ai-needs-attention').length
-  const skipped = labels.filter(l => l === null).length
-  const parts: string[] = []
-  if (approved > 0) parts.push(`${approved} 个 ai-approved`)
-  if (concerns > 0) parts.push(`${concerns} 个 ai-needs-attention`)
-  if (skipped > 0) parts.push(`${skipped} 个未评审`)
-  return parts.join('、')
-}
-
 interface SendMeta {
   reportId: number
-  role: 'owner' | 'initiator'
+  role: 'owner'
   messageKind: MessageKind
   mrIids: number[]
 }

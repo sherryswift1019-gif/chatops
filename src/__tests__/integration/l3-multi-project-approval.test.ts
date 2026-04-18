@@ -3,7 +3,7 @@
  *   2 个 project，主仓库 owner 收审批 DM + 从仓库 owner 收 FYI DM
  *   fix → create_mr 对 2 个 project 分别跑
  *   主仓库 MR description 含 `Closes #X`，从仓库含 `Related to`
- *   notify → 3 条 DM（2 owner + 1 trigger）
+ *   notify → 2 条 DM（仅 2 owner；触发人 DM 已取消）
  */
 import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest'
 
@@ -208,14 +208,14 @@ describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
     expect(primaryCall[0].description).toContain('Closes #99')
     expect(secondaryCall[0].description).toContain('Related to PAM/pas-api#99')
 
-    // ── notify_bug 发 3 条 DM（去掉 FYI 调用） ──
+    // ── notify_bug 只发给 2 个 owner（触发人 DM 已取消） ──
     const events = await findByReport(reportId)
     const notifyEvents = events.filter(e => e.code === 'notify')
-    expect(notifyEvents.length).toBe(3) // 2 owner + 1 trigger
+    expect(notifyEvents.length).toBe(2) // 2 owner
 
     const notifyUsers = new Set(notifyEvents.map(e => (e.data as any).userId))
     expect(notifyUsers.has('u-primary')).toBe(true)
     expect(notifyUsers.has('u-secondary')).toBe(true)
-    expect(notifyUsers.has('u-trigger')).toBe(true)
+    expect(notifyUsers.has('u-trigger')).toBe(false)
   }, 30_000)
 })
