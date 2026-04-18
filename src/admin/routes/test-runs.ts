@@ -59,7 +59,12 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     }
     const effectiveType: 'manual' | 'api' = triggerType === 'manual' ? 'manual' : 'api'
     const sessionUser = req.session.get('username')
-    const effectiveUser = triggeredBy ?? sessionUser ?? 'api'
+    // Manual triggers must be attributed to the logged-in user — never trust body.triggeredBy.
+    // API triggers may override triggeredBy (e.g. CI systems identifying themselves);
+    // fall back to session, then a generic 'api' marker.
+    const effectiveUser = effectiveType === 'manual'
+      ? (sessionUser ?? 'admin')
+      : (triggeredBy ?? sessionUser ?? 'api')
     try {
       const runId = await runPipeline(pipelineId, servers, effectiveType, effectiveUser, runtimeVars ?? {})
       return reply.status(201).send({ runId, message: 'Pipeline started' })
