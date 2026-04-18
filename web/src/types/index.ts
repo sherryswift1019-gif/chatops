@@ -91,6 +91,7 @@ export interface BugAnalysisReport {
   rootCauseSummary: string | null; solutionsJson: Solution[]
   affectedModules: string[] | null; analysisSteps: string[] | null
   metadata: Record<string, unknown> | null; status: string
+  pipelineRunId: number | null; primaryProjectPath: string | null
   createdAt: string; updatedAt: string
 }
 

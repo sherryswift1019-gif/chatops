@@ -8,6 +8,10 @@ vi.mock('../../db/repositories/bug-analysis-reports.js', () => ({
   listReportsByProductLine: vi.fn(async () => []),
 }))
 
+vi.mock('../../db/repositories/bug-fix-events.js', () => ({
+  findByReport: vi.fn(async () => []),
+}))
+
 vi.mock('../../agent/analysis/analyzer.js', () => ({
   handleAnalyzeBug: vi.fn(),
 }))
@@ -18,6 +22,7 @@ vi.mock('../../agent/coordinator.js', () => ({
 
 import { registerBugAnalysisReportRoutes } from '../../admin/routes/bug-analysis-reports.js'
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
+import { findByReport } from '../../db/repositories/bug-fix-events.js'
 import { handleAnalyzeBug } from '../../agent/analysis/analyzer.js'
 import { handleAnalysisComplete } from '../../agent/coordinator.js'
 
@@ -176,6 +181,66 @@ describe('POST /bug-reports/:id/retry', () => {
     expect(body.data.newReportId).toBe(88)
     expect(body.data.newRunId).toBeUndefined()
     expect(handleAnalysisComplete).not.toHaveBeenCalled()
+    await app.close()
+  })
+})
+
+describe('GET /bug-reports/:id/events', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('returns 400 when id is non-numeric', async () => {
+    const app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/bug-reports/abc/events' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ error: { code: 'INVALID_ID' } })
+    await app.close()
+  })
+
+  it('returns empty array when report has no events', async () => {
+    ;(findByReport as any).mockResolvedValue([])
+    const app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/bug-reports/42/events' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ data: [] })
+    expect(findByReport).toHaveBeenCalledWith(42)
+    await app.close()
+  })
+
+  it('returns all events for the report', async () => {
+    const now = new Date()
+    const events = [
+      {
+        id: 1,
+        reportId: 42,
+        projectPath: null,
+        code: 'analysis',
+        status: 'success',
+        durationMs: 5000,
+        data: { level: 'l2', classification: 'bug' },
+        createdAt: now,
+      },
+      {
+        id: 2,
+        reportId: 42,
+        projectPath: 'PAM/x',
+        code: 'scope_identified',
+        status: 'success',
+        durationMs: null,
+        data: { isPrimary: true },
+        createdAt: now,
+      },
+    ]
+    ;(findByReport as any).mockResolvedValue(events)
+    const app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/bug-reports/42/events' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.data).toHaveLength(2)
+    expect(body.data[0].code).toBe('analysis')
+    expect(body.data[1].code).toBe('scope_identified')
+    expect(body.data[1].projectPath).toBe('PAM/x')
     await app.close()
   })
 })

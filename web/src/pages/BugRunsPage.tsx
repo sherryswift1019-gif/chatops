@@ -1,109 +1,320 @@
-import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Button, Drawer, Descriptions, Timeline, Select, Space, message } from 'antd'
+import { useEffect, useMemo, useState } from 'react'
+import { Card, Collapse, Tag, Button, Select, Space, Spin, Timeline, Modal, message, Empty } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import { getBugAnalysisReports, getBugAnalysisReport } from '../api/bug-analysis-reports'
+import { Link } from 'react-router-dom'
+import {
+  getBugAnalysisReports,
+  retryBugReport,
+  fetchBugEvents,
+  type BugFixEvent,
+} from '../api/bug-analysis-reports'
 import { getProductLines } from '../api/product-lines'
 import type { BugAnalysisReport, ProductLine } from '../types'
 
 const levelColors: Record<string, string> = { l1: 'green', l2: 'blue', l3: 'orange', l4: 'red' }
 const confidenceColors: Record<string, string> = { high: 'green', medium: 'gold', low: 'red' }
-const statusColors: Record<string, string> = { draft: 'default', published: 'processing', superseded: 'warning' }
+const statusColors: Record<string, string> = {
+  draft: 'default',
+  published: 'processing',
+  superseded: 'warning',
+  pipeline_success: 'success',
+  completed: 'success',
+  aborted: 'error',
+}
 
-const LABEL_FLOW = ['needs-analysis', 'analyzing', 'graded', 'fixing', 'in-review', 'testing', 'ready-to-merge', 'merged', 'done']
+function truncate(s: string | null | undefined, n: number): string {
+  if (!s) return '-'
+  return s.length > n ? `${s.slice(0, n)}…` : s
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso)
+  const pad = (x: number) => String(x).padStart(2, '0')
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+function groupByIssueId(reports: BugAnalysisReport[]): Map<number, BugAnalysisReport[]> {
+  const map = new Map<number, BugAnalysisReport[]>()
+  for (const r of reports) {
+    const list = map.get(r.issueId) ?? []
+    list.push(r)
+    map.set(r.issueId, list)
+  }
+  // 每组按 created_at DESC 排序
+  for (const list of map.values()) {
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  }
+  return map
+}
 
 export default function BugRunsPage() {
-  const [data, setData] = useState<BugAnalysisReport[]>([])
+  const [reports, setReports] = useState<BugAnalysisReport[]>([])
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedPL, setSelectedPL] = useState<number | undefined>()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [detail, setDetail] = useState<BugAnalysisReport | null>(null)
 
-  useEffect(() => { getProductLines().then(setProductLines) }, [])
+  useEffect(() => {
+    getProductLines().then(setProductLines)
+  }, [])
 
-  useEffect(() => { if (selectedPL) load() }, [selectedPL])
+  useEffect(() => {
+    if (selectedPL) load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPL])
 
   async function load() {
     if (!selectedPL) return
     setLoading(true)
     try {
       const res = await getBugAnalysisReports(selectedPL)
-      setData(res.data)
-    } finally { setLoading(false) }
+      setReports(res.data)
+    } finally {
+      setLoading(false)
+    }
   }
 
-  async function showDetail(id: number) {
-    try {
-      const report = await getBugAnalysisReport(id)
-      setDetail(report)
-      setDrawerOpen(true)
-    } catch { message.error('加载详情失败') }
-  }
-
-  const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: 'Issue', dataIndex: 'issueId', render: (v: number, r: BugAnalysisReport) => r.issueUrl ? <a href={r.issueUrl} target="_blank">#{v}</a> : `#${v}` },
-    { title: '级别', dataIndex: 'level', render: (v: string) => <Tag color={levelColors[v]}>{v.toUpperCase()}</Tag> },
-    { title: '置信度', dataIndex: 'confidence', render: (v: string) => <Tag color={confidenceColors[v]}>{v}</Tag> },
-    { title: '分类', dataIndex: 'classification', render: (v: string) => <Tag>{v}</Tag> },
-    { title: '根因', dataIndex: 'rootCauseSummary', ellipsis: true },
-    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{v}</Tag> },
-    { title: '时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
-    {
-      title: '操作',
-      render: (_: unknown, r: BugAnalysisReport) => <a onClick={() => showDetail(r.id)}>详情</a>,
-    },
-  ]
+  const grouped = useMemo(() => groupByIssueId(reports), [reports])
 
   return (
-    <>
-      <Card
-        title="Bug 修复实例"
-        extra={
-          <Space>
-            <Select style={{ width: 200 }} placeholder="选择产品线" value={selectedPL} onChange={setSelectedPL}
-              options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))} />
-            <Button icon={<ReloadOutlined />} onClick={load} disabled={!selectedPL}>刷新</Button>
-          </Space>
-        }
-      >
-        <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={{ pageSize: 20 }} />
-      </Card>
-
-      <Drawer title={detail ? `分析报告 #${detail.id}` : ''} open={drawerOpen} onClose={() => setDrawerOpen(false)} width={700}>
-        {detail && (
-          <>
-            <Descriptions column={2} size="small" bordered>
-              <Descriptions.Item label="Issue">
-                {detail.issueUrl ? <a href={detail.issueUrl} target="_blank">#{detail.issueId}</a> : `#${detail.issueId}`}
-              </Descriptions.Item>
-              <Descriptions.Item label="级别"><Tag color={levelColors[detail.level]}>{detail.level.toUpperCase()}</Tag></Descriptions.Item>
-              <Descriptions.Item label="置信度"><Tag color={confidenceColors[detail.confidence]}>{detail.confidence} ({((detail.confidenceScore ?? 0) * 100).toFixed(0)}%)</Tag></Descriptions.Item>
-              <Descriptions.Item label="分类"><Tag>{detail.classification}</Tag></Descriptions.Item>
-              <Descriptions.Item label="状态"><Tag color={statusColors[detail.status]}>{detail.status}</Tag></Descriptions.Item>
-              <Descriptions.Item label="影响模块">{(detail.affectedModules ?? []).join(', ') || '-'}</Descriptions.Item>
-            </Descriptions>
-
-            <div style={{ margin: '16px 0 8px', fontWeight: 500 }}>根因</div>
-            <p>{detail.rootCauseSummary ?? '-'}</p>
-
-            <div style={{ margin: '16px 0 8px', fontWeight: 500 }}>修复方案</div>
-            {detail.solutionsJson.map(s => (
-              <div key={s.id} style={{ marginBottom: 8, padding: 8, background: '#fafafa', borderRadius: 4 }}>
-                <strong>{s.id}</strong> {s.recommended && <Tag color="gold">推荐</Tag>}
-                <p style={{ margin: '4px 0 0' }}>{s.summary}（风险: {s.risk}，工作量: {s.effort}）</p>
-              </div>
-            ))}
-
-            {detail.analysisSteps && (
-              <>
-                <div style={{ margin: '16px 0 8px', fontWeight: 500 }}>分析过程</div>
-                <Timeline items={detail.analysisSteps.map((step, i) => ({ children: step }))} />
-              </>
-            )}
-          </>
-        )}
-      </Drawer>
-    </>
+    <Card
+      title="Bug 修复实例"
+      extra={
+        <Space>
+          <Select
+            style={{ width: 220 }}
+            placeholder="选择产品线"
+            value={selectedPL}
+            onChange={setSelectedPL}
+            options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))}
+          />
+          <Button icon={<ReloadOutlined />} onClick={load} disabled={!selectedPL}>刷新</Button>
+        </Space>
+      }
+      loading={loading}
+    >
+      {grouped.size === 0 && !loading ? (
+        <Empty description={selectedPL ? '暂无分析报告' : '请先选择产品线'} />
+      ) : (
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          {Array.from(grouped.entries()).map(([issueId, rounds]) => (
+            <IssueCard key={issueId} issueId={issueId} rounds={rounds} onRetry={load} />
+          ))}
+        </Space>
+      )}
+    </Card>
   )
+}
+
+function IssueCard({
+  issueId,
+  rounds,
+  onRetry,
+}: {
+  issueId: number
+  rounds: BugAnalysisReport[]
+  onRetry: () => void
+}) {
+  const latest = rounds[0]
+  const totalRounds = rounds.length
+  const title = `Issue #${issueId} · ${truncate(latest.rootCauseSummary, 50)}`
+
+  const items = rounds.map((r, idx) => {
+    const roundNumber = totalRounds - idx
+    return {
+      key: String(r.id),
+      label: <RoundHeader report={r} roundNumber={roundNumber} />,
+      extra: <RetryButtonExtra report={r} onRetry={onRetry} />,
+      children: <RoundBody report={r} />,
+    }
+  })
+
+  return (
+    <Card
+      size="small"
+      title={
+        <Space>
+          <span>{title}</span>
+          {latest.issueUrl && (
+            <a href={latest.issueUrl} target="_blank" rel="noopener noreferrer">查看 Issue</a>
+          )}
+          <Tag>{totalRounds} 轮</Tag>
+        </Space>
+      }
+    >
+      <Collapse defaultActiveKey={[String(latest.id)]} items={items} />
+    </Card>
+  )
+}
+
+function RoundHeader({ report, roundNumber }: { report: BugAnalysisReport; roundNumber: number }) {
+  return (
+    <Space wrap>
+      <strong>第 {roundNumber} 轮</strong>
+      <Tag color={levelColors[report.level]}>{report.level.toUpperCase()}</Tag>
+      <Tag color={confidenceColors[report.confidence]}>{report.confidence}</Tag>
+      <Tag>{report.classification}</Tag>
+      <Tag color={statusColors[report.status] ?? 'default'}>{report.status}</Tag>
+      <span style={{ color: '#8B93A8' }}>{formatTime(report.createdAt)}</span>
+    </Space>
+  )
+}
+
+function RetryButtonExtra({
+  report,
+  onRetry,
+}: {
+  report: BugAnalysisReport
+  onRetry: () => void
+}) {
+  if (report.status !== 'aborted') return null
+  return (
+    <Button
+      type="primary"
+      danger
+      size="small"
+      onClick={(e) => {
+        e.stopPropagation()
+        Modal.confirm({
+          title: '确认重新开始处理吗？',
+          content: '将产生新一轮分析和新 Pipeline 实例（消耗 Claude token）。',
+          okText: '确认重试',
+          cancelText: '取消',
+          onOk: async () => {
+            try {
+              const r = await retryBugReport(report.id)
+              message.success(
+                `已启动新一轮：报告 #${r.newReportId}${r.newRunId ? ` / 执行 #${r.newRunId}` : ''}`,
+              )
+              onRetry()
+            } catch (err) {
+              message.error(`重试失败: ${(err as Error).message}`)
+            }
+          },
+        })
+      }}
+    >
+      重试
+    </Button>
+  )
+}
+
+function RoundBody({ report }: { report: BugAnalysisReport }) {
+  return (
+    <div>
+      {report.rootCauseSummary && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 500, marginBottom: 4 }}>根因</div>
+          <div>{report.rootCauseSummary}</div>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontWeight: 500, marginBottom: 4 }}>事件时间线</div>
+        <EventTimeline reportId={report.id} />
+      </div>
+
+      <Space>
+        {report.pipelineRunId && (
+          <Link to="/test-runs">查看执行记录 #{report.pipelineRunId}</Link>
+        )}
+        {report.issueUrl && (
+          <a href={report.issueUrl} target="_blank" rel="noopener noreferrer">打开 Issue</a>
+        )}
+      </Space>
+    </div>
+  )
+}
+
+function EventTimeline({ reportId }: { reportId: number }) {
+  const [events, setEvents] = useState<BugFixEvent[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    fetchBugEvents(reportId)
+      .then((evs) => {
+        if (!cancelled) setEvents(evs)
+      })
+      .catch(() => {
+        if (!cancelled) setEvents([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [reportId])
+
+  if (loading || events === null) return <Spin size="small" />
+  if (events.length === 0) return <span style={{ color: '#8B93A8' }}>暂无事件</span>
+
+  const items = events.map((e) => ({
+    color: e.status === 'failed' ? 'red' : 'green',
+    label: formatTime(e.createdAt),
+    children: <EventContent event={e} />,
+  }))
+
+  return <Timeline mode="left" items={items} />
+}
+
+function EventContent({ event }: { event: BugFixEvent }) {
+  const d = event.data as Record<string, any>
+  switch (event.code) {
+    case 'analysis':
+      return (
+        <span>
+          分析完成 · level={String(d.level ?? '-')} · classification={String(d.classification ?? '-')}
+        </span>
+      )
+    case 'scope_identified':
+      return (
+        <span>
+          锁定 {event.projectPath ?? '-'}（{d.isPrimary ? '主仓库' : '从仓库'}）
+        </span>
+      )
+    case 'create_issue':
+      return d.issueUrl ? (
+        <a href={String(d.issueUrl)} target="_blank" rel="noopener noreferrer">
+          创建 Issue #{String(d.issueIid ?? '-')}
+        </a>
+      ) : (
+        <span>创建 Issue #{String(d.issueIid ?? '-')}</span>
+      )
+    case 'fix_attempt':
+      return (
+        <span>
+          {event.status === 'success' ? '✅' : '❌'} {event.projectPath ?? '-'} 修复
+          {d.attempt !== undefined ? `（attempt=${String(d.attempt)}）` : ''}
+        </span>
+      )
+    case 'create_mr':
+      return d.mrUrl ? (
+        <a href={String(d.mrUrl)} target="_blank" rel="noopener noreferrer">
+          MR !{String(d.mrIid ?? '-')}（{event.projectPath ?? '-'}）
+        </a>
+      ) : (
+        <span>MR !{String(d.mrIid ?? '-')}（{event.projectPath ?? '-'}）</span>
+      )
+    case 'ai_review':
+      return <span>AI Review: {String(d.label ?? '-')}</span>
+    case 'approval':
+      return <span>审批: {String(d.decision ?? '-')}</span>
+    case 'notify':
+      return (
+        <span>
+          {event.status === 'success' ? '✅' : '❌'} 通知 {String(d.userId ?? '-')}（
+          {String(d.messageKind ?? '-')}）
+        </span>
+      )
+    case 'lifecycle_sync':
+      return (
+        <span>
+          MR {String(d.mrAction ?? '-')} → {String(d.targetStatus ?? '-')}
+        </span>
+      )
+    default:
+      return <span>{event.code}</span>
+  }
 }

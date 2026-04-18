@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { getBugAnalysisReportById, listReportsByProductLine } from '../../db/repositories/bug-analysis-reports.js'
+import { findByReport } from '../../db/repositories/bug-fix-events.js'
 import { handleAnalyzeBug } from '../../agent/analysis/analyzer.js'
 import { handleAnalysisComplete } from '../../agent/coordinator.js'
 
@@ -18,6 +19,16 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
     const report = await getBugAnalysisReportById(id)
     if (!report) return { error: { code: 'NOT_FOUND', message: `report ${id} not found` } }
     return { data: report }
+  })
+
+  // 查询指定报告的所有 bug_fix_events（按 created_at 升序）
+  app.get<{ Params: { id: string } }>('/bug-reports/:id/events', async (req, reply) => {
+    const reportId = Number(req.params.id)
+    if (!Number.isFinite(reportId)) {
+      return reply.code(400).send({ error: { code: 'INVALID_ID', message: '非法的报告 ID' } })
+    }
+    const events = await findByReport(reportId)
+    return reply.send({ data: events })
   })
 
   // 失败重试：基于 aborted 状态的报告，复用原 Issue 再次分析

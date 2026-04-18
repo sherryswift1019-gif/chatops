@@ -28,3 +28,19 @@ export async function retryBugReport(id: number): Promise<RetryBugReportResult> 
   }
   return data.data
 }
+
+export interface BugFixEvent {
+  id: number
+  reportId: number
+  projectPath: string | null
+  code: string
+  status: 'success' | 'failed'
+  durationMs: number | null
+  data: Record<string, unknown>
+  createdAt: string
+}
+
+export async function fetchBugEvents(reportId: number): Promise<BugFixEvent[]> {
+  const { data } = await client.get<{ data: BugFixEvent[] }>(`/bug-reports/${reportId}/events`)
+  return data.data
+}
