@@ -8,6 +8,10 @@
  *   GET  /admin/_e2e/health            返回 { e2eMode, claudeMock }
  *   POST /admin/_e2e/approve           { issueIid, decision } →
  *                                      封装 PipelineApprovalManager.tryHandleCommand
+ *   POST /admin/_e2e/im/incoming       { text, groupId, userId, userName } →
+ *                                      模拟群内消息进入（简化路径：只复现 Step 0
+ *                                      的 @ 去除 + tryHandleCommand，不跑完整的
+ *                                      ClaudeRunner intent 检测链路）
  *   POST /admin/_e2e/analyze-and-dispatch { productLineId, message, initiatorId?, async? }
  *        — 完整触发 analyze_bug + handleAnalysisComplete（bug 类型会触发 Pipeline）
  *          返回 { reportId, classification, level, pipelineRunId }
@@ -83,6 +87,53 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
     const mgr = PipelineApprovalManager.getInstance()
     const handled = mgr.tryHandleCommand(`${decision} #${issueIid}`)
     return reply.send({ ok: true, handled })
+  })
+
+  /**
+   * 模拟 IM 入站消息 → 复现 ClaudeRunner.run() Step 0 的审批命令拦截。
+   *
+   * 简化说明：
+   *   真实链路是 钉钉 Stream → adapter onMessage → SessionManager → TaskQueue →
+   *     ClaudeRunner.run() → Step 0 拦截审批命令 → tryHandleCommand。
+   *   e2e 下 intent 检测依赖真实 Claude CLI，不可用（会 spawn claude 子进程
+   *   污染后续测试状态），因此此端点只复现 Step 0 的 `cleanedForApproval` 去 @
+   *   逻辑 + tryHandleCommand 调用，跳过 Porygon intent 检测环节（在 spec 里
+   *   用 `[简化-跳过 ClaudeRunner 全路径]` 标注）。
+   *
+   *   价值：相比 /admin/_e2e/approve 直接给 issueIid，这里测试「真实消息文本」
+   *   的解析路径（@机器人 mention 去除 + approve/reject/reanalyze 正则匹配）。
+   *
+   * 入参：
+   *   { text: string, groupId: string, userId: string, userName?: string }
+   * 返回：
+   *   { ok: true, handled: boolean, cleanedText: string }
+   *   - handled: tryHandleCommand 是否匹配到 pending 审批
+   */
+  app.post<{
+    Body: {
+      text: string
+      groupId: string
+      userId: string
+      userName?: string
+    }
+  }>('/_e2e/im/incoming', async (req, reply) => {
+    const { text, groupId, userId } = req.body ?? ({} as any)
+    if (!text || !groupId || !userId) {
+      return reply.status(400).send({ error: 'text, groupId, userId required' })
+    }
+
+    // 复现 ClaudeRunner.run() Step 0 的 cleanedForApproval + tryHandleCommand
+    const cleanedText = text.replace(/@[\u4e00-\u9fff]+/g, '').trim()
+    let handled = false
+    try {
+      const { PipelineApprovalManager } = await import('../../pipeline/approval-manager.js')
+      const mgr = PipelineApprovalManager.getInstance()
+      handled = mgr.tryHandleCommand(cleanedText)
+    } catch (err) {
+      console.log('[e2e/im/incoming] tryHandleCommand err:', err instanceof Error ? err.message : err)
+    }
+
+    return reply.send({ ok: true, handled, cleanedText })
   })
 
   /**

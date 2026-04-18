@@ -2,9 +2,10 @@
  * Mock IM adapter — 仅在 E2E_MODE=1 时由 server.ts 装载（替代 DingTalkAdapter）。
  *
  * 所有 send 系方法都只把消息写入 e2e-store 的 sentMessages，不做任何实际网络 IO。
- * 其他生命周期方法（start/stop/onMessage/onCardAction/handleWebhook）留空——
- * e2e 场景下消息注入走 /admin/_e2e/... 端点或直接用 API 触发 pipeline，
- * 不从 IM 入口进。
+ *
+ * 入站消息：
+ *   onMessage(handler) 会保存 handler，e2e 场景下通过 simulateIncomingMessage()
+ *   主动触发（模拟群消息从钉钉 Stream 回调进来）。未保存 handler 时返回 false。
  *
  * platform 声明为 'dingtalk'，让上游业务以为自己接的是钉钉（审批路由、用户查询等
  * 按钉钉分支走），避免引入新 platform 值导致分支爆炸。
@@ -17,18 +18,43 @@ import type {
   TextContent,
   InteractiveCard,
   UserInfo,
+  NormalizedMessage,
 } from './types.js'
 import { recordSentMessage } from '../../agent/mocks/e2e-store.js'
 
+// 单例持有，供 _e2e 路由拿到当前进程里注册的 Mock adapter 实例
+let currentInstance: MockIMAdapter | null = null
+
+export function getMockIMAdapter(): MockIMAdapter | null {
+  return currentInstance
+}
+
 export class MockIMAdapter implements IMAdapter {
   readonly platform = 'dingtalk' as const
+  private messageHandler: MessageHandler | null = null
 
-  onMessage(_handler: MessageHandler): void {
-    // 无需实际订阅：e2e 场景下消息注入不走 IM 链路
+  constructor() {
+    currentInstance = this
+  }
+
+  onMessage(handler: MessageHandler): void {
+    this.messageHandler = handler
   }
 
   onCardAction(_handler: CardActionHandler): void {
-    // 同上
+    // e2e 场景下不需要卡片回调
+  }
+
+  /**
+   * 模拟一条入站消息，触发已注册的 messageHandler（如果有）。
+   * 返回 true 表示 handler 已被调用。
+   *
+   * 用于 e2e 模拟"用户在群里发消息"，配合 _e2e/im/incoming 端点使用。
+   */
+  async simulateIncomingMessage(msg: NormalizedMessage): Promise<boolean> {
+    if (!this.messageHandler) return false
+    await this.messageHandler(msg)
+    return true
   }
 
   async sendMessage(target: MessageTarget, content: TextContent): Promise<void> {
