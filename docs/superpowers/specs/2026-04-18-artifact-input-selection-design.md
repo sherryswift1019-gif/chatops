@@ -52,7 +52,9 @@ interface TestPipeline {
 }
 ```
 
-### 3.2 数据库迁移（`src/db/schema-v8.sql`）
+### 3.2 数据库迁移（`src/db/schema-v10.sql`）
+
+> v8 / v9 已占用，本设计用 v10。
 
 ```sql
 ALTER TABLE test_pipelines
@@ -184,7 +186,9 @@ IM 适配器、定时调度器、管理后台手动触发按钮、MCP 工具 全
 
 ### 6.3 扩展已有 trigger 工具
 
-`trigger_pipeline` / `deploy` 类工具参数增加 `runtimeVars?: Record<string,string>`，透传到 `triggerPipelineRun`。
+Pipeline 触发类工具（例：`trigger_pipeline`、或管理后台调用的"运行"接口）参数增加 `runtimeVars?: Record<string,string>`，透传到 `triggerPipelineRun`。
+
+**不影响 `deploy` 类工具**——它们面向"按分支/环境快速部署"场景，与本设计的"流水线触发 = 部署一个完整新环境"用途不同，保持独立。
 
 所有新工具在 `src/server.ts` 和 `src/agent/mcp-server.ts` 添加 `import './tools/<name>.js'`。
 
@@ -249,20 +253,22 @@ Agent：已触发流水线 #1234，使用包：PAM-Docker-develop.tar.gz
 - `src/pipeline/artifact-resolver.ts`
 - `src/agent/tools/list-artifacts.ts`
 - `src/agent/tools/get-pipeline-artifact-inputs.ts`
-- `src/db/schema-v8.sql`
+- `src/db/schema-v10.sql`
 
 **修改**
 - `src/pipeline/types.ts`（ArtifactInput 接口）
 - `src/pipeline/executor.ts`（triggerRun 签名 + runtimeVars 合并）
 - `src/db/repositories/test-pipelines.ts`（读/写 artifact_inputs 列）
 - `src/db/repositories/test-runs.ts`（写 runtime_vars 列）
-- `src/db/migrate.ts`（执行 schema-v8）
+- `src/db/migrate.ts`（执行 schema-v10）
 - `src/admin/routes/pipelines.ts`（GET/PUT 返回 artifactInputs、PUT 校验、POST run 接收 runtimeVars）
 - `src/admin/routes/artifacts.ts` **新增** 路由（POST /admin/artifacts/list）
-- `src/agent/tools/deploy.ts`（如有 trigger 工具，扩展 runtimeVars 参数）
 - `src/server.ts` / `src/agent/mcp-server.ts`（import 新工具）
 - `web/src/pages/PipelineEditor/...`（制品输入编辑 UI + 预览匹配）
 - `web/src/api/pipelines.ts`（新增 artifacts.list + 手动 run 的 runtimeVars 参数）
+
+**不动**
+- `src/agent/tools/deploy.ts` 及其它 deploy 类工具：面向分支/环境的快速部署，与本设计的"流水线部署完整新环境"用途不同
 
 ## 11 · 非目标（YAGNI）
 
