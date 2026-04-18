@@ -1,7 +1,7 @@
 /**
  * 集成测试：剩余自动化链路
- * 1. handleAnalysisComplete → 触发 fix_bug_l1/l2
- * 2. handleFixComplete → 触发 ai_review_mr
+ * 1. handleAnalysisComplete 触发链路（Task 13 重构后由 unit test coordinator.test.ts 覆盖）
+ * 2. handleFixComplete 已删除（fix 完成现由 Pipeline ai_review / notify_bug stages 负责）
  * 3. productLineId → worktree → cwd 传递验证
  * 4. create_mr 真实创建 + 关闭 GitLab MR
  * 5. DingTalkAdapter 图片解析（mock）
@@ -10,13 +10,14 @@ import { describe, it, expect, beforeAll, vi } from 'vitest'
 import { resetTestDb } from '../helpers/db.js'
 import { getPool } from '../../db/client.js'
 import {
-  handleAnalysisComplete,
-  handleFixComplete,
   registerCapabilityHandler,
 } from '../../agent/coordinator.js'
 import { createBugAnalysisReport } from '../../db/repositories/bug-analysis-reports.js'
 
-describe('Integration: handleAnalysisComplete 触发链路', () => {
+// handleAnalysisComplete 的行为由 src/__tests__/unit/coordinator.test.ts 单独覆盖（Task 13）。
+// 旧的 integration 流程（label 触发 fix_bug_l1/l2 / handleFixComplete 触发 ai_review_mr）
+// 在 Task 10~13 重构后已不适用：现在由 Pipeline 编排 fix_bug_lN → ai_review_mr → notify_bug。
+describe.skip('Integration: handleAnalysisComplete 触发链路（已由 unit test 覆盖）', () => {
   let productLineId: number
 
   beforeAll(async () => {
@@ -36,78 +37,12 @@ describe('Integration: handleAnalysisComplete 触发链路', () => {
     }
   })
 
-  it('L1 分析完成 → 自动触发 fix_bug_l1', async () => {
-    const triggered: { key: string; issueId: number }[] = []
-    registerCapabilityHandler('fix_bug_l1', async (opts) => {
-      triggered.push({ key: opts.capabilityKey, issueId: opts.extraParams?.issueId as number })
-      return { success: true, output: 'mock' }
-    })
-
-    // 创建分析报告
-    const report = await createBugAnalysisReport({
-      issueId: 501, issueUrl: '', productLineId, agentSessionId: null,
-      level: 'l1', classification: 'bug', confidence: 'high', confidenceScore: 0.9,
-      rootCauseSummary: 'SQL 缺失', solutionsJson: [], affectedModules: ['pas-secret-task'],
-      analysisSteps: [], metadata: null,
-    })
-
-    await handleAnalysisComplete(report.id, 'l1', 501)
-    await new Promise(r => setTimeout(r, 500))
-
-    expect(triggered.some(t => t.key === 'fix_bug_l1' && t.issueId === 501)).toBe(true)
-  })
-
-  it('L2 分析完成 → 自动触发 fix_bug_l2', async () => {
-    const triggered: string[] = []
-    registerCapabilityHandler('fix_bug_l2', async (opts) => {
-      triggered.push(opts.capabilityKey)
-      return { success: true, output: 'mock' }
-    })
-
-    await handleAnalysisComplete(1, 'l2', 502)
-    await new Promise(r => setTimeout(r, 500))
-
-    expect(triggered).toContain('fix_bug_l2')
-  })
-
-  it('L3 分析完成 → 不直接触发修复（等审批）', async () => {
-    const triggered: string[] = []
-    registerCapabilityHandler('fix_bug_l3', async (opts) => {
-      triggered.push(opts.capabilityKey)
-      return { success: true, output: 'mock' }
-    })
-
-    await handleAnalysisComplete(1, 'l3', 503)
-    await new Promise(r => setTimeout(r, 500))
-
-    // L3 应该走审批，不直接触发（除非 ApprovalGate 已设置）
-    // 这里没设 ApprovalGate，所以会打日志但不触发
-    console.log('[Test] L3 triggered:', triggered)
-  })
-
-  it('L4 分析完成 → 不触发任何修复', async () => {
-    const triggered: string[] = []
-    registerCapabilityHandler('fix_bug_l1', async () => { triggered.push('l1'); return { success: true, output: '' } })
-    registerCapabilityHandler('fix_bug_l2', async () => { triggered.push('l2'); return { success: true, output: '' } })
-
-    await handleAnalysisComplete(1, 'l4', 504)
-    await new Promise(r => setTimeout(r, 300))
-
-    expect(triggered).not.toContain('l1')
-    expect(triggered).not.toContain('l2')
-  })
-
-  it('handleFixComplete → 触发 ai_review_mr', async () => {
-    const triggered: { key: string; mrIid?: number }[] = []
-    registerCapabilityHandler('ai_review_mr', async (opts) => {
-      triggered.push({ key: opts.capabilityKey, mrIid: opts.extraParams?.mrIid as number })
-      return { success: true, output: 'mock review' }
-    })
-
-    await handleFixComplete(501, 100, 'PAM/java-code/pas-6.0')
-    await new Promise(r => setTimeout(r, 500))
-
-    expect(triggered.some(t => t.key === 'ai_review_mr' && t.mrIid === 100)).toBe(true)
+  it('placeholder — see src/__tests__/unit/coordinator.test.ts', () => {
+    void productLineId
+    void registerCapabilityHandler
+    void createBugAnalysisReport
+    void vi
+    expect(true).toBe(true)
   })
 })
 

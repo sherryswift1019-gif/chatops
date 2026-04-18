@@ -1,7 +1,12 @@
 import { getCapabilityByKey } from '../db/repositories/capabilities.js'
-import { findOwner } from '../db/repositories/module-owners.js'
-import { getBugAnalysisReportByIssueId } from '../db/repositories/bug-analysis-reports.js'
-import { getTestPipelineByName } from '../db/repositories/test-pipelines.js'
+import {
+  getBugAnalysisReportById,
+  setPipelineRunId,
+  updateReportStatus,
+} from '../db/repositories/bug-analysis-reports.js'
+import type { TestPipeline } from '../db/repositories/test-pipelines.js'
+import { findByReportCode } from '../db/repositories/bug-fix-events.js'
+import { getPool } from '../db/client.js'
 import { runPipeline } from '../pipeline/executor.js'
 import type { TaskContext } from './tools/types.js'
 import type { ApprovalGate } from '../approval/gate.js'
@@ -65,104 +70,149 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
   }
 }
 
-/** Pipeline 名称约定 */
+/** Pipeline 名称约定（按 level 查找 product_line 对应 Pipeline） */
 const PIPELINE_NAMES: Record<string, string> = {
   l1: 'L1-配置类',
   l2: 'L2-代码缺陷',
   l3: 'L3-业务逻辑',
+  l4: 'L4-复杂问题',
 }
 
-export async function handleAnalysisComplete(reportId: number, level: string, issueId: number): Promise<void> {
-  console.log(`[AgentCoordinator] analysis complete: report=${reportId}, level=${level}, issue=${issueId}`)
+async function findPipelineByLevel(productLineId: number, level: string): Promise<TestPipeline | null> {
+  const name = PIPELINE_NAMES[level]
+  if (!name) return null
+  const { rows } = await getPool().query(
+    `SELECT * FROM test_pipelines WHERE product_line_id = $1 AND name = $2 AND enabled = true LIMIT 1`,
+    [productLineId, name],
+  )
+  const r = rows[0]
+  if (!r) return null
+  return {
+    id: r.id as number,
+    productLineId: r.product_line_id as number,
+    name: r.name as string,
+    description: (r.description ?? '') as string,
+    stages: (r.stages ?? []) as unknown[],
+    serverRoles: (r.server_roles ?? {}) as Record<string, { count: number }>,
+    schedule: (r.schedule ?? '') as string,
+    enabled: r.enabled as boolean,
+    triggerParams: (r.trigger_params ?? {}) as Record<string, unknown>,
+    variables: (r.variables ?? {}) as Record<string, string>,
+    createdAt: r.created_at as Date,
+    updatedAt: r.updated_at as Date,
+  }
+}
 
-  const pipelineName = PIPELINE_NAMES[level]
+/**
+ * 分析完成后协调入口。
+ * - 非 bug 分类：不触发 Pipeline（analyzer 内部已设 status='completed'）
+ * - bug 分类：按 productLineId + level 查匹配 Pipeline，调 runPipeline
+ *   - 回写 pipeline_run_id
+ *   - onComplete: status='success' → pipeline_success；status='failed' → aborted + 补发 notify_bug
+ *                 并在 failed 时检查最新 approval 事件，若 decision='retry_analysis' → 自动 analyze_bug 新一轮
+ */
+export async function handleAnalysisComplete(
+  reportId: number,
+  level: string,
+  classification: string,
+  triggeredBy: string,
+): Promise<void> {
+  console.log(`[AgentCoordinator] analysis complete: report=${reportId}, level=${level}, classification=${classification}`)
 
-  if (!pipelineName) {
-    console.log(`[AgentCoordinator] L4 issue ${issueId}: needs manual handling, no auto-action`)
+  // 非 bug：analyzer 里已设 status='completed'，这里什么都不做
+  if (classification !== 'bug') {
+    console.log(`[AgentCoordinator] skip pipeline for non-bug report ${reportId} (classification=${classification})`)
     return
   }
 
-  // 查找对应等级的 Pipeline 模板
-  const pipeline = await getTestPipelineByName(pipelineName)
-
-  if (pipeline) {
-    // Pipeline 模式：通过 Pipeline 引擎执行修复流程
-    console.log(`[AgentCoordinator] starting pipeline "${pipelineName}" for issue ${issueId}`)
-    runPipeline(
-      pipeline.id,
-      {},  // 无需服务器（capability-only pipeline）
-      'api',
-      'agent-coordinator',
-      (result) => {
-        console.log(`[AgentCoordinator] pipeline "${pipelineName}" completed: ${result.status}`, {
-          issueId, reportId, runId: result.runId,
-        })
-      },
-      { reportId, issueId }
-    ).catch(err => console.error(`[AgentCoordinator] pipeline "${pipelineName}" error:`, err))
-  } else {
-    // 降级：直接 triggerCapability（Pipeline 模板不存在时）
-    console.warn(`[AgentCoordinator] pipeline "${pipelineName}" not found, falling back to direct trigger`)
-    const capabilityKey = `fix_bug_${level}`
-    triggerCapability({
-      capabilityKey,
-      context: {
-        taskId: `auto-${Date.now()}`,
-        groupId: 'system',
-        platform: 'system',
-        initiatorId: 'agent-coordinator',
-        initiatorRole: 'admin',
-      },
-      extraParams: { reportId, issueId },
-    }).catch(err => console.error(`[AgentCoordinator] ${capabilityKey} trigger error:`, err))
+  const report = await getBugAnalysisReportById(reportId)
+  if (!report) {
+    console.error(`[AgentCoordinator] report ${reportId} not found`)
+    throw new Error(`report ${reportId} not found`)
   }
-}
 
-// 通知回调（由 server.ts 注入 IM adapter 的 sendDirectMessage）
-type NotifyDmFn = (userId: string, message: string) => Promise<void>
-let notifyDmFn: NotifyDmFn | null = null
-export function setNotifyDmFn(fn: NotifyDmFn): void { notifyDmFn = fn }
+  const pipeline = await findPipelineByLevel(report.productLineId, level)
+  if (!pipeline) {
+    console.error(`[AgentCoordinator] no pipeline for productLine=${report.productLineId} level=${level}, mark aborted`)
+    await updateReportStatus(reportId, 'aborted')
+    return
+  }
 
-export async function handleFixComplete(issueId: number, mrId: number, projectPath?: string): Promise<void> {
-  console.log(`[AgentCoordinator] fix complete: issue=${issueId}, mr=${mrId}`)
-
-  const result = await triggerCapability({
-    capabilityKey: 'ai_review_mr',
-    context: {
-      taskId: `review-${mrId}`,
-      groupId: 'system',
-      platform: 'system',
-      initiatorId: 'agent-coordinator',
-      initiatorRole: 'admin',
-    },
-    extraParams: { mrIid: mrId, projectPath },
-  }).catch(err => {
-    console.error('[AgentCoordinator] ai_review_mr trigger error:', err)
-    return null
-  })
-
-  // Review 完成后 DM 通知模块负责人
-  if (result && notifyDmFn) {
-    const label = (result.data as any)?.label ?? 'unknown'
-    const gitlabUrl = process.env.GITLAB_URL ?? ''
-    const mrUrl = `${gitlabUrl}/${projectPath}/-/merge_requests/${mrId}`
-    const statusText = label === 'ai-approved'
-      ? 'AI Review 通过，请确认后合并'
-      : 'AI Review 发现问题，请关注'
-
-    // 查找模块负责人
-    const report = await getBugAnalysisReportByIssueId(issueId).catch(() => null)
-    if (report) {
-      const modules = report.affectedModules ?? []
-      const owner = modules.length > 0 ? await findOwner(report.productLineId, modules[0]) : null
-      const ownerUserId = owner?.ownerUserId
-
-      if (ownerUserId) {
-        await notifyDmFn(ownerUserId, `**MR !${mrId}** ${statusText}\n\n${mrUrl}`).catch(err =>
-          console.error('[AgentCoordinator] DM 通知失败:', err)
-        )
-        console.log(`[AgentCoordinator] DM 通知已发送: ${ownerUserId}`)
+  const onComplete = async (result: { status: 'success' | 'failed'; errorMessage?: string }): Promise<void> => {
+    try {
+      if (result.status === 'success') {
+        await updateReportStatus(reportId, 'pipeline_success')
+        console.log(`[AgentCoordinator] report ${reportId} → pipeline_success`)
+        return
       }
+
+      // Pipeline 失败 → aborted
+      await updateReportStatus(reportId, 'aborted')
+      console.log(`[AgentCoordinator] report ${reportId} → aborted (errorMessage=${result.errorMessage ?? ''})`)
+
+      // 补发 notify_bug（失败时 notify_bug stage 可能未运行）
+      try {
+        await triggerCapability({
+          capabilityKey: 'notify_bug',
+          context: {
+            taskId: `notify-fail-${reportId}`,
+            groupId: 'pipeline',
+            platform: 'api',
+            initiatorId: triggeredBy,
+            initiatorRole: 'admin',
+          },
+          extraParams: { reportId },
+        })
+      } catch (err) {
+        console.error(`[AgentCoordinator] notify_bug on failed pipeline error:`, err)
+      }
+
+      // retry_analysis 决策 → 自动 analyze_bug 新一轮
+      const approvals = await findByReportCode(reportId, 'approval')
+      const lastApproval = approvals.length > 0 ? approvals[approvals.length - 1] : null
+      const decision = lastApproval ? (lastApproval.data as Record<string, unknown>)?.decision : null
+      if (decision === 'retry_analysis') {
+        console.log(`[AgentCoordinator] retry_analysis → trigger new analyze_bug with reuseIssueId=${report.issueId}`)
+        try {
+          await triggerCapability({
+            capabilityKey: 'analyze_bug',
+            context: {
+              taskId: `retry-${reportId}`,
+              groupId: 'pipeline',
+              platform: 'api',
+              initiatorId: triggeredBy,
+              initiatorRole: 'developer',
+            },
+            extraParams: {
+              productLineId: report.productLineId,
+              reuseIssueId: report.issueId,
+              message: `[重新分析] 基于 Issue #${report.issueId} 的历史内容重新分析`,
+            },
+          })
+        } catch (err) {
+          console.error(`[AgentCoordinator] retry_analysis trigger error:`, err)
+        }
+      }
+    } catch (err) {
+      console.error(`[AgentCoordinator] onComplete error for report ${reportId}:`, err)
     }
   }
+
+  const runId = await runPipeline(
+    pipeline.id,
+    {},  // capability-only pipeline，无需服务器
+    'api',
+    triggeredBy,
+    onComplete,
+    { reportId },
+  )
+
+  await setPipelineRunId(reportId, runId)
+  console.log(`[AgentCoordinator] report ${reportId} linked to pipeline run ${runId}`)
 }
+
+// 通知回调（server.ts 仍注入；当前链路已由 notify_bug capability 负责，保留 API 兼容性）
+type NotifyDmFn = (userId: string, message: string) => Promise<void>
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+let notifyDmFn: NotifyDmFn | null = null
+export function setNotifyDmFn(fn: NotifyDmFn): void { notifyDmFn = fn }
