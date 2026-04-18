@@ -4,7 +4,7 @@ import type { IMAdapter } from '../adapters/im/types.js'
 export class PipelineApprovalManager {
   private static instance: PipelineApprovalManager | null = null
   private adapters: IMAdapter[] = []
-  private pending = new Map<string, { resolve: (decision: 'approved' | 'rejected') => void; description: string; issueId?: string }>()
+  private pending = new Map<string, { resolve: (decision: 'approved' | 'rejected' | 'retry_analysis') => void; description: string; issueId?: string }>()
 
   static initialize(adapters: IMAdapter[]): PipelineApprovalManager {
     const mgr = new PipelineApprovalManager()
@@ -25,19 +25,20 @@ export class PipelineApprovalManager {
     description: string,
     timeoutMs: number,
     issueId?: string,
-  ): Promise<'approved' | 'rejected' | 'timeout'> {
+  ): Promise<'approved' | 'rejected' | 'timeout' | 'retry_analysis'> {
     const approvalKey = issueId ? `l3-fix-${issueId}` : randomUUID()
     const adapter = this.adapters[0]
     if (!adapter) throw new Error('No IM adapter available')
 
-    const approvalPromise = new Promise<'approved' | 'rejected'>((resolve) => {
+    const approvalPromise = new Promise<'approved' | 'rejected' | 'retry_analysis'>((resolve) => {
       this.pending.set(approvalKey, { resolve, description })
     })
 
     // 发送审批通知（markdown + 命令提示）
     const approvalCmd = `approve #${issueId ?? approvalKey}`
     const rejectCmd = `reject #${issueId ?? approvalKey}`
-    const message = `🔐 **L3 修复方案审批**\n\n${description}\n\n---\n在群里 @机器人 回复以下命令：\n- \`${approvalCmd}\` 批准\n- \`${rejectCmd}\` 拒绝`
+    const reanalyzeCmd = `reanalyze #${issueId ?? approvalKey}`
+    const message = `🔐 **L3 修复方案审批**\n\n${description}\n\n---\n在群里 @机器人 回复以下命令：\n- \`${approvalCmd}\` 批准\n- \`${rejectCmd}\` 拒绝\n- \`${reanalyzeCmd}\` 要求重新分析`
 
     await Promise.all(
       approverIds.map((approverId) => adapter.sendDirectMessage(approverId, { text: message })),
@@ -56,19 +57,23 @@ export class PipelineApprovalManager {
     }
   }
 
-  /** 处理群里的 approve/reject 命令（支持 approve #29 或 approve 29 或 approve xxxxxxxx） */
+  /** 处理群里的 approve/reject/reanalyze 命令（支持 approve #29 或 approve 29 或 approve xxxxxxxx） */
   tryHandleCommand(text: string): boolean {
-    const match = text.match(/^(approve|reject)\s+#?(\w+)/i)
+    const match = text.match(/^(approve|reject|reanalyze)\s+#?(\w+)/i)
     if (!match) return false
 
     const [, action, key] = match
-    const decision = action.toLowerCase() === 'approve' ? 'approved' : 'rejected'
+    const actionLower = action.toLowerCase()
+    const decision: 'approved' | 'rejected' | 'retry_analysis' =
+      actionLower === 'approve' ? 'approved' :
+      actionLower === 'reject' ? 'rejected' :
+      'retry_analysis'
 
     // 精确匹配或前缀匹配
     // 精确匹配或包含匹配（key 可能是 "33"，pending 里是 "l3-fix-33"）
     for (const [id, e] of this.pending) {
       if (id === key || id.endsWith(key) || id.startsWith(key)) {
-        e.resolve(decision as 'approved' | 'rejected')
+        e.resolve(decision)
         this.pending.delete(id)
         console.log(`[PipelineApproval] ${decision}: ${id}`)
         return true

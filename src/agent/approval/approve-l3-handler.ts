@@ -82,12 +82,12 @@ export async function handleApproveL3(opts: TriggerOptions): Promise<TriggerResu
     // 请求主仓库 owner 审批
     const startTime = Date.now()
     const description = buildApprovalDescription(report, scopes)
-    const decision = (await mgr.requestApproval(
+    const decision = await mgr.requestApproval(
       [primaryOwnerId],
       description,
       3600_000,
       String(report.issueId),
-    )) as 'approved' | 'rejected' | 'timeout' | 'retry_analysis'
+    )
 
     await createEvent({
       reportId,
