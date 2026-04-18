@@ -20,7 +20,7 @@ import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
 
 // Register all tools by importing them
-import './agent/tools/query-deployments.js'
+import './agent/tools/check-env-status.js'
 import './agent/tools/list-images.js'
 import './agent/tools/get-gitlab-commits.js'
 import './agent/tools/get-logs.js'

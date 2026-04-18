@@ -21,7 +21,7 @@ import { getAllTools, getTool } from './tools/index.js'
 import type { TaskContext } from './tools/types.js'
 
 // Register all tools
-import './tools/query-deployments.js'
+import './tools/check-env-status.js'
 import './tools/list-images.js'
 import './tools/get-gitlab-commits.js'
 import './tools/get-logs.js'

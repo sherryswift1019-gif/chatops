@@ -82,14 +82,21 @@ export async function registerProductLineRoutes(app: FastifyInstance): Promise<v
     return reply.send(await listProductLineEnvs(Number(req.params.id)))
   })
 
-  app.put<{ Params: { id: string }; Body: Array<{ envId: number; runtime: string; namespace?: string; enabled?: boolean; connectionConfig?: Record<string, unknown> }> }>(
+  app.put<{ Params: { id: string }; Body: Array<{ envId: number; runtime: string; namespace?: string; enabled?: boolean; connectionConfig?: Record<string, unknown>; defaultBranch?: string }> }>(
     '/product-lines/:id/envs', async (req, reply) => {
       const envs = req.body
       if (!Array.isArray(envs)) return reply.status(400).send({ error: 'body must be array' })
       try {
         const result = await batchSetProductLineEnvs(
           Number(req.params.id),
-          envs.map(e => ({ envId: e.envId, runtime: e.runtime as 'kubernetes' | 'docker', namespace: e.namespace, enabled: e.enabled, connectionConfig: e.connectionConfig }))
+          envs.map(e => ({
+            envId: e.envId,
+            runtime: e.runtime as 'kubernetes' | 'docker',
+            namespace: e.namespace,
+            enabled: e.enabled,
+            connectionConfig: e.connectionConfig,
+            defaultBranch: e.defaultBranch,
+          }))
         )
         return reply.send(result)
       } catch (err: unknown) {

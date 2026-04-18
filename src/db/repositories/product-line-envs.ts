@@ -25,6 +25,7 @@ export interface ProductLineEnv {
   namespace: string
   enabled: boolean
   connectionConfig: ConnectionConfig
+  defaultBranch: string
 }
 
 function mapRow(r: Record<string, unknown>): ProductLineEnv {
@@ -36,6 +37,7 @@ function mapRow(r: Record<string, unknown>): ProductLineEnv {
     namespace: r.namespace as string,
     enabled: r.enabled as boolean,
     connectionConfig: (r.connection_config ?? {}) as ConnectionConfig,
+    defaultBranch: (r.default_branch ?? '') as string,
   }
 }
 
@@ -49,17 +51,18 @@ export async function listProductLineEnvs(productLineId: number): Promise<Produc
 
 export async function upsertProductLineEnv(
   data: Pick<ProductLineEnv, 'productLineId' | 'envId' | 'runtime'> &
-    Partial<Pick<ProductLineEnv, 'namespace' | 'enabled' | 'connectionConfig'>>
+    Partial<Pick<ProductLineEnv, 'namespace' | 'enabled' | 'connectionConfig' | 'defaultBranch'>>
 ): Promise<ProductLineEnv> {
   const pool = getPool()
   const { rows } = await pool.query(
-    `INSERT INTO product_line_envs (product_line_id, env_id, runtime, namespace, enabled, connection_config)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO product_line_envs (product_line_id, env_id, runtime, namespace, enabled, connection_config, default_branch)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      ON CONFLICT (product_line_id, env_id) DO UPDATE
-     SET runtime = $3, namespace = $4, enabled = $5, connection_config = $6
+     SET runtime = $3, namespace = $4, enabled = $5, connection_config = $6, default_branch = $7
      RETURNING *`,
     [data.productLineId, data.envId, data.runtime, data.namespace ?? '',
-     data.enabled ?? true, JSON.stringify(data.connectionConfig ?? {})]
+     data.enabled ?? true, JSON.stringify(data.connectionConfig ?? {}),
+     data.defaultBranch ?? '']
   )
   return mapRow(rows[0])
 }
@@ -67,7 +70,7 @@ export async function upsertProductLineEnv(
 export async function batchSetProductLineEnvs(
   productLineId: number,
   envs: Array<Pick<ProductLineEnv, 'envId' | 'runtime'> &
-    Partial<Pick<ProductLineEnv, 'namespace' | 'enabled' | 'connectionConfig'>>>
+    Partial<Pick<ProductLineEnv, 'namespace' | 'enabled' | 'connectionConfig' | 'defaultBranch'>>>
 ): Promise<ProductLineEnv[]> {
   // 校验：同一产线内 Docker 模式环境不能共享服务器
   const serverEnvMap = new Map<number, number[]>()
@@ -96,10 +99,11 @@ export async function batchSetProductLineEnvs(
     const results: ProductLineEnv[] = []
     for (const env of envs) {
       const { rows } = await client.query(
-        `INSERT INTO product_line_envs (product_line_id, env_id, runtime, namespace, enabled, connection_config)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        `INSERT INTO product_line_envs (product_line_id, env_id, runtime, namespace, enabled, connection_config, default_branch)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [productLineId, env.envId, env.runtime, env.namespace ?? '',
-         env.enabled ?? true, JSON.stringify(env.connectionConfig ?? {})]
+         env.enabled ?? true, JSON.stringify(env.connectionConfig ?? {}),
+         env.defaultBranch ?? '']
       )
       results.push(mapRow(rows[0]))
     }
