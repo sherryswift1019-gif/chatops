@@ -38,4 +38,5 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   manage_role: ['admin'],
   list_product_line_projects: ['developer', 'tester', 'ops', 'admin'],
   list_artifacts: ['developer', 'tester', 'ops', 'admin'],
+  get_pipeline_artifact_inputs: ['developer', 'tester', 'ops', 'admin'],
 }

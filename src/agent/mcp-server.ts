@@ -31,6 +31,7 @@ import './tools/role.js'
 import './tools/autotest.js'
 import './tools/list-projects.js'
 import './tools/list-artifacts.js'
+import './tools/get-pipeline-artifact-inputs.js'
 
 const server = new Server(
   { name: 'chatops-tools', version: '1.0.0' },
