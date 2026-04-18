@@ -5,7 +5,6 @@ import type { TestRun } from '../types'
 export interface TestRunWithUser extends TestRun {
   triggeredByName?: string
   triggeredByAvatar?: string
-  hasReport?: boolean
 }
 
 export const getTestRuns = (params: { pipelineId?: number; page: number; limit: number }, signal?: AbortSignal) =>

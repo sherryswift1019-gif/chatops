@@ -72,8 +72,8 @@ const PIPELINE_NAMES: Record<string, string> = {
   l3: 'L3-业务逻辑',
 }
 
-export async function handleAnalysisComplete(reportId: number, level: string, issueId: number, initiatorId?: string): Promise<void> {
-  console.log(`[AgentCoordinator] analysis complete: report=${reportId}, level=${level}, issue=${issueId}, initiator=${initiatorId}`)
+export async function handleAnalysisComplete(reportId: number, level: string, issueId: number): Promise<void> {
+  console.log(`[AgentCoordinator] analysis complete: report=${reportId}, level=${level}, issue=${issueId}`)
 
   const pipelineName = PIPELINE_NAMES[level]
 
@@ -86,28 +86,19 @@ export async function handleAnalysisComplete(reportId: number, level: string, is
   const pipeline = await getTestPipelineByName(pipelineName)
 
   if (pipeline) {
-    // 获取问题摘要
-    const report = await getBugAnalysisReportByIssueId(issueId)
-    const summary = report?.rootCauseSummary
-      ? report.rootCauseSummary.slice(0, 100)
-      : `Issue #${issueId}`
-
-    const triggeredBy = initiatorId || 'agent-coordinator'
-
     // Pipeline 模式：通过 Pipeline 引擎执行修复流程
     console.log(`[AgentCoordinator] starting pipeline "${pipelineName}" for issue ${issueId}`)
     runPipeline(
       pipeline.id,
       {},  // 无需服务器（capability-only pipeline）
       'api',
-      triggeredBy,
+      'agent-coordinator',
       (result) => {
         console.log(`[AgentCoordinator] pipeline "${pipelineName}" completed: ${result.status}`, {
           issueId, reportId, runId: result.runId,
         })
       },
-      { reportId, issueId },
-      summary
+      { reportId, issueId }
     ).catch(err => console.error(`[AgentCoordinator] pipeline "${pipelineName}" error:`, err))
   } else {
     // 降级：直接 triggerCapability（Pipeline 模板不存在时）

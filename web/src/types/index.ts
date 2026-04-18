@@ -72,7 +72,7 @@ export interface TestRun {
   triggeredBy: string; triggeredByName?: string; triggeredByAvatar?: string
   status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
   servers: Record<string, string[]>; currentStage: number
-  stageResults: StageResult[]; reportPath: string; summary: string
+  stageResults: StageResult[]; reportPath: string
   startedAt: string | null; finishedAt: string | null; errorMessage: string; createdAt: string
 }
 

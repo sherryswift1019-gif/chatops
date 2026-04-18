@@ -63,18 +63,23 @@ export default function TestRunsPage() {
   const triggerLabels: Record<string, string> = { manual: '手动', api: 'API', scheduled: '定时' }
 
   const columns = [
-    { title: '摘要', dataIndex: 'summary', ellipsis: true, render: (v: string) => v || '-' },
-    { title: '触发人', dataIndex: 'triggeredByName', width: 100, render: (_: unknown, r: TestRunWithUser) => r.triggeredByName ? <span><Avatar size={20} src={r.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{r.triggeredByName}</span> : (r.triggeredBy || '-') },
-    { title: '流水线', dataIndex: 'pipelineId', width: 120, render: (v: number) => pipelines.find(p => p.id === v)?.name ?? `#${v}` },
-    { title: '触发', dataIndex: 'triggerType', width: 60, render: (v: string) => triggerLabels[v] ?? v },
-    { title: '状态', dataIndex: 'status', width: 80, render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
-    { title: '进度', width: 60, render: (_: unknown, r: TestRunWithUser) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
-    { title: '开始时间', dataIndex: 'startedAt', width: 160, render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+    { title: 'ID', dataIndex: 'id' },
+    { title: '流水线', dataIndex: 'pipelineId', render: (v: number) => pipelines.find(p => p.id === v)?.name ?? `#${v}` },
+    { title: '触发', dataIndex: 'triggerType', render: (v: string) => triggerLabels[v] ?? v },
+    { title: '触发人', dataIndex: 'triggeredByName', render: (_: unknown, r: TestRunWithUser) => r.triggeredByName ? <span><Avatar size={20} src={r.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{r.triggeredByName}</span> : (r.triggeredBy || '-') },
+    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
+    { title: '进度', render: (_: unknown, r: TestRunWithUser) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
+    { title: '开始时间', dataIndex: 'startedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
+    { title: '结束时间', dataIndex: 'finishedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
     {
       title: '操作',
-      width: 60,
       render: (_: unknown, r: TestRunWithUser) => (
-        <a onClick={() => showDetail(r.id)}>详情</a>
+        <Space>
+          <a onClick={() => showDetail(r.id)}>详情</a>
+          {(r.status === 'success' || r.status === 'failed') && (
+            <a href={`/api/test-runs/${r.id}/report`} target="_blank" rel="noopener"><FileTextOutlined /></a>
+          )}
+        </Space>
       ),
     },
   ]
@@ -134,7 +139,7 @@ export default function TestRunsPage() {
               ),
             }))} />
 
-            {selectedRun.hasReport && (
+            {(selectedRun.status === 'success' || selectedRun.status === 'failed') && (
               <Space style={{ marginTop: 16 }}>
                 <Button type="primary" icon={<FileTextOutlined />} href={`/api/test-runs/${selectedRun.id}/report`} target="_blank">
                   查看报告

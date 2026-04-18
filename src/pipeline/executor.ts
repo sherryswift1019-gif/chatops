@@ -215,8 +215,7 @@ export async function runPipeline(
   triggerType: 'manual' | 'api' | 'scheduled',
   triggeredBy: string,
   onComplete?: (result: PipelineRunResult) => void,
-  triggerParams?: Record<string, unknown>,
-  summary?: string
+  triggerParams?: Record<string, unknown>
 ): Promise<number> {
   const pipelineStartTime = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
@@ -225,7 +224,7 @@ export async function runPipeline(
   const productLine = await getProductLineById(pipeline.productLineId)
 
   // Create run record
-  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment, summary })
+  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment })
   const logDir = join(DATA_DIR, String(run.id))
   await mkdir(logDir, { recursive: true })
 

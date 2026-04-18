@@ -190,7 +190,7 @@ async function handleAnalyzeBug(opts: TriggerOptions): Promise<TriggerResult> {
       await createStat({ reportId: report.id, durationMs, cacheHit: false, tokenCount: null }).catch(() => {})
 
       // 触发后续修复流程
-      await handleAnalysisComplete(report.id, analysisOutput.level, issue?.iid ?? 0, context.initiatorId)
+      await handleAnalysisComplete(report.id, analysisOutput.level, issue?.iid ?? 0)
 
       // 返回带 Issue URL 的报告
       const issueInfo = issue ? `\n\n---\nGitLab Issue: ${issue.url}` : ''
