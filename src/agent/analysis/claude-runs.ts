@@ -8,6 +8,7 @@
 import { runClaudeCli } from '../claude-cli.js'
 import type { Worktree } from '../worktree/manager.js'
 import type { BugClassification, BugLevel, ConfidenceLevel, Solution } from '../../db/repositories/bug-analysis-reports.js'
+import { isClaudeMock, popMockResponse } from '../mocks/e2e-store.js'
 
 export interface FilterProjectCandidate {
   projectPath: string
@@ -116,6 +117,12 @@ export function extractJson(text: string): string {
 
 /** 阶段 A：筛选涉及哪些 project。 */
 export async function runFilterStage(input: FilterStageInput): Promise<FilterStageResult> {
+  if (isClaudeMock()) {
+    const mock = popMockResponse('analyze_bug-filter')
+    if (mock === undefined) throw new Error('E2E: no mock response queued for analyze_bug-filter')
+    return mock as FilterStageResult
+  }
+
   const candidateList = input.candidates
     .map(c => `- ${c.projectPath} (name=${c.name}, display=${c.displayName}): ${c.description || '无描述'}`)
     .join('\n')
@@ -185,6 +192,12 @@ ${input.userMessage}
 
 /** 阶段 B：单个 project 的详细根因分析。 */
 export async function runDetailStage(input: DetailStageInput): Promise<DetailStageResult> {
+  if (isClaudeMock()) {
+    const mock = popMockResponse('analyze_bug-detail')
+    if (mock === undefined) throw new Error('E2E: no mock response queued for analyze_bug-detail')
+    return mock as DetailStageResult
+  }
+
   const prompt = `${input.systemPrompt}
 
 代码仓库路径: ${input.worktreePath}

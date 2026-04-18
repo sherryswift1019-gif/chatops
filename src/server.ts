@@ -67,25 +67,32 @@ async function main(): Promise<void> {
   // Build IM adapters (only create if credentials are configured in system_config)
   const adapters: IMAdapter[] = []
 
-  const dingtalkCfg = (await getConfig('dingtalk'))?.value as { clientId?: string; clientSecret?: string } | undefined
-  if (dingtalkCfg?.clientId && dingtalkCfg?.clientSecret) {
-    const dingtalk = new DingTalkAdapter({
-      clientId: dingtalkCfg.clientId,
-      clientSecret: dingtalkCfg.clientSecret,
-    })
-    adapters.push(dingtalk)
-    app.log.info('DingTalk adapter enabled (Stream mode)')
-  }
+  if (process.env.E2E_MODE === '1') {
+    // E2E 模式：用 MockIMAdapter 替代真实钉钉/飞书连接，保持生产行为不变
+    const { MockIMAdapter } = await import('./adapters/im/mock.js')
+    adapters.push(new MockIMAdapter())
+    app.log.info('E2E_MODE enabled: MockIMAdapter loaded in place of DingTalk/Feishu')
+  } else {
+    const dingtalkCfg = (await getConfig('dingtalk'))?.value as { clientId?: string; clientSecret?: string } | undefined
+    if (dingtalkCfg?.clientId && dingtalkCfg?.clientSecret) {
+      const dingtalk = new DingTalkAdapter({
+        clientId: dingtalkCfg.clientId,
+        clientSecret: dingtalkCfg.clientSecret,
+      })
+      adapters.push(dingtalk)
+      app.log.info('DingTalk adapter enabled (Stream mode)')
+    }
 
-  const feishuCfg = (await getConfig('feishu'))?.value as { appId?: string; appSecret?: string; verificationToken?: string } | undefined
-  if (feishuCfg?.appId && feishuCfg?.appSecret) {
-    const feishu = new FeishuAdapter({
-      appId: feishuCfg.appId,
-      appSecret: feishuCfg.appSecret,
-      verificationToken: feishuCfg.verificationToken ?? '',
-    })
-    adapters.push(feishu)
-    app.log.info('Feishu adapter enabled (Webhook mode)')
+    const feishuCfg = (await getConfig('feishu'))?.value as { appId?: string; appSecret?: string; verificationToken?: string } | undefined
+    if (feishuCfg?.appId && feishuCfg?.appSecret) {
+      const feishu = new FeishuAdapter({
+        appId: feishuCfg.appId,
+        appSecret: feishuCfg.appSecret,
+        verificationToken: feishuCfg.verificationToken ?? '',
+      })
+      adapters.push(feishu)
+      app.log.info('Feishu adapter enabled (Webhook mode)')
+    }
   }
 
   // Approval gate

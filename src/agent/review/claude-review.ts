@@ -12,6 +12,7 @@ import axios from 'axios'
 import { mask } from '../masking/sensitive-info.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { runClaudeCli } from '../claude-cli.js'
+import { isClaudeMock, popMockResponse } from '../mocks/e2e-store.js'
 
 export interface RunClaudeReviewInput {
   projectPath: string
@@ -38,6 +39,13 @@ async function fetchMrDiff(projectPath: string, mrIid: number): Promise<string> 
 }
 
 export async function runClaudeReview(input: RunClaudeReviewInput): Promise<ClaudeReviewResult> {
+  if (isClaudeMock()) {
+    const key = `review-${input.mrIid}`
+    const mock = popMockResponse(key)
+    if (mock === undefined) throw new Error(`E2E: no mock response queued for ${key}`)
+    return mock as ClaudeReviewResult
+  }
+
   const { projectPath, mrIid, signal } = input
 
   const capabilityRow = await getCapabilityByKey('ai_review_mr')
