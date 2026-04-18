@@ -172,7 +172,7 @@ export default function TestPipelinesPage() {
       const res = await triggerTestRun({
         pipelineId: triggerPipeline.id,
         servers: triggerServerMap,
-        triggeredBy: 'manual',
+        triggerType: 'manual',
         runtimeVars: triggerRuntimeVars,
       })
       message.success(`流水线已触发，执行 ID: ${res.runId}`)

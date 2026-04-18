@@ -2,6 +2,13 @@ import { Pool } from 'pg'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
+// Provide a safe default so unit tests that transitively load src/config.ts
+// (which validates DATABASE_URL via Zod) can start without environment setup.
+// Integration tests that actually connect must still set a working URL.
+if (!process.env.DATABASE_URL) {
+  process.env.DATABASE_URL = 'postgres://test:test@localhost:5432/chatops_test'
+}
+
 let testPool: Pool | null = null
 
 export function getTestPool(): Pool {

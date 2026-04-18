@@ -107,7 +107,9 @@ export async function runPipeline(
 
   const productLine = await getProductLineById(pipeline.productLineId)
 
-  // Resolve artifact inputs; any failure should still be recorded as a failed run
+  // Resolve artifact inputs.
+  // - manual / api triggers: fail fast — caller can see 400 and correct the input.
+  // - scheduled: no interactive caller; record a failed run for audit instead of throwing.
   const artifactInputs = (pipeline.artifactInputs ?? []) as ArtifactInput[]
   const runtimeVars: Record<string, string> = { ...runtimeVarsInput }
   let resolveError: Error | null = null
@@ -121,7 +123,12 @@ export async function runPipeline(
     resolveError = e as Error
   }
 
-  // Create run record (persist the caller's original input on failure,
+  if (resolveError && triggerType !== 'scheduled') {
+    // Propagate to the caller so they get an explicit error
+    throw new Error(`制品输入解析失败: ${resolveError.message}`)
+  }
+
+  // Create run record (persist caller's original input on failure,
   // full resolved vars on success — both are useful for audit)
   const run = await createTestRun({
     pipelineId, triggerType, triggeredBy,

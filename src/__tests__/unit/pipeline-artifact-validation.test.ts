@@ -11,15 +11,16 @@ function input(partial: Partial<ArtifactInput> = {}): ArtifactInput {
 
 describe('validateArtifactInputsForTrigger', () => {
   const scheduled = { schedule: '0 * * * *' }
+  const apiEnabled = { triggerParams: { apiEnabled: true } }
 
   it('passes when no artifactInputs', () => {
     expect(() => validateArtifactInputsForTrigger([], scheduled)).not.toThrow()
   })
 
-  it('passes when pipeline is manual-only (no schedule)', () => {
+  it('passes when pipeline is manual-only (no schedule, no API)', () => {
     expect(() => validateArtifactInputsForTrigger(
       [input()],
-      { schedule: '' },
+      { schedule: '', triggerParams: {} },
     )).not.toThrow()
   })
 
@@ -28,6 +29,27 @@ describe('validateArtifactInputsForTrigger', () => {
       [input()],
       scheduled,
     )).toThrow(/default|defaultStrategy/)
+  })
+
+  it('requires default or defaultStrategy when apiEnabled', () => {
+    expect(() => validateArtifactInputsForTrigger(
+      [input()],
+      apiEnabled,
+    )).toThrow(/default|defaultStrategy/)
+  })
+
+  it('ignores apiEnabled=false', () => {
+    expect(() => validateArtifactInputsForTrigger(
+      [input()],
+      { triggerParams: { apiEnabled: false } },
+    )).not.toThrow()
+  })
+
+  it('ignores apiEnabled when not a boolean true', () => {
+    expect(() => validateArtifactInputsForTrigger(
+      [input()],
+      { triggerParams: { apiEnabled: 'yes' as unknown as boolean } },
+    )).not.toThrow()
   })
 
   it('accepts default present', () => {
@@ -40,7 +62,7 @@ describe('validateArtifactInputsForTrigger', () => {
   it('accepts defaultStrategy present', () => {
     expect(() => validateArtifactInputsForTrigger(
       [input({ defaultStrategy: 'latest-by-mtime' })],
-      scheduled,
+      apiEnabled,
     )).not.toThrow()
   })
 

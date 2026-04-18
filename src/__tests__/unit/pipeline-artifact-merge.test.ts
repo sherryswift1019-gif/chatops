@@ -13,11 +13,11 @@ describe('mergePipelineForValidation', () => {
   it('uses body value when provided, existing otherwise (schedule)', () => {
     expect(mergePipelineForValidation(
       { schedule: '0 * * * *' },
-      { schedule: '', artifactInputs: [] },
+      { schedule: '', artifactInputs: [], triggerParams: {} },
     ).schedule).toBe('0 * * * *')
     expect(mergePipelineForValidation(
       {},
-      { schedule: '0 9 * * *', artifactInputs: [] },
+      { schedule: '0 9 * * *', artifactInputs: [], triggerParams: {} },
     ).schedule).toBe('0 9 * * *')
   })
 
@@ -26,18 +26,29 @@ describe('mergePipelineForValidation', () => {
     const existingInputs = [input({ name: 'from-existing' })]
     expect(mergePipelineForValidation(
       { artifactInputs: bodyInputs },
-      { schedule: '', artifactInputs: existingInputs },
+      { schedule: '', artifactInputs: existingInputs, triggerParams: {} },
     ).artifactInputs[0].name).toBe('from-body')
     expect(mergePipelineForValidation(
       {},
-      { schedule: '', artifactInputs: existingInputs },
+      { schedule: '', artifactInputs: existingInputs, triggerParams: {} },
     ).artifactInputs[0].name).toBe('from-existing')
+  })
+
+  it('merges triggerParams', () => {
+    expect(mergePipelineForValidation(
+      { triggerParams: { apiEnabled: true } },
+      { schedule: '', artifactInputs: [], triggerParams: {} },
+    ).triggerParams).toEqual({ apiEnabled: true })
+    expect(mergePipelineForValidation(
+      {},
+      { schedule: '', artifactInputs: [], triggerParams: { apiEnabled: true } },
+    ).triggerParams).toEqual({ apiEnabled: true })
   })
 
   it('body schedule=empty overrides existing non-empty', () => {
     expect(mergePipelineForValidation(
       { schedule: '' },
-      { schedule: '0 9 * * *', artifactInputs: [] },
+      { schedule: '0 9 * * *', artifactInputs: [], triggerParams: {} },
     ).schedule).toBe('')
   })
 })
@@ -48,7 +59,7 @@ describe('merge + validate integration: covers scenario A/B from review', () => 
   it('A: adding schedule to pipeline with fallback-less inputs fails', () => {
     const merged = mergePipelineForValidation(
       { schedule: '0 * * * *' },
-      { schedule: '', artifactInputs: [input()] },
+      { schedule: '', artifactInputs: [input()], triggerParams: {} },
     )
     expect(() => validateArtifactInputsForTrigger(merged.artifactInputs, merged))
       .toThrow(/default|defaultStrategy/)
@@ -59,7 +70,17 @@ describe('merge + validate integration: covers scenario A/B from review', () => 
   it('B: replacing artifactInputs on scheduled pipeline without fallbacks fails', () => {
     const merged = mergePipelineForValidation(
       { artifactInputs: [input()] },
-      { schedule: '0 * * * *', artifactInputs: [input({ default: 'http://x' })] },
+      { schedule: '0 * * * *', artifactInputs: [input({ default: 'http://x' })], triggerParams: {} },
+    )
+    expect(() => validateArtifactInputsForTrigger(merged.artifactInputs, merged))
+      .toThrow(/default|defaultStrategy/)
+  })
+
+  // Scenario C: existing has apiEnabled; body replaces inputs without fallbacks. Must be rejected.
+  it('C: replacing inputs on api-enabled pipeline without fallbacks fails', () => {
+    const merged = mergePipelineForValidation(
+      { artifactInputs: [input()] },
+      { schedule: '', artifactInputs: [], triggerParams: { apiEnabled: true } },
     )
     expect(() => validateArtifactInputsForTrigger(merged.artifactInputs, merged))
       .toThrow(/default|defaultStrategy/)
@@ -68,7 +89,7 @@ describe('merge + validate integration: covers scenario A/B from review', () => 
   it('clearing schedule on existing scheduled pipeline allows fallback-less inputs', () => {
     const merged = mergePipelineForValidation(
       { schedule: '' },
-      { schedule: '0 * * * *', artifactInputs: [input()] },
+      { schedule: '0 * * * *', artifactInputs: [input()], triggerParams: {} },
     )
     expect(() => validateArtifactInputsForTrigger(merged.artifactInputs, merged))
       .not.toThrow()
