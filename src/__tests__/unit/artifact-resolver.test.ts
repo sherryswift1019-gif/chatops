@@ -63,6 +63,18 @@ describe('listArtifacts', () => {
       listArtifacts({ listUrl: 'http://repo', glob: '*' }),
     ).rejects.toThrow(/ARTIFACT_REPO_UNREACHABLE/)
   })
+
+  it('encodes special chars in downloadUrl', async () => {
+    mockOk({
+      files: [{
+        name: 'has space#sharp.tar.gz',
+        path: 'pam/deploy/has space#sharp.tar.gz',
+        type: 'file', size: 1, mtime: 1,
+      }],
+    })
+    const files = await listArtifacts({ listUrl: 'http://repo/pam/deploy', glob: '*' })
+    expect(files[0].downloadUrl).toBe('http://repo/pam/deploy/has%20space%23sharp.tar.gz')
+  })
 })
 
 describe('resolveArtifact', () => {

@@ -23,7 +23,8 @@ interface RemoteListResponse {
 
 function buildDownloadUrl(listUrl: string, path: string): string {
   const base = new URL(listUrl)
-  return `${base.origin}/${path.replace(/^\//, '')}`
+  const segments = path.replace(/^\//, '').split('/').map(encodeURIComponent)
+  return `${base.origin}/${segments.join('/')}`
 }
 
 export async function listArtifacts(

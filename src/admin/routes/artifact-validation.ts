@@ -15,3 +15,19 @@ export function validateArtifactInputsForTrigger(
     }
   }
 }
+
+/**
+ * Compute the effective pipeline state from a PUT body and existing DB row.
+ * For each field, use body value if provided, otherwise fall back to existing.
+ */
+export function mergePipelineForValidation(
+  body: { schedule?: string; artifactInputs?: ArtifactInput[] },
+  existing: { schedule: string; artifactInputs: unknown[] },
+): { schedule: string; artifactInputs: ArtifactInput[] } {
+  return {
+    schedule: body.schedule !== undefined ? body.schedule : existing.schedule,
+    artifactInputs: body.artifactInputs !== undefined
+      ? body.artifactInputs
+      : (existing.artifactInputs as ArtifactInput[]),
+  }
+}

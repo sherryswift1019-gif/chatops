@@ -107,17 +107,33 @@ export async function runPipeline(
 
   const productLine = await getProductLineById(pipeline.productLineId)
 
-  // Resolve artifact inputs before creating the run
+  // Resolve artifact inputs; any failure should still be recorded as a failed run
   const artifactInputs = (pipeline.artifactInputs ?? []) as ArtifactInput[]
   const runtimeVars: Record<string, string> = { ...runtimeVarsInput }
-  for (const input of artifactInputs) {
-    const provided = runtimeVars[input.outputVar]
-    const value = await resolveArtifact(input, provided)
-    runtimeVars[input.outputVar] = value
+  let resolveError: Error | null = null
+  try {
+    for (const input of artifactInputs) {
+      const provided = runtimeVars[input.outputVar]
+      const value = await resolveArtifact(input, provided)
+      runtimeVars[input.outputVar] = value
+    }
+  } catch (e) {
+    resolveError = e as Error
   }
 
-  // Create run record
-  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment, runtimeVars })
+  // Create run record (persist the caller's original input on failure,
+  // full resolved vars on success — both are useful for audit)
+  const run = await createTestRun({
+    pipelineId, triggerType, triggeredBy,
+    servers: serverAssignment,
+    runtimeVars: resolveError ? runtimeVarsInput : runtimeVars,
+  })
+
+  if (resolveError) {
+    await finishTestRun(run.id, 'failed', '', `制品输入解析失败: ${resolveError.message}`)
+    return run.id
+  }
+
   const logDir = join(DATA_DIR, String(run.id))
   await mkdir(logDir, { recursive: true })
 
