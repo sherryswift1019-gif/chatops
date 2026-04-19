@@ -16,12 +16,12 @@
 
 以下变更在实施过程中用户明确修订，**以下描述优先于 plan 正文**：
 
-1. **取消触发人 DM 功能**（`notify_bug` 仅通知 project 负责人）
-   - 原因：触发人通过 Bug 修复实例页面查看状态和事件时间线，不依赖 IM 推送
-   - 影响范围：plan/spec 里所有"触发人 DM"相关描述失效
+1. **对齐 PRD 通知策略 — 移除 spec 里误加的"触发人 DM"设计**（原 Task 17 笼统称"取消触发人 DM 功能"，措辞不精确）
+   - 原委：spec 具体化 PRD 时某些场景误写成"通知触发人"，但 PRD 的通用通知原则一直是"按模块负责人路由（FR39）"，从未要求过触发人 DM。本次是**回归 PRD 原则，不是砍 PRD 需求**
+   - PRD 依据：[prd.md 通知策略章节](../../../_bmad-output/planning-artifacts/prd.md#L495)（本次修订同步补入 PRD 明确矩阵）
    - 具体规则：
      - `fix_success` / `fix_success_review_concerns`：发给 project owner（保留）
-     - `l4_created`：发给**各涉及 project 负责人**（主仓 + 从仓 owner，去重）—— 见下方第 2 条修订，原先误判为"不发"
+     - `l4_created`：发给**各涉及 project 负责人**（主仓 + 从仓 owner，去重）—— 见下方第 2 条修订
      - `approval_rejected` / `approval_timeout` / `approval_retry_analysis` / `fix_failed`：**不发任何 DM**（handler 直接返回 success，不写 notify 事件）
    - 代码已按此规则实施（commit `6682c06`），相关单测和集成测试已同步
 
