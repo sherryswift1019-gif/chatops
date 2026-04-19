@@ -112,7 +112,11 @@ export async function handleRequestHandover(opts: TriggerOptions): Promise<Trigg
         : null
 
     // 1. GitLab Issue 打 needs-manual label（失败降级，不阻断 handover 主流程）
-    const issueProjectPath = parseProjectPathFromIssueUrl(report.issueUrl)
+    // 优先用 report.primaryProjectPath（analyzer 写入时已规整）；仅在该字段为空时回退到 issueUrl 正则解析
+    const issueProjectPath =
+      (report.primaryProjectPath && report.primaryProjectPath.length > 0
+        ? report.primaryProjectPath
+        : null) ?? parseProjectPathFromIssueUrl(report.issueUrl)
     let labelAdded = false
     let labelError: string | null = null
     if (issueProjectPath) {
@@ -126,7 +130,7 @@ export async function handleRequestHandover(opts: TriggerOptions): Promise<Trigg
         )
       }
     } else {
-      labelError = `cannot parse project path from issueUrl: ${report.issueUrl}`
+      labelError = `cannot derive project path (primaryProjectPath empty, issueUrl=${report.issueUrl})`
       console.warn(`[RequestHandover] ${labelError}`)
     }
 

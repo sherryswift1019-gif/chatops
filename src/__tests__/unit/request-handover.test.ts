@@ -256,6 +256,49 @@ describe('request_handover handler', () => {
     })
   })
 
+  describe('project path 来源优先级（M1）', () => {
+    it('优先用 report.primaryProjectPath 调 gitlabAddIssueLabel（即使 issueUrl 可解析）', async () => {
+      // seed 的 primary_project_path = 'PAM/pas-6.0'；issueUrl 同样路径
+      const reportId = await seedReport({ projectPath: 'PAM/pas-6.0' })
+
+      await handleRequestHandover(makeOpts(reportId, 'fix_exhausted'))
+
+      expect(gitlabAddIssueLabel).toHaveBeenCalledWith('PAM/pas-6.0', 777, 'needs-manual')
+    })
+
+    it('primaryProjectPath 为空时回退 issueUrl 正则', async () => {
+      // 直接建一个 primaryProjectPath 空的 report
+      const pool = getTestPool()
+      const plRes = await pool.query(
+        `INSERT INTO product_lines (name, display_name, description)
+         VALUES ('pam', 'PAM', 'test')
+         ON CONFLICT (name) DO UPDATE SET display_name = EXCLUDED.display_name
+         RETURNING id`,
+      )
+      const productLineId = plRes.rows[0].id as number
+      const r = await createBugAnalysisReport({
+        issueId: 888,
+        issueUrl: 'http://git.example.com/FALLBACK/myproj/-/issues/888',
+        productLineId,
+        agentSessionId: null,
+        level: 'l2',
+        classification: 'bug',
+        confidence: 'medium',
+        confidenceScore: 0.7,
+        rootCauseSummary: 'x',
+        solutionsJson: [{ id: 'a', summary: 's', recommended: true, risk: 'low', effort: 'small' }],
+        affectedModules: null,
+        analysisSteps: null,
+        metadata: null,
+        primaryProjectPath: null,   // 关键：空
+      })
+
+      await handleRequestHandover(makeOpts(r.id, 'fix_exhausted'))
+
+      expect(gitlabAddIssueLabel).toHaveBeenCalledWith('FALLBACK/myproj', 888, 'needs-manual')
+    })
+  })
+
   describe('V2 预留 reason', () => {
     it.each([
       ['revise_exhausted'],
