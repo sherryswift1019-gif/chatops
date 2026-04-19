@@ -290,14 +290,39 @@ describe('notify_bug handler', () => {
     expect(events).toHaveLength(0)
   })
 
-  it('l4_created: no DM sent, returns success', async () => {
+  it('l4_created: DM sent to each涉及 project owner with L4 文案', async () => {
     const productLineId = await seedProductLine()
+    await seedProject(productLineId, {
+      name: 'pas-api',
+      gitlabPath: 'PAM/pas-api',
+      ownerId: 'u-primary',
+      ownerName: '主负责人',
+    })
+    await seedProject(productLineId, {
+      name: 'pas-web',
+      gitlabPath: 'PAM/pas-web',
+      ownerId: 'u-secondary',
+      ownerName: '从负责人',
+    })
     const report = await seedReport({
       productLineId,
       primaryProjectPath: 'PAM/pas-api',
       level: 'l4',
       classification: 'bug',
       triggeredBy: 'u-trigger',
+    })
+    // 2 条 scope_identified 让 gatherProjects 能扫出 owner（L4 没有 fix_attempt / create_mr）
+    await createEvent({
+      reportId: report.id,
+      projectPath: 'PAM/pas-api',
+      code: 'scope_identified',
+      data: { isPrimary: true },
+    })
+    await createEvent({
+      reportId: report.id,
+      projectPath: 'PAM/pas-web',
+      code: 'scope_identified',
+      data: { isPrimary: false },
     })
 
     const result = await handleNotify({
@@ -307,9 +332,25 @@ describe('notify_bug handler', () => {
     })
 
     expect(result.success).toBe(true)
-    expect(mockAdapter.sendDirectMessage).not.toHaveBeenCalled()
+    // 发给 2 个 owner（主 + 从）
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(2)
+    const sentUserIds = mockAdapter.sendDirectMessage.mock.calls.map(c => c[0] as string)
+    expect(new Set(sentUserIds)).toEqual(new Set(['u-primary', 'u-secondary']))
+    // 文案包含 L4 关键词
+    const firstMsg = mockAdapter.sendDirectMessage.mock.calls[0][1] as { text: string }
+    expect(firstMsg.text).toContain('L4')
+    expect(firstMsg.text).toContain('无法自动修复')
+    expect(firstMsg.text).toContain('Issue:')
+
+    // 事件流：2 条 notify（每个 owner 一条）
     const events = await findByReportCode(report.id, 'notify')
-    expect(events).toHaveLength(0)
+    expect(events.length).toBe(2)
+    expect(events.every(e => e.status === 'success')).toBe(true)
+    expect(new Set(events.map(e => (e.data as { userId?: string }).userId))).toEqual(
+      new Set(['u-primary', 'u-secondary']),
+    )
+    // messageKind 应是 l4_created
+    expect(events.every(e => (e.data as { messageKind?: string }).messageKind === 'l4_created')).toBe(true)
   })
 
   it('approval_rejected / timeout / retry_analysis: no DM sent, returns success', async () => {

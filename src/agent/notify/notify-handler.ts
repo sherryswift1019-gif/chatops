@@ -55,8 +55,11 @@ interface MessageCtx {
 
 /**
  * notify_bug capability handler：Pipeline 最后一个 stage，统一发终态 DM。
- * 只向各 project owner 推送修复成功类消息；其他场景（l4_created / approval_* / fix_failed）
- * 不再发 DM，信息由前端通过状态和事件展示。
+ * 通知规则（与 spec:865-881 对齐）：
+ * - fix_success / fix_success_review_concerns：各 project owner（修复成功）
+ * - l4_created：各涉及 project owner（Claude 无法自动修，需人工接手）
+ * - fix_failed / approval_rejected / approval_timeout / approval_retry_analysis：不发 DM
+ *   （已决策终止或可由重试按钮自行发起，前端展示即可）
  * 对每个接收人尝试 adapter.sendDirectMessage 并写 bug_fix_events(code='notify')。
  * DM 失败不阻断其他接收人；只要有一个 notify 事件 status=failed，handler 返回 im_api_error。
  */
@@ -286,8 +289,8 @@ function shouldNotifyOwners(kind: MessageKind): boolean {
   switch (kind) {
     case 'fix_success':
     case 'fix_success_review_concerns':
-      return true
     case 'l4_created':
+      return true
     case 'fix_failed':
     case 'approval_rejected':
     case 'approval_timeout':
@@ -300,7 +303,7 @@ function shouldNotifyOwners(kind: MessageKind): boolean {
 
 /**
  * 消息模板构造（spec "DM 通知策略" 章节）。
- * 只为 fix_success / fix_success_review_concerns 两类场景构造给 owner 的消息。
+ * 为 fix_success / fix_success_review_concerns / l4_created 三类场景构造给 owner 的消息。
  * 其他场景在 handleNotify 里通过 shouldNotifyOwners 过滤掉了，因此这里无需处理。
  * 文案里的 emoji 属于 spec 用户可见部分，保留。
  */
@@ -335,6 +338,18 @@ export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null 
         '',
         `AI Review 标签：⚠️ ai-needs-attention`,
         `请关注并决定是否合并。`,
+      ].join('\n')
+    }
+    case 'l4_created': {
+      const summary = (report.rootCauseSummary ?? '').slice(0, 200)
+      return [
+        `🛑 L4 架构级 Bug — 需人工接手`,
+        '',
+        `此 Bug 经 AI 分析判定为 L4，**无法自动修复**，Issue 已建好等你处理。`,
+        '',
+        `Issue: ${report.issueUrl}`,
+        '',
+        `📋 根因摘要：${summary || '（未提取到摘要，详见 Issue 正文）'}`,
       ].join('\n')
     }
     default:

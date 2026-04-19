@@ -1,10 +1,12 @@
 /**
- * Task 18 Phase 3A Wave 2 — 场景 6：L4 多 project（降级为 L2 多 project）
+ * Task 18 Phase 3A Wave 2 — 场景 6：L2 多 project
  *   → 主/从 MR description 差异 + 2 条 create_mr 事件
  *
- * 【注】L4 pipeline 只有 notify stage（base.sql 定义），不进入 fix/create_mr 阶段，
- *       无法验证主/从 MR description 差异。按 Wave 2 计划文档建议，改用 L2 pipeline
- *       跑 2 个 project 的完整修复链路。
+ * 【背景】原 plan 里叫"L4 多 project"，但 L4 pipeline 只有 notify stage（base.sql 定义），
+ *       不进入 fix/create_mr 阶段，无法验证主/从 MR description 差异。按 Wave 2 计划文档
+ *       建议，改用 L2 pipeline 跑 2 个 project 的完整修复链路。
+ *       原文件名 bug-l4-multi-project.spec.ts 含义误导，2026-04-19 重命名为 L2 以对齐实际语义；
+ *       真正的 L4 场景（单 project + notify owner 人工接手）在 bug-l4-flow.spec.ts 里测。
  *
  * 流程：
  *   1. 触发 analyze → filter 返回 2 个 involvedProjects（主 PAM/pas-api + 从 PAM/pas-web）
