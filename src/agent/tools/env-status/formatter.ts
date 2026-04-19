@@ -4,7 +4,16 @@ export interface ProjectRow {
   name: string
   displayName: string
   resolved: ResolvedProject
-  container: { name?: string; state?: string; startedAt?: string; health?: string; exitCode?: number }
+  container: {
+    name?: string
+    state?: string
+    startedAt?: string
+    health?: string
+    exitCode?: number
+    serviceName?: string
+    actualName?: string
+    composeFile?: string
+  }
   servers: string[]
   error?: string
 }
@@ -72,10 +81,13 @@ function renderStatusCol(p: ProjectRow): string {
 }
 
 function renderContainerCol(p: ProjectRow): string {
-  const { state, startedAt } = p.container
+  const { state, startedAt, serviceName, actualName } = p.container
+  const target = serviceName
+    ? `${serviceName}${actualName ? ` -> ${actualName}` : ''}`
+    : (actualName ?? '-')
   if (!state || state === undefined) return '-'
-  if (state === 'running') return `running ${humanizeDuration(startedAt)}`
-  return state
+  if (state === 'running') return `${target} | running ${humanizeDuration(startedAt)}`
+  return `${target} | ${state}`
 }
 
 export function formatEnvStatusOutput(input: FormatInput): string {

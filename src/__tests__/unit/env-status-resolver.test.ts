@@ -67,6 +67,16 @@ describe('resolveProjectStatus', () => {
     expect(r.status).toBe('not_deployed')
   })
 
+  it('unknown when probe returns explicit error', () => {
+    const r = resolveProjectStatus({
+      probe: { container: { exists: false }, deployed: null, error: 'compose file not found' },
+      latest: baseLatest,
+      compare: null,
+      hasHistory: true,
+    })
+    expect(r.status).toBe('unknown')
+  })
+
   it('down when no container but history exists', () => {
     const r = resolveProjectStatus({
       probe: { container: { exists: false }, deployed: null },

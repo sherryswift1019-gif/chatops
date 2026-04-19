@@ -23,6 +23,15 @@ export interface ResolveInput {
 export function resolveProjectStatus(input: ResolveInput): ResolvedProject {
   const { probe, latest, compare, hasHistory } = input
 
+  if (probe.error) {
+    return {
+      status: 'unknown',
+      deployed: probe.deployed,
+      latest,
+      commitsBehind: null,
+    }
+  }
+
   // 无容器
   if (!probe.container.exists) {
     return {

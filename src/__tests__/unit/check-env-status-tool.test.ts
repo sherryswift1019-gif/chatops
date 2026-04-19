@@ -76,7 +76,7 @@ describe('check_environment_status tool', () => {
       id: 100, productLineId: 1, name: 'svc', displayName: 'SVC',
       gitlabPath: 'g/svc', harborProject: 'p/svc',
       ownerId: '', ownerName: '',
-      dockerContainerName: 'svc', k8sProjectName: '', composePath: '',
+      dockerContainerName: 'svc', k8sProjectName: '', composePath: '/opt/app',
       description: '', createdAt: new Date(), updatedAt: new Date(),
     }])
     vi.mocked(getConfig).mockResolvedValue({ key: 'harbor', value: { url: 'https://harbor.example.com' }, updatedAt: new Date() } as unknown as Awaited<ReturnType<typeof getConfig>>)
@@ -93,6 +93,13 @@ describe('check_environment_status tool', () => {
     expect(r.output).toContain('SVC')
     expect(r.output).toContain('✅')
     expect(r.output).toContain('develop_a1b2c3d4')
+    expect(probeContainer).toHaveBeenCalledWith(
+      expect.objectContaining({ host: '10.0.0.5' }),
+      '/opt/app/docker-compose.yml',
+      'svc',
+      'harbor.example.com',
+      'p/svc',
+    )
   })
 
   it('filters to single project when project param given', async () => {
@@ -108,8 +115,8 @@ describe('check_environment_status tool', () => {
       createdAt: new Date(),
     } as unknown as Awaited<ReturnType<typeof getTestServerById>>)
     vi.mocked(listProjects).mockResolvedValue([
-      { id: 100, productLineId: 1, name: 'a', displayName: 'A', gitlabPath: 'g/a', harborProject: 'p/a', ownerId:'', ownerName:'', dockerContainerName: 'a', k8sProjectName:'', composePath:'', description:'', createdAt: new Date(), updatedAt: new Date() },
-      { id: 101, productLineId: 1, name: 'b', displayName: 'B', gitlabPath: 'g/b', harborProject: 'p/b', ownerId:'', ownerName:'', dockerContainerName: 'b', k8sProjectName:'', composePath:'', description:'', createdAt: new Date(), updatedAt: new Date() },
+      { id: 100, productLineId: 1, name: 'a', displayName: 'A', gitlabPath: 'g/a', harborProject: 'p/a', ownerId:'', ownerName:'', dockerContainerName: 'a', k8sProjectName:'', composePath:'/opt/a', description:'', createdAt: new Date(), updatedAt: new Date() },
+      { id: 101, productLineId: 1, name: 'b', displayName: 'B', gitlabPath: 'g/b', harborProject: 'p/b', ownerId:'', ownerName:'', dockerContainerName: 'b', k8sProjectName:'', composePath:'/opt/b', description:'', createdAt: new Date(), updatedAt: new Date() },
     ])
     vi.mocked(getConfig).mockResolvedValue({ key: 'harbor', value: { url: 'https://harbor.example.com' }, updatedAt: new Date() } as unknown as Awaited<ReturnType<typeof getConfig>>)
     vi.mocked(getRecentDeployments).mockResolvedValue([])
@@ -167,7 +174,7 @@ describe('check_environment_status tool', () => {
       id: 100, productLineId: 1, name: 'svc', displayName: 'SVC',
       gitlabPath: 'g/svc', harborProject: 'p/svc',
       ownerId: '', ownerName: '',
-      dockerContainerName: 'svc', k8sProjectName: '', composePath: '',
+      dockerContainerName: 'svc', k8sProjectName: '', composePath: '/opt/app',
       description: '', createdAt: new Date(), updatedAt: new Date(),
     }])
     vi.mocked(getConfig).mockResolvedValue({ key: 'harbor', value: { url: 'https://harbor.example.com' }, updatedAt: new Date() } as unknown as Awaited<ReturnType<typeof getConfig>>)
@@ -183,5 +190,44 @@ describe('check_environment_status tool', () => {
     expect(r.success).toBe(true)
     expect(r.output).toContain('SVC @ 10.0.0.10')
     expect(r.output).toContain('SVC @ 10.0.0.11')
+  })
+
+  it('falls back to bare docker (direct docker inspect) when composePath is empty', async () => {
+    vi.mocked(listEnvironments).mockResolvedValue([{ id: 1, name: 'dev', displayName: 'Dev', sortOrder: 0, createdAt: new Date() }])
+    vi.mocked(getProductLineById).mockResolvedValue({ id: 1, name: 'pl', displayName: 'PL', description: '', createdAt: new Date(), updatedAt: new Date() })
+    vi.mocked(listProductLineEnvs).mockResolvedValue([{
+      id: 1, productLineId: 1, envId: 1, runtime: 'docker', namespace: '', enabled: true,
+      connectionConfig: { serverIds: [10] }, defaultBranch: 'develop',
+    }])
+    vi.mocked(getTestServerById).mockResolvedValue({
+      id: 10, productLineId: 1, name: 's1', role: 'app',
+      host: '10.0.0.5', port: 22, username: 'root', credential: 'x',
+      createdAt: new Date(),
+    } as unknown as Awaited<ReturnType<typeof getTestServerById>>)
+    vi.mocked(listProjects).mockResolvedValue([{
+      id: 100, productLineId: 1, name: 'svc', displayName: 'SVC',
+      gitlabPath: 'g/svc', harborProject: 'p/svc',
+      ownerId: '', ownerName: '',
+      dockerContainerName: 'svc', k8sProjectName: '', composePath: '',
+      description: '', createdAt: new Date(), updatedAt: new Date(),
+    }])
+    vi.mocked(getConfig).mockResolvedValue({ key: 'harbor', value: { url: 'https://harbor.example.com' }, updatedAt: new Date() } as unknown as Awaited<ReturnType<typeof getConfig>>)
+    vi.mocked(getRecentDeployments).mockResolvedValue([])
+    vi.mocked(probeContainer).mockResolvedValue({
+      container: { exists: true, state: 'running', startedAt: new Date().toISOString(), health: 'healthy', actualName: 'svc' },
+      deployed: { branch: 'develop', shortId: 'a1b2c3d4', imageTag: 'develop_a1b2c3d4' },
+    })
+    vi.mocked(getLatestBranchCommit).mockResolvedValue({ commitId: 'full', shortId: 'a1b2c3d4', message: 'fix' })
+    vi.mocked(compareCommits).mockResolvedValue({ commitsBehind: 0, tooLarge: false, latestSummaries: [] })
+
+    const r = await checkEnvStatusTool.execute({ env: 'dev' }, ctx)
+    expect(r.success).toBe(true)
+    expect(probeContainer).toHaveBeenCalledWith(
+      expect.objectContaining({ host: '10.0.0.5' }),
+      undefined,
+      'svc',
+      'harbor.example.com',
+      'p/svc',
+    )
   })
 })

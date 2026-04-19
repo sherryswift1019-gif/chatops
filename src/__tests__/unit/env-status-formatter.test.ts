@@ -6,7 +6,7 @@ function proj(name: string, over: Partial<ResolvedProject> & { status: ResolvedP
   name: string
   displayName: string
   resolved: ResolvedProject
-  container: { state?: string; startedAt?: string }
+  container: { state?: string; startedAt?: string; serviceName?: string; actualName?: string }
   servers: string[]
 } {
   return {
@@ -16,7 +16,12 @@ function proj(name: string, over: Partial<ResolvedProject> & { status: ResolvedP
       deployed: null, latest: null, commitsBehind: null,
       ...over,
     } as ResolvedProject,
-    container: { state: 'running', startedAt: new Date(Date.now() - 3600_000).toISOString() },
+    container: {
+      state: 'running',
+      startedAt: new Date(Date.now() - 3600_000).toISOString(),
+      serviceName: name,
+      actualName: `pam-${name}`,
+    },
     servers: ['10.0.0.5'],
   }
 }
@@ -45,6 +50,7 @@ describe('formatEnvStatusOutput', () => {
       })],
     })
     expect(out).toContain('ssh-proxy')
+    expect(out).toContain('ssh-proxy -> pam-ssh-proxy')
     expect(out).toContain('✅')
     expect(out).toContain('develop_a1b2c3d4')
   })

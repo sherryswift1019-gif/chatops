@@ -15,6 +15,7 @@ import { findDeployedTag } from './env-status/tag-parser.js'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 import type { SSHTarget } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
+import { resolveComposeFile } from './ssh-utils.js'
 
 function log(msg: string) {
   try { appendFileSync('/tmp/mcp-server.log', `[${new Date().toISOString()}] [env-status] ${msg}\n`) } catch { /* */ }
@@ -230,11 +231,14 @@ export const checkEnvStatusTool: AgentTool = {
 
     // Each project may produce 1 row (consensus) or N rows (diverged — one per server)
     const rowArrays: ProjectRow[][] = await Promise.all(scoped.map(async (project): Promise<ProjectRow[]> => {
-      const containerName = project.dockerContainerName || project.name
+      const composeFile = project.composePath ? resolveComposeFile(project.composePath) : undefined
+      // In compose mode, dockerContainerName is the compose service name; in bare-docker mode,
+      // it's the actual container name.
+      const serviceName = project.dockerContainerName || project.name
       const harborProject = project.harborProject || project.name
 
       try {
-        const probePromises = servers.map(s => probeContainer(s, containerName, registryHost, harborProject))
+        const probePromises = servers.map(s => probeContainer(s, composeFile, serviceName, registryHost, harborProject))
         const branchForGitLab = plEnv.defaultBranch
         const latestPromise = branchForGitLab && project.gitlabPath
           ? getLatestBranchCommit(project.gitlabPath, branchForGitLab)
@@ -268,11 +272,14 @@ export const checkEnvStatusTool: AgentTool = {
             displayName: project.displayName || project.name,
             resolved,
             container: {
-              name: containerName,
+              name: probe.container.actualName,
               state: probe.container.state,
               startedAt: probe.container.startedAt,
               health: probe.container.health,
               exitCode: probe.container.exitCode,
+              serviceName: composeFile ? serviceName : undefined,
+              actualName: probe.container.actualName,
+              composeFile,
             },
             servers: servers.map(s => s.host),
             error: probe.error,
@@ -287,11 +294,14 @@ export const checkEnvStatusTool: AgentTool = {
             displayName: `${project.displayName || project.name} @ ${servers[i].host}`,
             resolved,
             container: {
-              name: containerName,
+              name: probe.container.actualName,
               state: probe.container.state,
               startedAt: probe.container.startedAt,
               health: probe.container.health,
               exitCode: probe.container.exitCode,
+              serviceName: composeFile ? serviceName : undefined,
+              actualName: probe.container.actualName,
+              composeFile,
             },
             servers: [servers[i].host],
             error: probe.error,
@@ -303,7 +313,7 @@ export const checkEnvStatusTool: AgentTool = {
           name: project.name,
           displayName: project.displayName || project.name,
           resolved: { status: 'unknown', deployed: null, latest: null, commitsBehind: null },
-          container: { name: containerName },
+          container: { serviceName: composeFile ? serviceName : undefined, composeFile },
           servers: servers.map(s => s.host),
           error: String(err),
         }]
