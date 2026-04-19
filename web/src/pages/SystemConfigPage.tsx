@@ -397,7 +397,7 @@ function resolveStatusDisplay(status: DingTalkStatus | null): {
     message: '未连接',
     description: status.lastEventAt
       ? `Stream 连接已中断（最近一次事件：${new Date(status.lastEventAt).toLocaleString()}），请检查网络或钉钉凭证`
-      : 'Stream 未建立连接或尚未完成注册握手，请检查网络或钉钉凭证',
+      : 'Stream 未建立 WebSocket 连接，请检查网络或钉钉凭证',
   }
 }
 

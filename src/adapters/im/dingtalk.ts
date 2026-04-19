@@ -141,9 +141,13 @@ export class DingTalkAdapter implements IMAdapter {
   } {
     const started = this.startedAt !== null
     // SDK 的 keepAlive 是 WebSocket 原生 ping/pong，不经过 registerAllEventListener，
-    // 因此不能用 lastEventAt 推断连接健康。改用 SDK 暴露的 public 字段：
-    // socket 打开 (connected) + 已完成 DingTalk 服务端注册握手 (registered)。
-    const connected = started && this.client.connected && this.client.registered
+    // 因此不能用 lastEventAt 推断连接健康。改用 SDK 在 socket open/close 上维护的
+    // this.client.connected 作为真相。
+    // 注：SDK 还有一个 this.client.registered 字段，期望通过 SYSTEM.REGISTERED 握手置 true，
+    // 但钉钉当前服务端协议已不再主动下发该消息（实测 socket open 后 15+ 分钟内无任何
+    // SYSTEM 消息到达，而 CALLBACK 业务消息正常），registered 实际永远保持 false，
+    // 因此不能依赖它。
+    const connected = started && this.client.connected
     return {
       configured: true,
       started,

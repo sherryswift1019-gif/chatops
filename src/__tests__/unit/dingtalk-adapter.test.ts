@@ -323,14 +323,13 @@ describe('DingTalkAdapter (Stream mode)', () => {
       })
     })
 
-    it('reports connected when SDK socket is open and registration is complete', async () => {
+    it('reports connected when SDK socket is open', async () => {
       const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
       vi.useFakeTimers()
       vi.setSystemTime(t0)
 
-      // Simulate SDK finishing WebSocket open + REGISTERED handshake
+      // Simulate SDK finishing WebSocket open handshake
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
 
       const s = adapter.getConnectionStatus()
@@ -341,19 +340,19 @@ describe('DingTalkAdapter (Stream mode)', () => {
       expect(s.startError).toBeNull()
     })
 
-    it('reports disconnected when SDK socket is open but registration has not completed', async () => {
+    it('ignores the SDK registered field (current DingTalk servers do not send SYSTEM.REGISTERED)', async () => {
+      // Even if the SDK never flips `registered` to true, a live socket must read as connected.
       mockClient.connected = true
       mockClient.registered = false
       await adapter.start()
 
       const s = adapter.getConnectionStatus()
       expect(s.started).toBe(true)
-      expect(s.connected).toBe(false)
+      expect(s.connected).toBe(true)
     })
 
     it('flips to disconnected when SDK marks the socket closed (WS drop)', async () => {
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
       expect(adapter.getConnectionStatus().connected).toBe(true)
 
@@ -367,7 +366,6 @@ describe('DingTalkAdapter (Stream mode)', () => {
       vi.useFakeTimers()
       vi.setSystemTime(t0)
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
       expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
 
@@ -385,7 +383,6 @@ describe('DingTalkAdapter (Stream mode)', () => {
       vi.useFakeTimers()
       vi.setSystemTime(t0)
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
 
       mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
@@ -414,7 +411,6 @@ describe('DingTalkAdapter (Stream mode)', () => {
       vi.useFakeTimers()
       vi.setSystemTime(Date.UTC(2026, 0, 1, 0, 0, 0))
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
       expect(adapter.getConnectionStatus().started).toBe(true)
 
@@ -430,7 +426,6 @@ describe('DingTalkAdapter (Stream mode)', () => {
       vi.useFakeTimers()
       vi.setSystemTime(t0)
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
 
       vi.setSystemTime(t0 + 10_000)
@@ -446,7 +441,6 @@ describe('DingTalkAdapter (Stream mode)', () => {
       vi.useFakeTimers()
       vi.setSystemTime(t0)
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
 
       vi.setSystemTime(t0 + 10_000)
@@ -457,7 +451,6 @@ describe('DingTalkAdapter (Stream mode)', () => {
 
       vi.setSystemTime(t0 + 30_000)
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
       expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
     })
@@ -469,7 +462,6 @@ describe('DingTalkAdapter (Stream mode)', () => {
 
       // Next start succeeds
       mockClient.connected = true
-      mockClient.registered = true
       await adapter.start()
       const s = adapter.getConnectionStatus()
       expect(s.startError).toBeNull()
