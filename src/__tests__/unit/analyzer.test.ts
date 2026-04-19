@@ -19,7 +19,7 @@ vi.mock('../../agent/analysis/gitlab-issue.js', () => ({
   gitlabUpdateIssue: vi.fn(),
 }))
 
-// C1 专用：允许单测用 mock 劫持 createEvent
+// 允许单测用 mock 劫持 createEvent（C1/C4 使用）
 vi.mock('../../db/repositories/bug-fix-events.js', async () => {
   const actual =
     await vi.importActual<typeof import('../../db/repositories/bug-fix-events.js')>(
@@ -27,6 +27,8 @@ vi.mock('../../db/repositories/bug-fix-events.js', async () => {
     )
   return {
     ...actual,
+    // 默认走 actual.createEvent（真正写 DB）；C1 测试用 mockRejectedValueOnce
+    // 只影响那一次调用，之后继续走 actual
     createEvent: vi.fn(actual.createEvent),
   }
 })
@@ -561,8 +563,8 @@ describe('analyzer createEvent failure propagation (C1)', () => {
       iid: 1,
       url: 'http://git.example.com/PAM/pas-api/-/issues/1',
     })
-    // 模拟 DB 连接断开导致 createEvent 抛错
-    vi.mocked(createEventMock).mockRejectedValue(new Error('connection terminated unexpectedly'))
+    // 模拟 DB 连接断开导致 createEvent 抛错（Once：只影响本测试，不泄漏给其他 describe）
+    vi.mocked(createEventMock).mockRejectedValueOnce(new Error('connection terminated unexpectedly'))
 
     const result = await handleAnalyzeBug(buildOpts(productLineId))
 
@@ -570,6 +572,81 @@ describe('analyzer createEvent failure propagation (C1)', () => {
     // classifyError 把普通 DB 错归到 analyzer_error（兜底类），不静默吞
     expect(result.error).toBe('analyzer_error')
     expect(result.output).toContain('connection terminated')
+  })
+})
+
+describe('analyzer multi-project concurrency (C4)', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+    vi.mocked(gitlabPostIssueNote).mockReset()
+    vi.mocked(gitlabGetIssue).mockReset()
+    vi.mocked(gitlabGetIssue).mockResolvedValue({ description: '' })
+    vi.mocked(gitlabUpdateIssue).mockReset()
+    vi.mocked(gitlabUpdateIssue).mockResolvedValue(undefined)
+  })
+
+  it('5 个 project 并发受 p-limit 限制（peak <= ANALYSIS_CONCURRENCY=3）', async () => {
+    const productLineId = await seedBaseData({
+      projects: [
+        { name: 'pa', gitlabPath: 'PAM/a' },
+        { name: 'pb', gitlabPath: 'PAM/b' },
+        { name: 'pc', gitlabPath: 'PAM/c' },
+        { name: 'pd', gitlabPath: 'PAM/d' },
+        { name: 'pe', gitlabPath: 'PAM/e' },
+      ],
+    })
+
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [
+        { projectPath: 'PAM/a', isPrimary: true, sourceBranch: 'master' },
+        { projectPath: 'PAM/b', isPrimary: false, sourceBranch: 'master' },
+        { projectPath: 'PAM/c', isPrimary: false, sourceBranch: 'master' },
+        { projectPath: 'PAM/d', isPrimary: false, sourceBranch: 'master' },
+        { projectPath: 'PAM/e', isPrimary: false, sourceBranch: 'master' },
+      ],
+      primaryProjectPath: 'PAM/a',
+    })
+
+    let active = 0
+    let peak = 0
+    vi.mocked(runDetailStage).mockImplementation(async (input) => {
+      active++
+      peak = Math.max(peak, active)
+      // 用 timer 让多个并发 run 真正重叠
+      await new Promise(res => setTimeout(res, 30))
+      active--
+      return {
+        classification: 'bug',
+        level: 'l2',
+        confidence: 'medium',
+        confidenceScore: 0.7,
+        rootCause: {
+          type: 'business_logic',
+          summary: `${input.projectPath} 根因`,
+          file: 'x.ts',
+          lineRange: [1, 2],
+        },
+        solutions: [{ id: 'a', summary: 'fix', recommended: true, risk: 'low', effort: 'small' }],
+        affectedModules: ['x'],
+        analysisSteps: ['p1'],
+        markdown: '## x',
+      }
+    })
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({
+      iid: 1,
+      url: 'http://git.example.com/PAM/a/-/issues/1',
+    })
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId, { message: 'bug 覆盖 5 个 proj' }))
+    expect(result.success).toBe(true)
+
+    // peak 必须 <= 默认并发 3，且 5 个项目都调到了
+    expect(vi.mocked(runDetailStage)).toHaveBeenCalledTimes(5)
+    expect(peak).toBeGreaterThan(0)
+    expect(peak).toBeLessThanOrEqual(3)
   })
 })
 

@@ -291,4 +291,34 @@ describe('fix_bug handler (refactored)', () => {
     expect(result.success).toBe(false)
     expect(result.error).toBe('report_not_found')
   })
+
+  // C4 回归保护：fix-runner 当前是按 project 串行 for 循环（peak concurrency=1），
+  // 避免多 project 同时起 Claude CLI 爆机器/API。此测试断言行为未被误改为 Promise.all。
+  it('multi-project 串行执行（peak concurrency=1，C4 回归保护）', async () => {
+    const reportId = await seedReport({
+      scopes: [
+        { path: 'PAM/a', isPrimary: true },
+        { path: 'PAM/b' },
+        { path: 'PAM/c' },
+        { path: 'PAM/d' },
+      ],
+      issueId: 400,
+    })
+
+    let active = 0
+    let peak = 0
+    vi.mocked(runFixForProject).mockImplementation(async (input) => {
+      active++
+      peak = Math.max(peak, active)
+      await new Promise(res => setTimeout(res, 20))
+      active--
+      return { branch: `fix/issue-${input.issueId}`, testPassed: true }
+    })
+
+    const result = await handleFixBug(makeOpts(reportId) as any, 'l2')
+    expect(result.success).toBe(true)
+    expect(runFixForProject).toHaveBeenCalledTimes(4)
+    // 串行执行：峰值并发恒为 1
+    expect(peak).toBe(1)
+  })
 })

@@ -26,6 +26,9 @@ export { isFixSuccessful }
  *
  * 行为要点：
  * - 串行修复各 project（避免 Claude CLI 资源冲突）
+ *   C4：fix-runner 有意保持串行（peak concurrency=1），因为 Fix 比 Analyze 更重
+ *   （需要改代码 + 跑测试），多 project 同时起 Claude CLI 会爆机器/API；如果将来
+ *   需要并发，参考 analyzer.ts 的 p-limit 方案（ANALYSIS_CONCURRENCY=3）。
  * - 幂等：跳过已有 fix_attempt=success 的 project
  * - 每个 project 写一条 bug_fix_events(code='fix_attempt', status=..., data={branch, targetBranch, testResult, attempt, error?})
  * - 不再内嵌 createMr / 通知 / retryWithDowngrade（这些由独立 capability / Pipeline retryCount 负责）

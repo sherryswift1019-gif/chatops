@@ -1,5 +1,6 @@
 import { registerCapabilityHandler } from '../coordinator.js'
 import { acquire, release, makeWorktreeKey } from '../worktree/manager.js'
+import pLimit from 'p-limit'
 import {
   createBugAnalysisReport,
   updateReportStatus,
@@ -265,10 +266,15 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
   }
 
   // ========== 阶段 B：并行对每个涉及 project 做详细分析 ==========
+  // C4：用 p-limit 限制并发数，避免 N 个 project 同时起 Claude CLI 爆机器/API。
+  // 默认 3，可通过 ANALYSIS_CONCURRENCY 环境变量覆盖。
   const projectByPath = new Map(projects.map(p => [p.gitlabPath, p]))
+  const analysisConcurrency = Number(process.env.ANALYSIS_CONCURRENCY ?? 3)
+  const analysisLimit = pLimit(analysisConcurrency > 0 ? analysisConcurrency : 3)
 
   const detailRuns = await Promise.all(
-    filterResult.involvedProjects.map(async (p) => {
+    filterResult.involvedProjects.map((p) =>
+      analysisLimit(async () => {
       const pj = projectByPath.get(p.projectPath)
       if (!pj) throw new Error(`筛选出的 project 未在候选列表中: ${p.projectPath}`)
       // 每个 project 独立 clone（worktree manager 新 key 里带 projectPath）
@@ -299,7 +305,8 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
       } finally {
         release(wt)
       }
-    }),
+      }),
+    ),
   )
 
   const merged = mergeDetailResults(detailRuns)
