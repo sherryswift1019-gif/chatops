@@ -41,7 +41,7 @@ classification:
 | 能力 | 差异点 |
 |------|--------|
 | **多 Agent 独立协作** | 分析 / 修复 / Review 三角色解耦，独立 systemPrompt 和 CLI 权限硬限制 |
-| **Bug 分级路由** | L1-L4 自动分级，不同级别走不同人机协作流程；3 次失败自动降级 |
+| **Bug 分级路由** | L1-L4 自动分级，不同级别走不同人机协作流程；AI 失败自动转人工接手（V2 handover 机制） |
 | **文档分层 + 摘要同步** | AI 摘要随代码走 + 知识库独立 Git 仓库；修复 Agent 改代码时同步更新摘要 |
 | **Bug 根因归因** | 追溯问题是「需求 / prompt / 摘要 / 编码」哪一环，反推知识体系进化 |
 | **私有化 + 数据留存** | 客户知识库归客户所有，成为迁移壁垒（对比 Devin 等 SaaS 型竞品） |
@@ -124,7 +124,7 @@ classification:
 | **代码隔离开销** | 10 并发时的磁盘总占用 | ≤100MB（git clone --shared 方案） |
 | **安全防护** | 敏感信息泄露事件数 | 0 次（分析报告强制脱敏） |
 | **Agent 权限越界** | 权限违规事件数 | 0 次（CLI 层 --allowed-tools 硬限制） |
-| **失败恢复** | AI 修复 3 次仍失败的处理 | 100% 自动降级为 L3 流程并通知研发 |
+| **失败恢复** | AI 修复失败的处理 | 100% 自动触发 handover 机制并 DM owner 接手（V2） |
 | **平台可扩展性** | 新产品接入所需时间 | ≤1 天（配置 Git 地址 → 自动生成 AI 摘要 → 可分析） |
 | **模型可替换性** | 切换底层模型的改动范围 | 只涉及 Porygon backend 层，不改业务逻辑 |
 
@@ -167,7 +167,7 @@ classification:
 - **修复闭环**（里程碑 2）
   - 修复 Agent 工具集（改代码、运行测试、创建 MR、更新 AI 摘要）
   - Bug 修复流程定义（L1/L2/L3 流程模板）
-  - 失败降级机制（3 次重试不过 → 自动降级 L3）
+  - 失败 handover 机制（AI 放手 → fix 分支保留 + DM owner 接手，V2）
   - AI 摘要随修复同步更新
   - AI Review Agent（独立 capability ai_review_mr）
   - L3 方案审批（复用 ChatOps ApprovalGate）
@@ -295,7 +295,7 @@ classification:
 
 ---
 
-### Journey 3：研发小 C —— AI 修复失败自动降级（恢复路径）
+### Journey 3：研发小 C —— AI 修复失败自动转人工接手（恢复路径，V2 handover 机制）
 
 **角色画像：** 小 C，pas-service 模块研发。过去对 AI 自动修复持怀疑态度，担心 AI 改坏代码。
 
@@ -306,17 +306,17 @@ classification:
 2. **第 1 次修复尝试**：改了 `ParamValidator.validate()` → 单元测试不过
 3. **Agent 自动分析测试失败原因** → 调整代码 → **第 2 次尝试** → 仍失败
 4. **第 3 次尝试** → 失败
-5. **自动降级触发**：
+5. **handover 触发（V2 机制）**：
    - Issue label 从 `fixing` 改为 `needs-manual`
-   - 分级升级为 L3
-   - **保留 fix 分支现状**（不删除，不 revert）
-   - 钉钉 @小 C："Issue #289 自动修复失败 3 次，已降级。fix 分支 `fix/issue-289` 保留，含 AI 尝试的代码变更。请接手。"
+   - report.status 从 `published` 置为 `pending_manual`（AI 退出，等 owner 接手）
+   - **保留 fix 分支现状**（不删除，不 revert；worktree 保留便于运维排查）
+   - 钉钉 @小 C（主 owner）和 backup owner 同时："Issue #289 AI 修复 3 轮未通过，fix 分支 `fix/issue-289` 保留，含 AI 的 3 次尝试 commit。请接手。"
 6. **小 C 接手**：
    - 切到 `fix/issue-289` 分支
    - 查看 AI 的 3 次 commit（commit message 记录了每次失败的原因和调整思路）
    - 发现 AI 漏了一个边界条件
    - 基于 AI 的第 3 次尝试继续修改，补上边界判断
-   - 提交 → 测试通过 → MR 合并
+   - 提交 → 测试通过 → MR 合并 → webhook 触发 status=completed
 
 **高潮：** 小 C 发现 AI 的前两次尝试虽然失败，但思路是对的，只是边界处理不全。省去了自己从零分析问题的 20 分钟。
 
@@ -328,10 +328,10 @@ classification:
 **情绪曲线：** 烦躁（又要修 Bug） → 意外（AI 的思路是对的） → 高效（基于 AI 结果继续改）
 
 **揭示的能力需求：**
-- 修复失败 3 次自动降级（不是无限重试）
+- AI 失败后的 handover 统一入口（V2 FR33）
 - fix 分支保留策略（不删不 revert）
 - AI commit message 详细记录（方便人工接手）
-- 分级自动升级 + 通知
+- DM owner 接手（含 backup owner，V2 FR58）
 - Bug 根因归因（反推知识体系优化点）
 
 ---
@@ -443,7 +443,7 @@ classification:
 | **分析 Agent** | 读代码、读配置、输出结构化方案、置信度标签、Bug 分级判断、多方案推荐 |
 | **修复 Agent** | 创建 fix 分支、改代码、更新 AI 摘要、跑测试、创建 MR、commit message 详细化 |
 | **AI Review Agent** | 独立 systemPrompt、独立权限、MR diff 审查、ai-approved/ai-needs-attention 标签 |
-| **流程编排** | L1/L2/L3/L4 分级路由、失败降级（3 次）、fix 分支保留策略、GitLab label 状态机驱动 |
+| **流程编排** | L1/L2/L3/L4 分级路由、AI 失败 handover 机制（V2）、fix 分支保留策略、GitLab label 状态机驱动 |
 | **审批** | 复用 ApprovalGate、L3 方案审批、MR 合并审批 |
 | **管理后台** | 产品线 CRUD、成员与角色管理、能力配置、模块→负责人映射、审批规则、GitLab Webhook 配置引导 |
 | **监控与量化** | Bug 修复实例页面、知识库命中率仪表盘、修复成功率仪表盘、价值量化战报 |
@@ -479,7 +479,7 @@ classification:
 
 **与业界常规做法的差异：** Cursor/Copilot/Devin 大多是单 Agent 多任务（同一个 session 既分析又修改），本产品借鉴 BMAD code-reviewer 模式，**强制多角色隔离**，防止盲点 + 提供独立视角。
 
-#### 2. Bug 分级路由 + 自动降级
+#### 2. Bug 分级路由 + AI 失败 handover
 
 **创新点：** 不是所有 Bug 都走同一流程。AI 在分析阶段同时输出 Bug 级别（L1-L4），按级别路由到不同人机协作模式。
 
@@ -490,52 +490,62 @@ classification:
 | L3 业务逻辑 | AI 分析 → AI 方案 → **人工审批方案** → AI 修复 → **人工 Review** | 2 |
 | L4 架构级 | AI 分析报告 → **人工全程接手** | 全程 |
 
-**自动降级：** L1/L2 修复失败 3 次 → 自动升级为 L3 流程，**保留 fix 分支现状**，研发基于 AI 尝试结果继续改。
+**AI 失败 handover（V2 机制）：** AI 自动修复失败（fix 耗尽 / revise 耗尽 / L4 / 低信心 / tag 不可修 / 用户主动） → 触发 handover → Issue 打 `needs-manual` label、**保留 fix 分支现状**、DM 主 + backup owner，研发基于 AI 尝试结果继续改。
 
-**与业界常规做法的差异：** Devin 等竞品对所有任务给"全自动"承诺，本产品承认 AI 能力分级，**让分级错误的代价可控**（3 次重试后自动降级）。
+**与业界常规做法的差异：** Devin 等竞品对所有任务给"全自动"承诺，本产品承认 AI 能力分级，**让分级错误的代价可控**（AI 失败自动交人接手，fix 分支保留让人继承 AI 的思路）。
 
 **通知策略（Notification Policy）：** 所有 DM 通知按**模块 → 负责人（owner）**路由（FR39），**不发触发人 DM**（触发人通过"Bug 修复实例"页面查看状态和事件时间线）。各级别/场景通知对象如下：
 
 | 级别 / 场景 | 通知对象 | 说明 |
 |---|---|---|
 | L1 / L2 / L3 修复成功（MR 已建） | 各涉及 project owner（主 + 从去重） | 告知 MR 链接等合并 |
-| L3 审批阶段 | 主仓 owner：审批 DM<br>从仓 owner：FYI 知情 DM | 主仓 owner 单人决策，从仓 owner 仅知情 |
-| **L4 架构级**（AI 无法自动修） | **各涉及 project owner（主 + 从去重）** | Claude 放弃自动修，Issue 已建等人工接手 |
-| L1/L2 修复失败 3 次（自动降级 L3） | 按 L3 审批流程通知 owner（见 FR33） | 降级后流程和 L3 一致 |
+| L3 审批阶段 | 主仓 owner：审批 DM（+ backup owner 同发）<br>从仓 owner：FYI 知情 DM | 主备 FCFS 首答生效；从仓 FYI |
+| **L4 架构级**（AI 无法自动修） | **各涉及 project owner（主 + 从去重，含 backup owner）** | AI 主动转人工，Issue 已建等接手 |
+| L1/L2/L3 修复失败 3 次（V2 handover） | 按 handover 矩阵通知 owner（含 backup owner，见 FR33） | AI 放手，fix 分支保留，owner 在 GitLab 接手 |
+| revise 3 轮失败 | 按 handover 矩阵通知 owner（同上） | revise 路径耗尽，转人工 |
+| 用户主动在前端点"转人工" | 按 handover 矩阵通知 owner | 触发人主动判定 AI 不靠谱，交 owner |
 | 审批被拒 / 审批超时 / 请求重新分析 | 不发 DM | 已决策终止或等待下轮，前端展示即可 |
-| 修复失败（未降级） | 不发 DM | 用户可从前端"重试"按钮触发新一轮 |
+| MR 被 close 触发 revise 自动修订 | 不发 DM | 系统自动跑 revise-pipeline，owner 只需等下一个 MR |
+| CI 失败触发 revise 自动修订 | 不发 DM | 同上 |
+| 全局超时 7 天自动 aborted | 不发 DM，前端状态展示 | 用户自行感知 |
 
 **为何 L4 要发 owner**：L4 虽然没有修复动作，但 Issue 已建、明确需要**人工接手**——属于"有待办的任务卡壳"场景，必须主动 ping 负责人，不能让 Issue 静默躺在 GitLab 上。
 
 **为何不发触发人 DM**：触发人通常是测试/运营，他们关心"我报的 bug 进行得怎么样"；这个信息前端页面的状态 Tag + 事件时间线 + MR 链接已经全了，IM 推送反而增加消息骚扰。触发人在群里 @机器人 问 Bug 时会收到分析进度实时推送（FR5 里的"分析进度实时推送"），这已足够反馈。
 
-**多 project 部分失败策略（Partial Failure Policy）：** L3 / L4（或 L2 自动降级 L3）场景下同一 Bug 可能涉及多个 project（主仓 + 从仓）。若任一 project 的修复环节失败（如 `fix_attempt` 或 `create_mr`）：
+**多 project 部分失败策略（Partial Failure Policy）：** L3 / L4 场景下同一 Bug 可能涉及多个 project（主仓 + 从仓）。若任一 project 的修复环节失败（如 `fix_attempt` 或 `create_mr`）：
 
 - **策略：整条 Pipeline 终止，已成功 project 的修复代码和 worktree 一并丢弃**（不 push，不建 MR）
 - **恢复路径**：用户从"Bug 修复实例"页面点"重试"按钮 → `reuseIssueId` 模式起新 report 重跑整条 Pipeline（不从失败 stage 续跑）
 - **设计权衡**：partial-success 的运维价值（保留部分 MR）不抵维护成本（幽灵分支难清理、MR 合入顺序复杂、owner 心智负担大）。MVP 阶段明确不走"部分成功就部分建 MR"路线
 - **未来演进方向**：若 partial-success 场景增多，可考虑 `onFailure: 'continue'` + 给成功 project 建 MR 并打 `partial-success` label，但需先设计"多 MR 合入顺序协调"产品方案
 
-**Bug 修复实例生命周期状态（Bug Report Status）：** `bug_analysis_reports.status` 共 5 个值，全生命周期转换见下表：
+**Bug 修复实例生命周期状态（Bug Report Status）：** `bug_analysis_reports.status` 共 6 个值（V2 新增 `pending_manual`），全生命周期转换见下表：
 
 | 状态 | 触发 | 含义 | 前端 UI 建议 | 可操作 |
 |---|---|---|---|---|
 | `draft` | analyzer 刚建 report | 分析进行中 | 灰色 Tag "分析中" | 无 |
-| `published` | classification='bug' + Issue 创建成功 | 已确认 bug，Pipeline 运行中 | 蓝色 Tag "修复中" | 看 Pipeline 实时进度 |
-| `pipeline_success` | Pipeline 所有 stage 成功 | MR 已建、等合并 | 绿色 Tag "MR 待合并" | 看 MR 链接 |
-| `completed` | 非 bug 直接 / MR merged webhook | 生命周期闭环 | 深绿 Tag "已完成" | 只读 |
-| `aborted` | Pipeline 失败 / MR close webhook（未 merged） | 失败或放弃 | 红色 Tag "已终止" | **重试按钮（触发 `reuseIssueId` 起新 report）** |
+| `published` | classification='bug' + Issue 创建成功 | 已确认 bug，Pipeline 运行中（首次 / revise 中任一轮次） | 蓝色 Tag "修复中" | 看 Pipeline 实时进度 |
+| `pipeline_success` | Pipeline 所有 stage 成功 | MR 已建、等合并 | 绿色 Tag "MR 待合并" | 看 MR 链接 · 主动转修订 · 主动转人工 |
+| `pending_manual` (V2) | AI 放手交人工：fix 3 轮失败 / L4 / 用户主动转人工 / tag bug 不可修 | AI 退出，等 owner 在 GitLab 或群里人工接手 | 橙色 Tag "待人工接手" | 看 fix 分支链接 · owner 可接手 |
+| `completed` | 非 bug 直接 / 所有 MR merged | 生命周期闭环 | 深绿 Tag "已完成" | 只读 |
+| `aborted` | 审批被拒 / 全局 7 天超时 / 用户放弃 / revise 轮次耗尽 | 失败或放弃 | 红色 Tag "已终止" | **重试按钮（触发 `reuseIssueId` 起新 report）** |
 
 **状态转换规则：**
 - `draft → published`：bug 分类 + Issue 创建成功
 - `draft → completed`：非 bug 分类（usage_issue 等）直接终结
+- `draft → pending_manual`：classification=bug 且 level=l4（V2：L4 主动转人工）
 - `published → pipeline_success`：Pipeline `onComplete({status:'success'})`
-- `published → aborted`：Pipeline `onComplete({status:'failed'})`
-- `pipeline_success → completed`：GitLab webhook `merge_request` action='merge'
-- `pipeline_success → aborted`：GitLab webhook `merge_request` action='close'（且未 merged）
+- `published → pending_manual`（V2）：fix 3 轮失败 / 用户主动转人工
+- `published → aborted`：审批被拒 / 用户放弃 / 全局超时
+- `pipeline_success → published`（V2 revise）：MR close 或 CI 失败 → 启动 revise-pipeline
+- `pipeline_success → completed`：所有涉及 project 的 MR 均 merged
+- `pipeline_success → aborted`：revise 轮次耗尽（达到 `revise_max_rounds=3`）
+- `pending_manual → completed`：owner 在 GitLab 合并 MR（webhook 同步）
+- `pending_manual → aborted`：owner 关 Issue / 全局 7 天超时
 - `aborted → [新 report draft]`：用户点重试按钮 → 新 report 独立走完整生命周期（原 report 保持 aborted，不反转）
 
-状态机 Mermaid 图 + 每条转换的代码位置见 spec [Pipeline 生命周期状态机](../../../docs/superpowers/specs/2026-04-17-pipeline-full-orchestration-design.md) 章节。
+状态机 Mermaid 图 + 每条转换的代码位置见 V1 spec [Pipeline 生命周期状态机](../../../docs/superpowers/specs/2026-04-17-pipeline-full-orchestration-design.md) 章节；V2 工作流扩展见 [V2 spec](../../../docs/superpowers/specs/2026-04-19-pipeline-v2-workflow-design.md) §5。
 
 #### 3. 文档分层架构：AI 摘要 + 独立知识库
 
@@ -618,7 +628,7 @@ classification:
 |-------|---------|---------|--------|
 | 多 Agent 协作 | 独立 Review Agent 能发现修复 Agent 遗漏的问题 | 对比有无 Review Agent 的 MR 质量 | Review Agent 标记的问题中 ≥30% 是修复 Agent 漏过的 |
 | 分级路由 | L1+L2 占 Bug 总量 ≥60% | PAM 近 3 月 Bug 数据统计 | 占比达标则路由价值成立 |
-| 自动降级 | 3 次重试后人工接手的代价 ≤ 不重试直接人工 | 对比 AI 尝试后人工耗时 vs 直接人工耗时 | AI 尝试至少缩短 20% 人工耗时 |
+| 失败兜底 | AI 失败后人工接手的代价 ≤ 不重试直接人工 | 对比 AI 尝试后人工耗时 vs 直接人工耗时 | AI 尝试至少缩短 20% 人工耗时 |
 | AI 摘要随代码更新 | 更新负担在可承受范围 | 修复 Agent 同步更新摘要的 token 消耗 / 耗时 | 单次修复额外耗时 ≤1 分钟 |
 | Bug 根因归因 | 归因能真正驱动知识体系优化 | 3 个月后统计"同类根因重复 Bug"占比 | 重复 Bug 占比下降 ≥20% |
 | 知识库命中 | 历史 Bug 能秒回新问题 | 命中率统计 | 3 个月后 ≥30% |
@@ -626,7 +636,7 @@ classification:
 #### MVP 验证计划
 
 1. **里程碑 1（分析闭环）验收后**：验证 "分析质量 + 分级准确率 + 置信度校准" 三个核心假设
-2. **里程碑 2（修复闭环）验收后**：验证 "AI 自动修复成功率 + Review 盲点检出率 + 自动降级价值"
+2. **里程碑 2（修复闭环）验收后**：验证 "AI 自动修复成功率 + Review 盲点检出率 + AI 失败 handover 价值"
 3. **里程碑 3（进化闭环）验收后**：验证 "根因归因 + 知识库命中率 + 价值量化" 三个飞轮假设
 
 ### Risk Mitigation
@@ -635,8 +645,8 @@ classification:
 |---------|---------|---------|
 | **AI 分析质量不稳定** | 偶发错误 → 用户信任崩塌 | 置信度标签 + 最小 MVP 模式（环节可选）+ 只在置信度 ≥80% 时进入自动修复流程 |
 | **多 Agent 协作复杂度** | Agent 间信息传递偏差 | 方案先行（结构化方案文档作为 Agent 间的契约）+ commit message 详细化（可回溯） |
-| **分级错误代价** | AI 分级错误 → 流程走错 | 3 次失败自动降级 + fix 分支保留 + 人工可接手 |
-| **自动修复越改越乱** | 修复 Agent 在错误方向上深度调试 | 3 次重试上限 + 保留所有尝试 commit（不 revert） |
+| **分级错误代价** | AI 分级错误 → 流程走错 | AI 失败 handover 机制 + fix 分支保留 + 人工可接手（V2） |
+| **自动修复越改越乱** | 修复 Agent 在错误方向上深度调试 | Pipeline retryCount + revise 轮次上限（默认 3）+ 保留所有尝试 commit（不 revert） |
 | **知识库冷启动** | 没有历史数据，命中率低 | AI 主动扫描初始化（不等 Bug 喂数据）+ 能自动补的自动补，不能的问人 |
 | **用户不愿学习新流程** | 流程长，用户只走前 2 步 | 最小 MVP 模式，每个环节可选；从分析闭环开始逐步开启修复、review、测试等 |
 | **客户无法用 Claude** | 合规/本地化要求 | Porygon backend 层抽象，支持模型可插拔 |
@@ -816,7 +826,7 @@ classification:
 | 置信度标签 | ✅ 必备 | 管理用户预期，防信任崩塌 |
 | Bug 分级（L1-L4） | ✅ 必备 | 分级路由是核心设计，不分级就退化为单流程 |
 | L1/L2 自动修复 | ✅ 必备 | MVP 的差异化价值，没有就只是个分析工具 |
-| AI 修复失败 3 次自动降级 | ✅ 必备 | 没有这个兜底，AI 失控风险太高 |
+| AI 修复失败 handover 机制（V2） | ✅ 必备 | 没有这个兜底，AI 失控风险太高 |
 | AI 摘要随修复同步更新 | ✅ 必备 | 摘要维护成本的关键设计，落后即产品失败 |
 | 独立 AI Review Agent | ✅ 必备 | 没有独立视角，修复 Agent 盲点无法被发现 |
 | GitLab Issue Webhook 驱动 | ✅ 必备 | 事件驱动编排依赖此 |
@@ -843,7 +853,7 @@ classification:
 **必要用户旅程支持：**
 - Journey 1（研发 - L1 闭环）✅
 - Journey 2（研发 - L3 方案审批）✅（但可退化为转人工）
-- Journey 3（研发 - 失败降级）✅
+- Journey 3（研发 - AI 失败 handover）✅
 - Journey 4（售后 - 秒回）✅
 - Journey 5（管理员 - 产品线接入）✅
 
@@ -910,7 +920,7 @@ classification:
 2. **其次砍**：AI 摘要随修复同步更新（人工维护）— 减少 15% 开发量，但后患大
 3. **再次砍**：AI Review Agent（靠人工 Review）— 减少 20% 开发量，但 Review 质量下降
 4. **最后砍**：多 Agent 隔离（合并为单 Agent）— 减少 10%，但权限风险上升
-5. **绝不能砍**：独立 worktree 沙箱、置信度标签、知识库 index.json、Bug 分级路由、失败降级机制
+5. **绝不能砍**：独立 worktree 沙箱、置信度标签、知识库 index.json、Bug 分级路由、AI 失败 handover 机制
 
 
 
@@ -963,10 +973,17 @@ classification:
 - **FR29**：修复 Agent 可调用 MCP 工具进行代码修改、运行单元测试、创建 MR（通过 GitLab API）
 - **FR30**：修复 Agent 在 commit message 中详细记录修复思路和尝试步骤（便于人工接手时快速理解）
 - **FR31**：修复 Agent 可按 Bug 级别走不同流程（L1：修 → 测试 → MR → 人工合并；L2：同 L1 + 需人工 Review；L3：需方案审批通过后才能触发修复）
-- **FR32**：系统 可在单元测试失败时让修复 Agent 自动分析失败原因并再次尝试，最多重试 3 次
-- **FR33**：系统 可在修复重试 3 次仍失败时自动降级（label 改为 needs-manual，Bug 级别升级为 L3，保留 fix 分支现状，@通知研发接手）
+- **FR32**：系统 可在单元测试失败时让修复 Agent 自动分析失败原因并再次尝试，Pipeline 内 `retryCount` 控制重试次数（默认 2 次，即最多 3 次尝试）
+- **FR33**：系统 可在 AI 自动化失败时通过 **handover 统一入口** 转人工接手（V2 核心），保留 fix 分支、Issue 打 `needs-manual` label、DM 各涉及 project 的 owner + backup owner；多触发源包括：fix 3 轮失败、revise 3 轮失败、L4 分类、低信心分析、触发人在前端主动转、owner 在 GitLab 主动打 label、tag bug 无法自动处理。触发后 report 进入 `pending_manual` 状态，由 owner 在 GitLab 接手（合并 MR 或关闭 Issue 决定下一步）。详见 [V2 spec](../../../docs/superpowers/specs/2026-04-19-pipeline-v2-workflow-design.md) §9.3
 - **FR34**：Review Agent 可在 MR 创建后独立审查 diff（使用不同 systemPrompt、不同权限），从"这个改动有没有问题"视角检查方案一致性、遗漏、质量和安全
 - **FR35**：Review Agent 可在 MR 上打标签（ai-approved / ai-needs-attention）并写评论，辅助人工 Review 快速定位重点
+
+**V2 扩展 FR（2026-04-19）：**
+
+- **FR56（revise 自动修订）**：系统 可响应 GitLab MR Close webhook 或 CI 失败 webhook，自动启动 `revise-pipeline` 重修被打回的 project（复用原 fix 分支追加 commit、新建 MR、旧 MR 保留作历史）；Claude 通过 MCP 工具主动读 MR comment / CI 日志获取打回意见；revise 轮次上限可配（默认 3），超上限自动转 handover
+- **FR57（tag 版本 Bug 处理）**：analyzer 识别 Bug 提在 tag 上时，按 `release_branch_pattern` 推导 release 分支名（如 v1.2.3 → release/1.2.x）；分支不存在则从 tag 自动建分支；fix 基于 release 分支完成 + merge 回 release 分支；**master 不自动 cherry-pick**（master 可能已独立演进，cherry-pick 冲突率高）；无法处理时直接 handover
+- **FR58（主备 owner 同发）**：L3 审批 / handover / 其他需 owner 决策的 DM 场景，主 owner 和 backup owner 同时收到 DM；任一方在有效时间内回复 → 首回答生效（FCFS），另一方回复被幂等拦截
+- **FR59（任务前资源预检）**：coordinator 启动任何 Pipeline 前执行 preflight check（磁盘 / 内存 / 进行中任务数 / worktree 泄漏检测），不通过时拒绝启动 + DM admin（避免雪崩）
 
 ### 6. 审批与流程编排（Approval & Workflow）
 
@@ -1011,7 +1028,7 @@ classification:
 | Success Criteria - 知识库命中率 | FR15, FR17, FR55 |
 | Journey 1 - L1 快通道 | FR1-5, FR7-11, FR12-15, FR20-27, FR28-32, FR34-36 |
 | Journey 2 - L3 方案审批 | FR24, FR26, FR31, FR38-40, FR36-37 |
-| Journey 3 - 失败降级 | FR30, FR32-33, FR42-44 |
+| Journey 3 - AI 失败 handover | FR30, FR32-33, FR42-44 |
 | Journey 4 - 售后秒回 | FR1, FR15, FR27, FR55 |
 | Journey 5 - 新产品接入 | FR18, FR49-51 |
 | Innovation - 多 Agent 协作 | FR34-35, FR47 |
@@ -1054,7 +1071,7 @@ classification:
 
 - **NFR-R1（任务队列可靠性）**：任务执行中断或节点重启后，pending_approval 状态任务可恢复执行（利用 ChatOps 已有 TaskQueue registerResumeExecutor 机制）
 - **NFR-R2（Session 失效恢复）**：Claude session 失效时，系统自动清空 session 并重建新 session，不阻塞当前请求
-- **NFR-R3（自动降级机制）**：修复 Agent 3 次重试失败后 100% 触发自动降级（label 切换 + fix 分支保留 + @通知），无手动介入需求
+- **NFR-R3（AI 失败兜底机制）**：AI 自动修复在任意可兜底场景（fix/revise 3 轮耗尽 / L4 / 低信心 / tag 不可修 / 用户主动请求）100% 触发 handover 机制（label 切换 + fix 分支保留 + DM owner），report 转入 `pending_manual` 状态无手动介入需求。详见 V2 spec §9.3
 - **NFR-R4（failure-analyzer 独立性）**：流水线失败分析属于 best-effort，失败不阻塞主流程（复用 ChatOps 已有机制）
 - **NFR-R5（分析失败不污染主仓库）**：任何分析/修复过程中的异常终止，主 Git 仓库状态不受影响（worktree 隔离保障）
 
@@ -1065,7 +1082,7 @@ classification:
   - 修复成功率（按 L1/L2/L3 分级）
   - 知识库命中率
   - 平均分析耗时、平均修复耗时
-  - 失败降级次数、失败根因类型分布
+  - handover 触发次数、失败根因类型分布
 - **NFR-O2（审批流程可见性）**：所有审批请求、响应、超时升级事件可在管理后台查询（复用 ChatOps `approval_requests` 表）
 - **NFR-O3（Bug 流程实例可视化）**：每个 Bug 的 12 节点闭环流程进度在前端可见，支持按产品线筛选
 - **NFR-O4（日志归档）**：MCP 工具调用日志写入 `/tmp/mcp-server.log`，流水线执行日志写入 `{TEST_DATA_DIR}/`，保留 ≥30 天
