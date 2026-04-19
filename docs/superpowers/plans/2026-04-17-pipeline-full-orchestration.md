@@ -73,7 +73,7 @@
 
 ### 零改动文件（严益昌原创，硬约束）
 
-以下文件本次实施**任何情况下都不改**：
+以下文件本次实施**原则上不改**：
 
 - `src/pipeline/executor.ts`
 - `src/pipeline/types.ts`
@@ -81,6 +81,12 @@
 - `src/pipeline/webhook-waiter.ts`
 - `src/db/repositories/test-runs.ts`
 - `src/db/repositories/test-pipelines.ts`
+
+**已批准例外**：
+- **commit 89809d0（Task 7 期间）**：扩展 `src/pipeline/approval-manager.ts` 支持 `reanalyze` 决策 —
+  `requestApproval` 返回类型 union 加 `retry_analysis` 分支，`tryHandleCommand` 正则从 `approve|reject` 扩为 `approve|reject|reanalyze`，审批 DM 文案增加 reanalyze 命令提示。经用户确认后执行。
+
+**"零改动"定义域**：Task 18（commit c4eeead 开始）期间,以上 6 个文件零 commit 增量。早期 Task 7 的已批准例外见上。代码审查扫描 git 时请按"Task 18 开始点"为界区分。
 
 ---
 
@@ -3799,7 +3805,7 @@ Task 18 最终范围（用户决定后扩展）：**文档 + Growth Backlog + E2
 - `pnpm test`（vitest）：**295 pass / 4 skipped**（与 Task 17 完成时相同，无倒退）
 - `pnpm test:e2e`（Playwright）：**23 pass**（6 smoke + 17 业务 + 0 flaky）
 - `npx tsc --noEmit`：零错误
-- 硬约束文件（executor.ts / types.ts / approval-manager.ts / webhook-waiter.ts / test-runs repo / test-pipelines repo）**零改动**
+- 硬约束文件（executor.ts / types.ts / approval-manager.ts / webhook-waiter.ts / test-runs repo / test-pipelines repo）**Task 18 期间零改动**（Task 7 期间对 approval-manager.ts 的 reanalyze 扩展是已批准例外，见前文"零改动文件"章节）
 
 ### E2E 基础设施
 

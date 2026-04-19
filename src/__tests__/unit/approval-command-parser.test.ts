@@ -47,8 +47,16 @@ describe('parseApprovalCommand', () => {
     expect(parseApprovalCommand('  approve  #42  ')).toEqual({ kind: 'approve', issueIid: 42 })
   })
 
-  it('非法 issueIid（字母）：approve #abc → null', () => {
-    expect(parseApprovalCommand('approve #abc')).toBeNull()
+  it('非法 issueIid（字母）→ 保留字符串形式（UUID fallback 场景）', () => {
+    // approval-manager 的 approvalKey 在无 issueId 时是 randomUUID()，会有字母
+    // parser 必须接受，否则 claude-runner Step 0 会误判为非命令
+    expect(parseApprovalCommand('approve #abc')).toEqual({ kind: 'approve', issueIid: 'abc' })
+  })
+
+  it('纯数字以外的 key（带下划线/字母）保留字符串', () => {
+    expect(parseApprovalCommand('approve l3-fix-33')).toBeNull() // 带 dash 的 \w+ 不匹配
+    expect(parseApprovalCommand('approve fix_33')).toEqual({ kind: 'approve', issueIid: 'fix_33' })
+    expect(parseApprovalCommand('approve #uuid-xyz')).toBeNull() // 带 dash 不匹配
   })
 
   it('issueIid 为 0 → null（业务上 Issue iid 从 1 起）', () => {

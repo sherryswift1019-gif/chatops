@@ -101,8 +101,16 @@ export default function BugRunsPage() {
       })
       setReports(res.data)
       setTotal(res.total)
-    } catch {
-      // ignore abort
+    } catch (err) {
+      // AbortError：切筛选/翻页时主动 abort，不算错误
+      const isAbort =
+        (err as { name?: string })?.name === 'AbortError' ||
+        (err as { code?: string })?.code === 'ERR_CANCELED'
+      if (!isAbort) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('[BugRunsPage] load failed:', err)
+        message.error(`加载 Bug 列表失败: ${msg}`)
+      }
     } finally {
       setLoading(false)
     }

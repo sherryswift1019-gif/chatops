@@ -62,6 +62,21 @@ async function resolveProductLineId(userId: string): Promise<{ productLineId: nu
 }
 
 async function main(): Promise<void> {
+  // 生产环境兜底：禁止 E2E_MODE / CLAUDE_MOCK 误开
+  // 这些开关会：
+  //   1. 替换 DingTalk 适配器为 MockIMAdapter（真机器人不连）
+  //   2. /admin/_e2e/* 控制端点完全绕过 auth（可匿名触发 Pipeline、清审批状态）
+  //   3. Claude 调用短路为 mock 响应（真 AI 不跑）
+  // 任何一条误开都会让后端失去生产保护，必须 hard-fail 阻止启动
+  if (process.env.NODE_ENV === 'production') {
+    if (process.env.E2E_MODE === '1') {
+      throw new Error('E2E_MODE=1 is not allowed when NODE_ENV=production (bypasses auth + replaces IM adapter)')
+    }
+    if (process.env.CLAUDE_MOCK === '1') {
+      throw new Error('CLAUDE_MOCK=1 is not allowed when NODE_ENV=production (returns canned responses instead of real Claude)')
+    }
+  }
+
   const app = Fastify({ logger: true })
 
   // Build IM adapters (only create if credentials are configured in system_config)

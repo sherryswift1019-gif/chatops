@@ -6,18 +6,22 @@
  *
  * 规则（与 PipelineApprovalManager.tryHandleCommand 对齐）：
  * - 去掉前导中文 @机器人 mention + 空格
- * - 匹配 `approve <N>` / `reject <N> [reason]` / `reanalyze <N> [hint]`
- *   其中 N 可带可不带 #（例如 `approve #42` 或 `approve 42`）
- * - issueIid 限制为全数字，保证转 number 安全
+ * - 匹配 `approve <KEY>` / `reject <KEY> [reason]` / `reanalyze <KEY> [hint]`
+ *   其中 KEY 可带可不带 #（例如 `approve #42` 或 `approve 42` 或 `approve uuid-str`）
+ * - KEY 为 `\w+`（字母/数字/下划线），与 approval-manager 一致；approvalKey 在没有
+ *   issueId 时是 randomUUID()，含字母，必须接受
+ * - issueIid 字段：纯数字时解析为 number（便于下游用），否则保留原字符串
  * - 大小写不敏感（跟 approval-manager 里 /i 标志一致）
  * - 不匹配返回 null
  */
 export type ApprovalCommand =
-  | { kind: 'approve'; issueIid: number }
-  | { kind: 'reject'; issueIid: number; reason?: string }
-  | { kind: 'reanalyze'; issueIid: number; hint?: string }
+  | { kind: 'approve'; issueIid: number | string }
+  | { kind: 'reject'; issueIid: number | string; reason?: string }
+  | { kind: 'reanalyze'; issueIid: number | string; hint?: string }
 
-const CMD_RE = /^(approve|reject|reanalyze)\s+#?(\d+)(?:\s+(.+))?$/i
+// 注意：必须与 approval-manager.ts:62 tryHandleCommand 正则保持一致（\w+ 而非 \d+），
+// 否则 claude-runner Step 0 的 parser 先判断会把合法 UUID key 命令误判为非命令。
+const CMD_RE = /^(approve|reject|reanalyze)\s+#?(\w+)(?:\s+(.+))?$/i
 
 /**
  * 解析审批命令。
@@ -37,8 +41,10 @@ export function parseApprovalCommand(text: string): ApprovalCommand | null {
 
   const [, action, key, rest] = m
   const actionLower = action.toLowerCase()
-  const issueIid = Number(key)
-  if (!Number.isFinite(issueIid) || issueIid <= 0) return null
+
+  // 纯数字则转 number，否则保留字符串（UUID 等非数字 key）
+  const issueIid: number | string = /^\d+$/.test(key) ? Number(key) : key
+  if (typeof issueIid === 'number' && issueIid <= 0) return null
 
   const tail = rest ? rest.trim() : undefined
 

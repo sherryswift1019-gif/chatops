@@ -119,6 +119,15 @@ export async function handleApproveL3(opts: TriggerOptions): Promise<TriggerResu
 }
 
 function getFirstAdapter(mgr: PipelineApprovalManager): IMAdapter | undefined {
+  // ⚠️ 访问 approval-manager 的 private `adapters` 字段。
+  // 这里双重断言绕过类型系统是有意的妥协：
+  //   - approval-manager.ts 是 Task 7 计划中的硬约束文件（严益昌原创代码），
+  //     不允许添加 public getter/getAdapters() 方法
+  //   - approve-l3-handler 需要 adapter 给从仓库 owner 发 FYI DM（不经审批流）
+  //   - 未来如果能放开硬约束，首选方案：approval-manager 暴露 getAdapters() getter
+  //     或 initialize() 时把 adapters 存到一个 module-scope 变量供其他 handler 取用
+  // 已知风险：如果 approval-manager 内部 adapters 字段重命名或改为 Map，此处会静默返回 undefined
+  // 注意：BugFixEvents 已经记录 approval 事件和 project 信息，FYI DM 发送失败不影响主审批流程
   const adapters = (mgr as unknown as { adapters?: IMAdapter[] }).adapters
   return adapters?.[0]
 }
