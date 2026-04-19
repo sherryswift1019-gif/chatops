@@ -192,8 +192,11 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
 
   it('onComplete(failed) → updates status to aborted + triggers notify_bug', async () => {
     const { getBugAnalysisReportById, updateReportStatus } = await import('../../db/repositories/bug-analysis-reports.js')
+    const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
     const { runPipeline } = await import('../../pipeline/executor.js')
     ;(getBugAnalysisReportById as any).mockResolvedValue(fakeReport)
+    // 无 fix_attempt / approval / notify 事件 → 走"其他失败"路径
+    ;(findByReportCode as any).mockResolvedValue([])
 
     let captured: ((r: any) => Promise<void>) | null = null
     ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
@@ -213,6 +216,93 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
       capabilityKey: 'notify_bug',
       extraParams: expect.objectContaining({ reportId: fakeReport.id }),
     }))
+  })
+
+  it('onComplete(failed) + fix_attempt failed → handover(fix_exhausted)，不补发 notify_bug', async () => {
+    const { getBugAnalysisReportById, updateReportStatus } = await import('../../db/repositories/bug-analysis-reports.js')
+    const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
+    const { runPipeline } = await import('../../pipeline/executor.js')
+    ;(getBugAnalysisReportById as any).mockResolvedValue(fakeReport)
+    // 模拟：3 次 fix_attempt failed，无 approval / 无成功事件
+    ;(findByReportCode as any).mockImplementation(async (_rid: number, code: string) => {
+      if (code === 'approval') return []
+      if (code === 'handover') return []  // checkAndTriggerHandover 会查
+      if (code === 'fix_attempt') {
+        return [
+          { id: 1, reportId: fakeReport.id, code: 'fix_attempt', status: 'failed', data: {} },
+          { id: 2, reportId: fakeReport.id, code: 'fix_attempt', status: 'failed', data: {} },
+          { id: 3, reportId: fakeReport.id, code: 'fix_attempt', status: 'failed', data: {} },
+        ]
+      }
+      return []
+    })
+
+    let captured: ((r: any) => Promise<void>) | null = null
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+      captured = onComplete
+      return 103
+    })
+    await mockPipelineRow(11, 'L2-代码缺陷')
+
+    const handoverHandler = vi.fn(async () => ({ success: true, output: 'handed over' }))
+    const notifyHandler = vi.fn(async () => ({ success: true, output: 'sent' }))
+    registerCapabilityHandler('request_handover', handoverHandler)
+    registerCapabilityHandler('notify_bug', notifyHandler)
+
+    await handleAnalysisComplete(fakeReport.id, 'l2', 'bug', 'u-trigger')
+    await captured!({ runId: 103, pipelineName: 'L2', status: 'failed', errorMessage: 'fix failed 3 times', stageResults: [], durationMs: 500 })
+
+    // 不走 aborted + 补发 notify_bug 路径
+    expect(updateReportStatus).not.toHaveBeenCalledWith(fakeReport.id, 'aborted')
+    // 走 handover 路径：request_handover 被调 + notify_bug(kind='handover') 被调
+    expect(handoverHandler).toHaveBeenCalledWith(expect.objectContaining({
+      capabilityKey: 'request_handover',
+      extraParams: expect.objectContaining({
+        reportId: fakeReport.id,
+        reason: 'fix_exhausted',
+        context: expect.objectContaining({
+          failedStage: 'fix_bug_l2',
+          attemptCount: 3,
+        }),
+      }),
+    }))
+    expect(notifyHandler).toHaveBeenCalledWith(expect.objectContaining({
+      capabilityKey: 'notify_bug',
+    }))
+  })
+
+  it('onComplete(failed) + approval rejected → aborted，不触发 handover/notify', async () => {
+    const { getBugAnalysisReportById, updateReportStatus } = await import('../../db/repositories/bug-analysis-reports.js')
+    const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
+    const { runPipeline } = await import('../../pipeline/executor.js')
+    ;(getBugAnalysisReportById as any).mockResolvedValue({ ...fakeReport, level: 'l3' })
+    ;(findByReportCode as any).mockImplementation(async (_rid: number, code: string) => {
+      if (code === 'approval') {
+        return [
+          { id: 1, reportId: fakeReport.id, code: 'approval', status: 'failed', data: { decision: 'rejected' } },
+        ]
+      }
+      return []
+    })
+
+    let captured: ((r: any) => Promise<void>) | null = null
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+      captured = onComplete
+      return 104
+    })
+    await mockPipelineRow(13, 'L3-业务逻辑')
+
+    const handoverHandler = vi.fn(async () => ({ success: true, output: '' }))
+    const notifyHandler = vi.fn(async () => ({ success: true, output: '' }))
+    registerCapabilityHandler('request_handover', handoverHandler)
+    registerCapabilityHandler('notify_bug', notifyHandler)
+
+    await handleAnalysisComplete(fakeReport.id, 'l3', 'bug', 'u-trigger')
+    await captured!({ runId: 104, pipelineName: 'L3', status: 'failed', errorMessage: 'rejected', stageResults: [], durationMs: 100 })
+
+    expect(updateReportStatus).toHaveBeenCalledWith(fakeReport.id, 'aborted')
+    expect(handoverHandler).not.toHaveBeenCalled()
+    expect(notifyHandler).not.toHaveBeenCalled()
   })
 
   it('retry_analysis decision: triggers new analyze_bug with reuseIssueId', async () => {

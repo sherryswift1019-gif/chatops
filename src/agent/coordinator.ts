@@ -155,7 +155,69 @@ export async function handleAnalysisComplete(
         return
       }
 
-      // Pipeline 失败 → aborted
+      // Pipeline 失败 → 根据失败原因决定下一步（MVP）：
+      // 1. 审批 retry_analysis → aborted + 新 analyze_bug（原逻辑）
+      // 2. 审批 rejected/timeout → aborted，无通知（决策 12：不发审批相关 DM）
+      // 3. fix 类失败（retryCount 耗尽） → handover(fix_exhausted)（MVP T5）
+      // 4. 其他（create_mr/ai_review 失败）→ aborted + 补发 notify_bug（原逻辑）
+
+      const approvals = await findByReportCode(reportId, 'approval')
+      const lastApproval = approvals.length > 0 ? approvals[approvals.length - 1] : null
+      const decision = lastApproval ? (lastApproval.data as Record<string, unknown>)?.decision : null
+
+      // retry_analysis：触发新一轮 analyze_bug（原逻辑，顺序提前到最前判断）
+      if (decision === 'retry_analysis') {
+        await updateReportStatus(reportId, 'aborted')
+        console.log(`[AgentCoordinator] report ${reportId} → aborted (retry_analysis triggered)`)
+        console.log(`[AgentCoordinator] retry_analysis → trigger new analyze_bug with reuseIssueId=${report.issueId}`)
+        try {
+          await triggerCapability({
+            capabilityKey: 'analyze_bug',
+            context: {
+              taskId: `retry-${reportId}`,
+              groupId: 'pipeline',
+              platform: 'api',
+              initiatorId: triggeredBy,
+              initiatorRole: 'developer',
+            },
+            extraParams: {
+              productLineId: report.productLineId,
+              reuseIssueId: report.issueId,
+              message: `[重新分析] 基于 Issue #${report.issueId} 的历史内容重新分析`,
+            },
+          })
+        } catch (err) {
+          console.error(`[AgentCoordinator] retry_analysis trigger error:`, err)
+        }
+        return
+      }
+
+      // 审批 rejected/timeout：aborted，不发通知（PRD 决策 12）
+      if (decision === 'rejected' || decision === 'timeout') {
+        await updateReportStatus(reportId, 'aborted')
+        console.log(`[AgentCoordinator] report ${reportId} → aborted (approval ${decision})`)
+        return
+      }
+
+      // fix 阶段失败（retryCount 耗尽）→ handover(fix_exhausted)
+      // 判定：有 fix_attempt failed 且没有 fix_attempt success（全失败）
+      // 注：部分 project 成功+部分失败也算"fix_exhausted"：PRD 的 partial failure policy
+      // 明确整条 Pipeline 终止 / 已成功 project 的代码丢弃，故全部进 handover 合理
+      const fixAttempts = await findByReportCode(reportId, 'fix_attempt')
+      const hasFailedFix = fixAttempts.some(e => e.status === 'failed')
+      if (hasFailedFix) {
+        const failedCount = fixAttempts.filter(e => e.status === 'failed').length
+        console.log(
+          `[AgentCoordinator] report=${reportId} fix 阶段失败（${failedCount} 次）→ 触发 handover(fix_exhausted)`,
+        )
+        await checkAndTriggerHandover(reportId, 'fix_exhausted', triggeredBy, {
+          failedStage: `fix_bug_${level}`,
+          attemptCount: failedCount,
+        })
+        return
+      }
+
+      // 其他失败（create_mr / ai_review 失败等）：aborted + 补发 notify_bug（原逻辑）
       await updateReportStatus(reportId, 'aborted')
       console.log(`[AgentCoordinator] report ${reportId} → aborted (errorMessage=${result.errorMessage ?? ''})`)
 
@@ -184,33 +246,6 @@ export async function handleAnalysisComplete(
         }
       } catch (err) {
         console.error(`[AgentCoordinator] notify_bug on failed pipeline error:`, err)
-      }
-
-      // retry_analysis 决策 → 自动 analyze_bug 新一轮
-      const approvals = await findByReportCode(reportId, 'approval')
-      const lastApproval = approvals.length > 0 ? approvals[approvals.length - 1] : null
-      const decision = lastApproval ? (lastApproval.data as Record<string, unknown>)?.decision : null
-      if (decision === 'retry_analysis') {
-        console.log(`[AgentCoordinator] retry_analysis → trigger new analyze_bug with reuseIssueId=${report.issueId}`)
-        try {
-          await triggerCapability({
-            capabilityKey: 'analyze_bug',
-            context: {
-              taskId: `retry-${reportId}`,
-              groupId: 'pipeline',
-              platform: 'api',
-              initiatorId: triggeredBy,
-              initiatorRole: 'developer',
-            },
-            extraParams: {
-              productLineId: report.productLineId,
-              reuseIssueId: report.issueId,
-              message: `[重新分析] 基于 Issue #${report.issueId} 的历史内容重新分析`,
-            },
-          })
-        } catch (err) {
-          console.error(`[AgentCoordinator] retry_analysis trigger error:`, err)
-        }
       }
     } catch (err) {
       console.error(`[AgentCoordinator] onComplete error for report ${reportId}:`, err)
