@@ -9,7 +9,7 @@ import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { createFixBranch, commitChanges, pushBranch, rebaseOnTarget } from './branch-manager.js'
 import { runClaudeCli } from '../claude-cli.js'
 import { mask } from '../masking/sensitive-info.js'
-import { isClaudeMock, popMockResponse } from '../mocks/e2e-store.js'
+import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
 
 /** 判断 Claude 输出是否表示修复成功（保留导出以兼容旧集成测试） */
 export function isFixSuccessful(output: string): boolean {
@@ -62,10 +62,10 @@ export interface RunFixForProjectResult {
  */
 export async function runFixForProject(input: RunFixForProjectInput): Promise<RunFixForProjectResult> {
   if (isClaudeMock()) {
-    const key = `fix-${input.projectPath}`
-    const mock = popMockResponse(key)
-    if (mock === undefined) throw new Error(`E2E: no mock response queued for ${key}`)
-    return mock as RunFixForProjectResult
+    return popMockResponseValidated<RunFixForProjectResult>(
+      `fix-${input.projectPath}`,
+      ['branch', 'testPassed', 'output'],
+    )
   }
 
   const key = makeWorktreeKey({

@@ -213,11 +213,11 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
       signal: opts.signal,
     })
   } catch (err) {
-    release(mainWorktree)
     const msg = err instanceof Error ? err.message : String(err)
     return { success: false, error: `阶段A 筛选失败: ${msg}` }
   } finally {
     // 主仓库 worktree 筛选结束即可释放（阶段 B 按 project 独立 clone）
+    // catch 分支不需要再释放，finally 永远会执行
     release(mainWorktree)
   }
 

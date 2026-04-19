@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Card, Collapse, Tag, Button, Select, Space, Spin, Timeline, Modal, message, Empty, Pagination } from 'antd'
+import { Card, Collapse, Tag, Button, Select, Space, Spin, Statistic, Row, Col, Timeline, Modal, message, Empty, Pagination } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import {
@@ -74,6 +74,8 @@ export default function BugRunsPage() {
   const [levelFilter, setLevelFilter] = useState<BugReportLevelFilter[]>([])
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(20)
+  // G5 补偿：顶部状态分布 Stat（不受筛选影响，反映整个产品线的全局态）
+  const [stats, setStats] = useState<{ total: number; success: number; aborted: number } | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
@@ -84,6 +86,31 @@ export default function BugRunsPage() {
     if (selectedPL) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPL, statusFilter, levelFilter, page, pageSize])
+
+  // 产品线变化时独立刷新全局 stats（不受筛选/分页影响）
+  useEffect(() => {
+    if (!selectedPL) { setStats(null); return }
+    loadStats(selectedPL)
+  }, [selectedPL, page]) // page 变化时也刷（重试/新 bug 可能改变分布）
+
+  async function loadStats(pl: number) {
+    try {
+      const [totalRes, successRes, abortedRes] = await Promise.all([
+        getBugReports({ productLineId: pl, page: 1, pageSize: 1 }),
+        getBugReports({ productLineId: pl, page: 1, pageSize: 1, statuses: ['pipeline_success', 'completed'] }),
+        getBugReports({ productLineId: pl, page: 1, pageSize: 1, statuses: ['aborted'] }),
+      ])
+      setStats({ total: totalRes.total, success: successRes.total, aborted: abortedRes.total })
+    } catch (err) {
+      console.error('[BugRunsPage] loadStats failed:', err)
+      // stats 加载失败不阻塞主列表
+    }
+  }
+
+  function filterAborted() {
+    setStatusFilter(['aborted'])
+    setPage(1)
+  }
 
   async function load() {
     if (!selectedPL) return
@@ -169,6 +196,40 @@ export default function BugRunsPage() {
       }
       loading={loading}
     >
+      {/* G5 补偿：全局状态概览，失败数红色+可点，解决"失败沉默"问题 */}
+      {selectedPL && stats && (
+        <Row gutter={16} style={{ marginBottom: 16 }}>
+          <Col span={6}>
+            <Statistic title="总计" value={stats.total} />
+          </Col>
+          <Col span={6}>
+            <Statistic title="成功/已完成" value={stats.success} valueStyle={{ color: '#52c41a' }} />
+          </Col>
+          <Col span={6}>
+            <Statistic
+              title={
+                <span>
+                  失败（aborted）
+                  {stats.aborted > 0 && (
+                    <Button type="link" size="small" onClick={filterAborted} style={{ padding: 0, marginLeft: 8 }}>
+                      查看
+                    </Button>
+                  )}
+                </span>
+              }
+              value={stats.aborted}
+              valueStyle={{ color: stats.aborted > 0 ? '#cf1322' : '#999' }}
+            />
+          </Col>
+          <Col span={6}>
+            <Statistic
+              title="其他（进行中 / 草稿）"
+              value={Math.max(0, stats.total - stats.success - stats.aborted)}
+              valueStyle={{ color: '#1677ff' }}
+            />
+          </Col>
+        </Row>
+      )}
       {grouped.size === 0 && !loading ? (
         <Empty description={selectedPL ? '暂无分析报告' : '请先选择产品线'} />
       ) : (

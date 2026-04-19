@@ -31,6 +31,30 @@ export function popMockResponse(key: string): MockResponse | undefined {
   return head
 }
 
+/**
+ * Pop + 校验必需字段，失败时抛明确错误（而非 unsafe cast 后下游诡异报错）。
+ *
+ * @param key         mock 队列 key
+ * @param requiredFields 期望存在（非 undefined）的顶层字段名
+ * @throws 若队列为空、或响应不是 object、或缺字段
+ */
+export function popMockResponseValidated<T>(key: string, requiredFields: (keyof T)[]): T {
+  const raw = popMockResponse(key)
+  if (raw === undefined) {
+    throw new Error(`E2E: no mock response queued for ${key}`)
+  }
+  if (typeof raw !== 'object' || raw === null) {
+    throw new Error(`E2E: mock response for ${key} must be object, got ${typeof raw}`)
+  }
+  const obj = raw as Record<string, unknown>
+  for (const field of requiredFields) {
+    if (obj[field as string] === undefined) {
+      throw new Error(`E2E: mock response for ${key} missing required field "${String(field)}"`)
+    }
+  }
+  return raw as T
+}
+
 export function resetMockResponses(): void {
   mockQueues.clear()
 }

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   setMockResponse,
   popMockResponse,
+  popMockResponseValidated,
   resetMockResponses,
   recordSentMessage,
   getSentMessages,
@@ -46,6 +47,43 @@ describe('e2e-store', () => {
       resetMockResponses()
       expect(popMockResponse('k1')).toBeUndefined()
       expect(popMockResponse('k2')).toBeUndefined()
+    })
+  })
+
+  describe('popMockResponseValidated', () => {
+    type Shape = { branch: string; testPassed: boolean }
+
+    it('必需字段齐全 → 正常返回', () => {
+      setMockResponse('fix-foo', { branch: 'fix/1', testPassed: true })
+      const r = popMockResponseValidated<Shape>('fix-foo', ['branch', 'testPassed'])
+      expect(r.branch).toBe('fix/1')
+    })
+
+    it('队列为空 → 抛包含 key 的错误', () => {
+      expect(() => popMockResponseValidated<Shape>('fix-foo', ['branch'])).toThrow(
+        /no mock response queued for fix-foo/,
+      )
+    })
+
+    it('响应非对象 → 抛明确错误', () => {
+      setMockResponse('fix-foo', 'some string')
+      expect(() => popMockResponseValidated<Shape>('fix-foo', ['branch'])).toThrow(
+        /must be object, got string/,
+      )
+    })
+
+    it('响应为 null → 抛明确错误', () => {
+      setMockResponse('fix-foo', null)
+      expect(() => popMockResponseValidated<Shape>('fix-foo', ['branch'])).toThrow(
+        /must be object, got object/,
+      )
+    })
+
+    it('缺必需字段 → 抛含字段名的错误', () => {
+      setMockResponse('fix-foo', { branch: 'fix/1' })
+      expect(() =>
+        popMockResponseValidated<Shape>('fix-foo', ['branch', 'testPassed']),
+      ).toThrow(/missing required field "testPassed"/)
     })
   })
 
