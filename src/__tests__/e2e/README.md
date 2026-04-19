@@ -35,4 +35,4 @@ pnpm test:e2e specname     # 单个 spec
 - **B 批**：BugRunsPage 交互 5 条
 - **C 批**：审批群内命令 3 条
 
-详见 `docs/superpowers/plans/2026-04-17-pipeline-full-orchestration.md` 的 Task 18。
+详见 `docs/superpowers/plans/2026-04-17-bug-fix-workflow-orchestration.md` 的 Task 18。

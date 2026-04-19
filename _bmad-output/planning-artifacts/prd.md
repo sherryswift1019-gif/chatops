@@ -545,7 +545,7 @@ classification:
 - `pending_manual → aborted`：owner 关 Issue / 全局 7 天超时
 - `aborted → [新 report draft]`：用户点重试按钮 → 新 report 独立走完整生命周期（原 report 保持 aborted，不反转）
 
-状态机 Mermaid 图 + 每条转换的代码位置见 V1 spec [Pipeline 生命周期状态机](../../../docs/superpowers/specs/2026-04-17-pipeline-full-orchestration-design.md) 章节；V2 工作流扩展见 [V2 spec](../../../docs/superpowers/specs/2026-04-19-pipeline-v2-workflow-design.md) §5。
+状态机 Mermaid 图 + 每条转换的代码位置见 V1 spec [Pipeline 生命周期状态机](../../../docs/superpowers/specs/2026-04-17-bug-fix-workflow-orchestration-design.md) 章节；V2 工作流扩展见 [V2 spec](../../../docs/superpowers/specs/2026-04-19-bug-fix-workflow-v2-design.md) §5。
 
 #### 3. 文档分层架构：AI 摘要 + 独立知识库
 
@@ -974,7 +974,7 @@ classification:
 - **FR30**：修复 Agent 在 commit message 中详细记录修复思路和尝试步骤（便于人工接手时快速理解）
 - **FR31**：修复 Agent 可按 Bug 级别走不同流程（L1：修 → 测试 → MR → 人工合并；L2：同 L1 + 需人工 Review；L3：需方案审批通过后才能触发修复）
 - **FR32**：系统 可在单元测试失败时让修复 Agent 自动分析失败原因并再次尝试，Pipeline 内 `retryCount` 控制重试次数（默认 2 次，即最多 3 次尝试）
-- **FR33**：系统 可在 AI 自动化失败时通过 **handover 统一入口** 转人工接手（V2 核心），保留 fix 分支、Issue 打 `needs-manual` label、DM 各涉及 project 的 owner + backup owner；多触发源包括：fix 3 轮失败、revise 3 轮失败、L4 分类、低信心分析、触发人在前端主动转、owner 在 GitLab 主动打 label、tag bug 无法自动处理。触发后 report 进入 `pending_manual` 状态，由 owner 在 GitLab 接手（合并 MR 或关闭 Issue 决定下一步）。详见 [V2 spec](../../../docs/superpowers/specs/2026-04-19-pipeline-v2-workflow-design.md) §9.3
+- **FR33**：系统 可在 AI 自动化失败时通过 **handover 统一入口** 转人工接手（V2 核心），保留 fix 分支、Issue 打 `needs-manual` label、DM 各涉及 project 的 owner + backup owner；多触发源包括：fix 3 轮失败、revise 3 轮失败、L4 分类、低信心分析、触发人在前端主动转、owner 在 GitLab 主动打 label、tag bug 无法自动处理。触发后 report 进入 `pending_manual` 状态，由 owner 在 GitLab 接手（合并 MR 或关闭 Issue 决定下一步）。详见 [V2 spec](../../../docs/superpowers/specs/2026-04-19-bug-fix-workflow-v2-design.md) §9.3
 - **FR34**：Review Agent 可在 MR 创建后独立审查 diff（使用不同 systemPrompt、不同权限），从"这个改动有没有问题"视角检查方案一致性、遗漏、质量和安全
 - **FR35**：Review Agent 可在 MR 上打标签（ai-approved / ai-needs-attention）并写评论，辅助人工 Review 快速定位重点
 

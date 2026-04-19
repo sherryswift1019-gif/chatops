@@ -1,6 +1,6 @@
-# Pipeline V2 工作流化 — 设计文档
+# Bug 分析修复工作流 V2 — 设计文档
 
-> **定位**：本文档是 [V1 spec（2026-04-17-pipeline-full-orchestration-design.md）](./2026-04-17-pipeline-full-orchestration-design.md) 的**增量设计**（delta），不替代 V1。V1 已落地的能力继续有效，V2 只描述新增和扩展点。引用 V1 内容使用 `V1-§X.Y` 格式，不复制。
+> **定位**：本文档是 [V1 spec（2026-04-17-bug-fix-workflow-orchestration-design.md）](./2026-04-17-bug-fix-workflow-orchestration-design.md) 的**增量设计**（delta），不替代 V1。V1 已落地的能力继续有效，V2 只描述新增和扩展点。引用 V1 内容使用 `V1-§X.Y` 格式，不复制。
 
 ---
 
