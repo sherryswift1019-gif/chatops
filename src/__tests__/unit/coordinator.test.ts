@@ -3,6 +3,7 @@ import {
   triggerCapability,
   registerCapabilityHandler,
   handleAnalysisComplete,
+  checkAndTriggerHandover,
 } from '../../agent/coordinator.js'
 
 // ─── mock 底层依赖 ─────────────────────────────────────────────
@@ -12,6 +13,7 @@ vi.mock('../../db/repositories/capabilities.js', () => ({
     if (key === 'test_cap') return { id: 1, key: 'test_cap', toolNames: [], systemPrompt: '' }
     if (key === 'notify_bug') return { id: 2, key: 'notify_bug', toolNames: [], systemPrompt: '' }
     if (key === 'analyze_bug') return { id: 3, key: 'analyze_bug', toolNames: [], systemPrompt: '' }
+    if (key === 'request_handover') return { id: 4, key: 'request_handover', toolNames: [], systemPrompt: '' }
     return null
   }),
 }))
@@ -261,5 +263,99 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
 
     expect(runPipeline).not.toHaveBeenCalled()
     expect(updateReportStatus).toHaveBeenCalledWith(fakeReport.id, 'aborted')
+  })
+
+  it('L4 bug: triggers handover (request_handover + notify_bug), no Pipeline', async () => {
+    const { runPipeline } = await import('../../pipeline/executor.js')
+    const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
+    ;(findByReportCode as any).mockResolvedValue([])  // 无已存在 handover 事件
+
+    const handoverHandler = vi.fn(async () => ({ success: true, output: 'handed over' }))
+    const notifyHandler = vi.fn(async () => ({ success: true, output: 'sent' }))
+    registerCapabilityHandler('request_handover', handoverHandler)
+    registerCapabilityHandler('notify_bug', notifyHandler)
+
+    await handleAnalysisComplete(fakeReport.id, 'l4', 'bug', 'u-trigger')
+
+    // 不启动 L4 Pipeline
+    expect(runPipeline).not.toHaveBeenCalled()
+    // 依次调 request_handover + notify_bug
+    expect(handoverHandler).toHaveBeenCalledWith(expect.objectContaining({
+      capabilityKey: 'request_handover',
+      extraParams: expect.objectContaining({
+        reportId: fakeReport.id,
+        reason: 'l4_manual',
+      }),
+    }))
+    expect(notifyHandler).toHaveBeenCalledWith(expect.objectContaining({
+      capabilityKey: 'notify_bug',
+      extraParams: expect.objectContaining({ reportId: fakeReport.id }),
+    }))
+  })
+})
+
+describe('AgentCoordinator - checkAndTriggerHandover', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('已有 handover success 事件 → 幂等跳过（不再调 triggerCapability）', async () => {
+    const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
+    ;(findByReportCode as any).mockResolvedValue([
+      { id: 1, reportId: 42, code: 'handover', status: 'success', data: { reason: 'fix_exhausted' } },
+    ])
+
+    const handoverHandler = vi.fn(async () => ({ success: true, output: '' }))
+    const notifyHandler = vi.fn(async () => ({ success: true, output: '' }))
+    registerCapabilityHandler('request_handover', handoverHandler)
+    registerCapabilityHandler('notify_bug', notifyHandler)
+
+    await checkAndTriggerHandover(42, 'user_requested', 'u-trigger')
+
+    expect(handoverHandler).not.toHaveBeenCalled()
+    expect(notifyHandler).not.toHaveBeenCalled()
+  })
+
+  it('request_handover 失败 → 不再调 notify_bug（不发假通知）', async () => {
+    const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
+    ;(findByReportCode as any).mockResolvedValue([])
+
+    const handoverHandler = vi.fn(async () => ({ success: false, error: 'report_not_found' }))
+    const notifyHandler = vi.fn(async () => ({ success: true, output: '' }))
+    registerCapabilityHandler('request_handover', handoverHandler)
+    registerCapabilityHandler('notify_bug', notifyHandler)
+
+    await checkAndTriggerHandover(42, 'fix_exhausted', 'u-trigger')
+
+    expect(handoverHandler).toHaveBeenCalledOnce()
+    expect(notifyHandler).not.toHaveBeenCalled()
+  })
+
+  it('正常路径 → request_handover 成功后立即调 notify_bug', async () => {
+    const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
+    ;(findByReportCode as any).mockResolvedValue([])
+
+    const handoverHandler = vi.fn(async () => ({ success: true, output: 'handed over' }))
+    const notifyHandler = vi.fn(async () => ({ success: true, output: 'sent' }))
+    registerCapabilityHandler('request_handover', handoverHandler)
+    registerCapabilityHandler('notify_bug', notifyHandler)
+
+    await checkAndTriggerHandover(42, 'fix_exhausted', 'u-trigger', {
+      failedStage: 'fix_bug_l2',
+      attemptCount: 3,
+    })
+
+    expect(handoverHandler).toHaveBeenCalledWith(expect.objectContaining({
+      capabilityKey: 'request_handover',
+      extraParams: expect.objectContaining({
+        reportId: 42,
+        reason: 'fix_exhausted',
+        context: expect.objectContaining({ failedStage: 'fix_bug_l2', attemptCount: 3 }),
+      }),
+    }))
+    expect(notifyHandler).toHaveBeenCalledWith(expect.objectContaining({
+      capabilityKey: 'notify_bug',
+      extraParams: expect.objectContaining({ reportId: 42 }),
+    }))
   })
 })

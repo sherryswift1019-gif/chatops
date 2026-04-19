@@ -106,7 +106,8 @@ async function findPipelineByLevel(productLineId: number, level: string): Promis
 /**
  * 分析完成后协调入口。
  * - 非 bug 分类：不触发 Pipeline（analyzer 内部已设 status='completed'）
- * - bug 分类：按 productLineId + level 查匹配 Pipeline，调 runPipeline
+ * - L4 分类（MVP）：走 handover 路径，不启动 L4-复杂问题 Pipeline（V2 handover-pipeline 的前身）
+ * - L1/L2/L3 分类：按 productLineId + level 查匹配 Pipeline，调 runPipeline
  *   - 回写 pipeline_run_id
  *   - onComplete: status='success' → pipeline_success；status='failed' → aborted + 补发 notify_bug
  *                 并在 failed 时检查最新 approval 事件，若 decision='retry_analysis' → 自动 analyze_bug 新一轮
@@ -122,6 +123,14 @@ export async function handleAnalysisComplete(
   // 非 bug：analyzer 里已设 status='completed'，这里什么都不做
   if (classification !== 'bug') {
     console.log(`[AgentCoordinator] skip pipeline for non-bug report ${reportId} (classification=${classification})`)
+    return
+  }
+
+  // L4（MVP）：AI 放弃自动修复，走 handover 路径，不启动 L4-复杂问题 Pipeline
+  // V2 spec §5 / §9.3：L4 对应 state draft → pending_manual（非 published → aborted）
+  if (level === 'l4') {
+    console.log(`[AgentCoordinator] level=l4 → trigger handover (reason=l4_manual)`)
+    await checkAndTriggerHandover(reportId, 'l4_manual', triggeredBy)
     return
   }
 
@@ -219,6 +228,67 @@ export async function handleAnalysisComplete(
 
   await setPipelineRunId(reportId, runId)
   console.log(`[AgentCoordinator] report ${reportId} linked to pipeline run ${runId}`)
+}
+
+/**
+ * 转人工接手统一入口（MVP 对齐 V2 spec §9.3）。
+ * 依次触发 request_handover（写 handover 事件 + 改状态 + 打 label）和 notify_bug（发 DM 给 owner）。
+ *
+ * MVP 支持的 reason：'fix_exhausted' | 'l4_manual' | 'user_requested'
+ * V2 spec 里还有 'revise_exhausted' | 'low_confidence' | 'owner_label' | 'tag_unrevisable'，
+ * 但本期代码不触发这些。接口签名保留 string 类型，供 V2 扩展。
+ *
+ * 幂等：已有 handover success 事件直接跳过，避免重复触发。
+ */
+export async function checkAndTriggerHandover(
+  reportId: number,
+  reason: 'fix_exhausted' | 'l4_manual' | 'user_requested' | string,
+  triggeredBy: string,
+  context?: { failedStage?: string; comment?: string; attemptCount?: number },
+): Promise<void> {
+  // 幂等（handler 本身也有幂等；这里先查避免多次 triggerCapability 的日志噪音）
+  const existing = await findByReportCode(reportId, 'handover')
+  if (existing.some(e => e.status === 'success')) {
+    console.log(`[AgentCoordinator] report=${reportId} already handed over, skip`)
+    return
+  }
+
+  // 1. 调 request_handover：写事件 + 改状态 + GitLab 打 label
+  const handoverResult = await triggerCapability({
+    capabilityKey: 'request_handover',
+    context: {
+      taskId: `handover-${reportId}`,
+      groupId: 'pipeline',
+      platform: 'api',
+      initiatorId: triggeredBy,
+      initiatorRole: 'admin',
+    },
+    extraParams: { reportId, reason, ...(context ? { context } : {}) },
+  })
+  if (!handoverResult.success) {
+    console.error(
+      `[AgentCoordinator] request_handover failed for report=${reportId}: ${handoverResult.error}`,
+    )
+    // handover 失败不再触发 notify_bug（DM 基于 handover 事件）；让 report 停在原状态，等手动介入
+    return
+  }
+
+  // 2. 调 notify_bug：读 handover 事件 + DM owner（详见 notify-handler kind='handover' 分支）
+  try {
+    await triggerCapability({
+      capabilityKey: 'notify_bug',
+      context: {
+        taskId: `notify-handover-${reportId}`,
+        groupId: 'pipeline',
+        platform: 'api',
+        initiatorId: triggeredBy,
+        initiatorRole: 'admin',
+      },
+      extraParams: { reportId },
+    })
+  } catch (err) {
+    console.error(`[AgentCoordinator] notify_bug on handover error for report=${reportId}:`, err)
+  }
 }
 
 // 通知回调（server.ts 仍注入；当前链路已由 notify_bug capability 负责，保留 API 兼容性）
