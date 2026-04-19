@@ -408,14 +408,21 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     const { findByReportCode } = await import('../../db/repositories/bug-fix-events.js')
     const { runPipeline } = await import('../../pipeline/executor.js')
     ;(getBugAnalysisReportById as any).mockResolvedValue({ ...fakeReport, level: 'l3' })
-    ;(findByReportCode as any).mockResolvedValue([
-      {
-        id: 1, reportId: fakeReport.id, projectPath: null, code: 'approval',
-        status: 'failed',
-        data: { decision: 'retry_analysis', approverName: 'u-owner' },
-        durationMs: null, createdAt: new Date(),
-      },
-    ])
+    // 按 code 精确 mock，避免 coordinator 后续代码改动（例如提前检查 handover/fix_attempt）
+    // 读到同一份 approval 事件而走错分支的误判
+    ;(findByReportCode as any).mockImplementation(async (_rid: number, code: string) => {
+      if (code === 'approval') {
+        return [
+          {
+            id: 1, reportId: fakeReport.id, projectPath: null, code: 'approval',
+            status: 'failed',
+            data: { decision: 'retry_analysis', approverName: 'u-owner' },
+            durationMs: null, createdAt: new Date(),
+          },
+        ]
+      }
+      return []
+    })
 
     let captured: ((r: any) => Promise<void>) | null = null
     ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
