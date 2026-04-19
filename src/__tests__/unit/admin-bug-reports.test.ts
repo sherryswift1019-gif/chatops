@@ -349,4 +349,21 @@ describe('POST /bug-reports/:id/handover', () => {
     expect(res.json()).toMatchObject({ success: false, error: 'INTERNAL_ERROR' })
     await app.close()
   })
+
+  it('falls back to original status when reloaded report is null', async () => {
+    // 边界：极端情况下 handover 之后报告被删除（或 getById 第二次返回 null），
+    // 响应里的 status 应回退到前置读到的 status（而非 throw 或返回 undefined）
+    ;(getBugAnalysisReportById as any)
+      .mockResolvedValueOnce(publishedReport)  // 前置读
+      .mockResolvedValueOnce(null)              // reloaded 为 null
+
+    const app = await buildApp()
+    const res = await app.inject({ method: 'POST', url: '/bug-reports/42/handover' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({
+      success: true,
+      data: { reportId: 42, status: 'published' },
+    })
+    await app.close()
+  })
 })
