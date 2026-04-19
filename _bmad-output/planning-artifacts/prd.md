@@ -687,8 +687,11 @@ classification:
 | `analyze_bug` | 全角色 | 钉钉 @机器人 / GitLab Issue Webhook |
 | `fix_bug_l1` | 系统内部（事件驱动） | analyze_bug 分级判断后自动触发 |
 | `fix_bug_l2` | 系统内部（事件驱动） | 同上 |
-| `fix_bug_l3` | 系统内部（需审批） | L3 方案 approved label 后触发 |
-| `ai_review_mr` | 系统内部（事件驱动） | MR 创建后自动触发 |
+| `fix_bug_l3` | 系统内部（需审批） | approve_l3 stage success 后自动触发 |
+| `approve_l3` | 系统内部（需审批） | L3 Pipeline 第一个 stage，DM 给主仓 owner 审批、从仓 owner 知情 |
+| `create_mr` | 系统内部（事件驱动） | fix_bug_lN success 后自动触发 |
+| `ai_review_mr` | 系统内部（事件驱动） | create_mr success 后自动触发 |
+| `notify_bug` | 系统内部（事件驱动） | Pipeline 最后一个 stage；L4 创建 / AI Review 需关注时 DM 各 project owner |
 | `search_knowledge` | 全角色 | analyze 前置步骤 |
 
 **双层权限控制：**
@@ -753,7 +756,7 @@ classification:
 #### 数据库变更
 
 - **扩展** `test_pipelines.stages` 的 stage 类型：增加 `capability` / `wait_webhook`
-- **新增** `capabilities` 记录：analyze_bug / fix_bug_l1 / fix_bug_l2 / fix_bug_l3 / ai_review_mr / search_knowledge
+- **新增** `capabilities` 记录：analyze_bug / fix_bug_l1 / fix_bug_l2 / fix_bug_l3 / approve_l3 / create_mr / ai_review_mr / notify_bug / search_knowledge
 - **新增** 产品注册表：{product_line_id, git_repo, knowledge_repo, ai_summary_path}
 - **新增** 模块 → 负责人映射表：{product_line_id, module_pattern, owner_user_id}
 - **新增** Bug 根因归因表：{issue_id, root_cause_type, context}
@@ -983,7 +986,7 @@ classification:
 ### 8. 权限与多租户（Permission & Multi-tenant）
 
 - **FR45**：系统 可按四级角色（developer / tester / ops / admin）、产品线、环境、capability 四个维度做权限控制
-- **FR46**：系统 可为研发 AI 助手新增的 capability（analyze_bug / fix_bug_l1 / fix_bug_l2 / fix_bug_l3 / ai_review_mr / search_knowledge）配置产线 × 环境 × 角色的访问控制矩阵
+- **FR46**：系统 可为研发 AI 助手新增的 capability（analyze_bug / fix_bug_l1 / fix_bug_l2 / fix_bug_l3 / approve_l3 / create_mr / ai_review_mr / notify_bug / search_knowledge）配置产线 × 环境 × 角色的访问控制矩阵
 - **FR47**：系统 可通过 CLI 层 `--allowed-tools` 硬限制每个 Agent 的工具权限（分析 Agent 只读、修复 Agent 读写代码但不接收外部消息、Review Agent 只读 MR）
 - **FR48**：系统 可在 AI 分析/修复时对密码、密钥、IP 等敏感信息自动脱敏
 - **FR49**：admin 可管理产品线（新增/编辑/停用）、配置产品线对应的 Git 仓库路径、知识库仓库路径、默认分支、AI 摘要路径

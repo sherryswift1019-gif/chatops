@@ -740,6 +740,25 @@ await setPipelineRunId(reportId, runId)
 - 失败原因由 test_runs.error_message 和 stage_results 记录，不需要在 bug_analysis_reports.status 再细分
 - `completed` 和 `pipeline_success` 的区别：前者要等 MR merge webhook，后者仅 Pipeline 跑完
 
+### notify_bug 补发幂等保护
+
+当 Pipeline 因早期 stage（`fix_bug_lN` / `create_mr`）失败、`onFailure=stop` 提前终止时，Pipeline 里定义的最后一个 `notify_bug` stage **不会被执行**。coordinator `onComplete` 在 `result.status !== 'success'` 分支里会**补发一次** `triggerCapability('notify_bug', ...)`，确保失败场景也有通知入口。
+
+但某些场景（如 `ai_review_mr` 的 `onFailure=continue`）Pipeline 会继续跑完 `notify_bug` stage 并最终以 `failed` 收尾，此时 coordinator 补发会**重复**。为避免同一 Pipeline 发两条 DM，coordinator 补发前必须做幂等检查：
+
+```typescript
+// 补发 notify_bug 前的幂等保护
+const existingNotify = await findByReportCode(reportId, 'notify')
+const alreadyNotified = existingNotify.some(e => e.status === 'success')
+if (alreadyNotified) {
+  console.log(`[coordinator] notify 已执行过，跳过补发`)
+  return
+}
+await triggerCapability('notify_bug', { extraParams: { reportId } })
+```
+
+**规则**：以 `bug_fix_events.code='notify' AND status='success'` 作为"已通知"的唯一真相源。handler 内部的 per-owner 重发（某个 owner DM 失败重试）**不属于**这里讨论的 Pipeline 级补发，不受此幂等保护影响。
+
 **bug_analysis_reports.status 转移路径**：
 
 ```
@@ -819,9 +838,11 @@ analyzer 写入 draft（开始） → published（classification=bug）
 
 ### 超时处理
 
-维持 Pipeline 现有行为 —— `approve_l3` handler 内调 `requestApproval(timeoutMs=3600_000)` 返回 `timeout` → handler 返回 `{success:false, error:'timeout'}` → stage.status=failed → `onFailure=stop` 终止 Pipeline。
+`approve_l3` handler 从 `stage.capabilityParams.approvalTimeoutMs` 显式读取超时毫秒数（必须由 Pipeline stage 配置传入，**无默认值**）；未传或非法（非正整数）直接返回 `{success:false, error:'invalid_timeout'}` fail-fast。
 
-触发人收到"L3 审批超时"通知，可在 Bug 修复实例页面点"重试"触发完整新一轮流程（新分析 + 新 Pipeline，复用原 Issue，见"失败重试"章节）。
+合法超时下调 `requestApproval(timeoutMs=approvalTimeoutMs)`，返回 `timeout` → handler 返回 `{success:false, error:'timeout'}` → stage.status=failed → `onFailure=stop` 终止 Pipeline → coordinator onComplete 将 `bug_analysis_reports.status` 置为 `aborted`。
+
+触发人在 Bug 修复实例页面可看到 `status=aborted` 并出现"重试"按钮（见"失败重试"章节）；**本版不发触发人超时 DM**（与 L3 审批阶段其他相关 DM 的决策一致——见 "DM 通知策略"）。
 
 ### 审批命令
 
@@ -1230,7 +1251,7 @@ triggerParams 约定只传 `{ reportId }`，capability handler 从 `ctx.triggerP
 - **When** 主仓库 owner 回复 `approve #123`
 - **Then**：
   - approve_l3 handler 返回 success
-  - fix_bug_l3 stage 启动，对 2 个 project 分别修复（并行 worktree 无冲突）
+  - fix_bug_l3 stage 启动，对 2 个 project 分别修复（**串行执行**，peak concurrency=1；worktree 以 `project_path` 维度隔离保证即使未来放开并发也无冲突）
   - create_mr 对 2 个 project 分别创建 MR（2 个 MR description 都含 `Closes PAM/pas-6.0#<iid>`）
   - ai_review_mr 对 2 个 MR 分别 Review + 写 GitLab Note
   - notify_bug 发成功通知：每个 project owner 只看到自己 project 的 MR；触发人**不收 DM**（本版触发人靠前端页面查看进度）

@@ -160,7 +160,7 @@ VALUES
    '对每个涉及的 project 创建 GitLab Merge Request，description 引用主 Issue',
    'action', '[]'::jsonb, false),
   ('notify_bug', '修复完成通知',
-   'Pipeline 终态通知：成功/失败 DM 给 project 负责人和触发人',
+   'Pipeline 终态通知：L4 创建 / AI Review 需关注时 DM 给各涉及 project 负责人（owner）。本版不发触发人 DM（触发人通过 Bug 修复实例页面查看进度）',
    'action', '[]'::jsonb, false)
 ON CONFLICT (key) DO NOTHING;
 
@@ -269,7 +269,7 @@ INSERT INTO test_pipelines (product_line_id, name, description, stages, enabled,
 SELECT
   id AS product_line_id,
   'L4-复杂问题' AS name,
-  '无自动修复能力的 Bug 分析结果，仅创建 Issue 并通知触发人' AS description,
+  '无自动修复能力的 Bug 分析结果，仅创建 Issue 并通知各涉及 project 负责人（owner）人工接手' AS description,
   '[
     {
       "name": "通知", "stageType": "capability", "capabilityKey": "notify_bug",
@@ -1666,6 +1666,12 @@ git commit -m "feat(mr): create_mr capability handler + 多 project + Closes/Rel
 
 **通知场景决策树**：
 
+> ⚠️ **重要**：以下决策树为历史评审过程版本，保留用于参考场景边界；**最终实施以本文档顶部「实施修订说明」+ PRD 『通知策略』矩阵为准**。真实生效的策略是：
+> - L4（`classification='bug' && level='l4'`）：DM 各涉及 project owner
+> - 修复全成功 + AI Review needs-attention：DM 各 project owner（只通知自己的 MR）
+> - **审批被拒 / 审批超时 / retry_analysis / 修复失败** → 一律**不发 DM**（handler 直接返回 success），触发人与 owner 均通过前端 Bug 修复实例页面查看状态
+> - 本版**不发触发人 DM**
+
 ```
 report.classification != 'bug'（L4 只有 notify_bug stage）:
   → 通知触发人："已创建 Issue..."（如有 Issue）或 "分析结果: ..."
@@ -1845,6 +1851,8 @@ registerCapabilityHandler('notify_bug', handleNotify)
 ```
 
 **messageKind → 文案模板**（实现要参考 spec 的"DM 通知策略"表）：
+
+> ⚠️ 下列模板为评审过程草稿，**最终实施里 `approval_rejected / approval_timeout / approval_retry_analysis / fix_failed / fix_success (initiator)` 五个 kind 不会真实触发**（handler 在相应场景直接 return success，不 buildMessage）。实际只用到 `l4_created / fix_success (owner) / fix_success_review_concerns (owner)`。
 
 ```
 l4_created:       "已创建 Issue #{iid}，此问题需要人工处理\n{issueUrl}\n{rootCause}"
@@ -3980,13 +3988,13 @@ const detailRuns = await Promise.all(
 
 **建议**：
 - analyzer：`ANALYSIS_CONCURRENCY` 默认 3
-- fix-runner：`FIX_CONCURRENCY` 默认 2（fix 比分析更重）
-- [CLAUDE.md](../../../CLAUDE.md) Config 章节补这两个环境变量说明
+- fix-runner：**保持串行（peak concurrency=1）**，不引入环境变量；fix 流程比 analyze 更重（改代码 + 跑测试），多 project 并发起 Claude CLI 会爆机器/API。已在 [`src/agent/fix/fix-runner.ts`](../../../src/agent/fix/fix-runner.ts) 保留串行 for 循环 + 注释说明，`src/__tests__/unit/fix-runner.test.ts` 里的 `peak=1` 回归测试为此保护。未来若要放开，参考 analyzer.ts 的 p-limit 方案。
+- [CLAUDE.md](../../../CLAUDE.md) Config 章节补 `ANALYSIS_CONCURRENCY` 说明
 - [src/config.ts](../../../src/config.ts) 用 Zod 校验（optional int）
 
 **验收**：
 - [ ] `src/__tests__/unit/analyzer.test.ts` 新增：`并发最多 3 个 project 同时分析`（mock runClaudeDetailedAnalysis 统计 peak concurrency）
-- [ ] `src/__tests__/unit/fix-runner.test.ts` 类似测试
+- [ ] `src/__tests__/unit/fix-runner.test.ts` 保留 `multi-project 串行执行（peak concurrency=1，C4 回归保护）` 测试
 - [ ] `pnpm test:e2e` L3 多 project 场景不倒退
 
 ---
