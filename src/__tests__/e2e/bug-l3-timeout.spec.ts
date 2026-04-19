@@ -69,10 +69,16 @@ test.describe('L3 审批超时 → aborted', () => {
   })
 
   test.afterEach(async () => {
-    // 移除注入的 approvalTimeoutMs，避免污染后续 spec
+    // 恢复注入前的默认 approvalTimeoutMs（base.sql 里是 3600000），避免污染后续 spec。
+    // C3 后 handler fail-fast：approvalTimeoutMs 缺失会直接 return invalid_timeout，
+    // 所以不能用 `#-` 删 key，必须还原为默认值。
     await dbQuery(`
       UPDATE test_pipelines
-      SET stages = stages #- '{0,capabilityParams,approvalTimeoutMs}'
+      SET stages = jsonb_set(
+        stages,
+        '{0,capabilityParams,approvalTimeoutMs}',
+        '3600000'::jsonb
+      )
       WHERE name = 'L3-业务逻辑'
     `)
   })

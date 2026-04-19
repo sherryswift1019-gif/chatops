@@ -114,13 +114,15 @@ SET stages = '[
 WHERE name = 'L2-代码缺陷';
 
 -- L3 Pipeline: approve_l3 是 stageType=capability（不是 approval）
+-- 注意：capabilityParams.approvalTimeoutMs 必须与 stage.timeoutSeconds 保持同步
+--       （handler 内部 fail-fast：未配置或非法会直接 return invalid_timeout）
 UPDATE test_pipelines
 SET stages = '[
   {
     "name": "方案审批", "stageType": "capability", "capabilityKey": "approve_l3",
     "timeoutSeconds": 3600, "retryCount": 0, "onFailure": "stop",
     "targetRoles": [], "parallel": false,
-    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}", "approvalTimeoutMs": 3600000}
   },
   {
     "name": "L3 修复", "stageType": "capability", "capabilityKey": "fix_bug_l3",

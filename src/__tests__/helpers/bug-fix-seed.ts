@@ -96,7 +96,7 @@ export async function seedPipelines(productLineId: number): Promise<void> {
   ]
 
   const l3Stages = [
-    { name: '方案审批', stageType: 'capability', capabilityKey: 'approve_l3', timeoutSeconds: 3600, retryCount: 0, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '方案审批', stageType: 'capability', capabilityKey: 'approve_l3', timeoutSeconds: 3600, retryCount: 0, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}', approvalTimeoutMs: 3600000 } },
     { name: 'L3 修复', stageType: 'capability', capabilityKey: 'fix_bug_l3', timeoutSeconds: 2400, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
     { name: '创建 MR', stageType: 'capability', capabilityKey: 'create_mr', timeoutSeconds: 300, retryCount: 1, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
     { name: 'AI Review', stageType: 'capability', capabilityKey: 'ai_review_mr', timeoutSeconds: 600, retryCount: 0, onFailure: 'continue', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },

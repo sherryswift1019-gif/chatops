@@ -82,7 +82,16 @@ export async function handleApproveL3(opts: TriggerOptions): Promise<TriggerResu
     // 请求主仓库 owner 审批
     const startTime = Date.now()
     const description = buildApprovalDescription(report, scopes)
-    const timeoutMs = (opts.extraParams?.approvalTimeoutMs as number | undefined) ?? 3600_000
+    // C3：fail-fast —— approvalTimeoutMs 必须由 stage.capabilityParams 显式传入。
+    // 配置缺失或非法立即 return error，避免默认值掩盖配置错误。
+    const timeoutMs = Number(opts.extraParams?.approvalTimeoutMs)
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      return {
+        success: false,
+        error: 'invalid_timeout',
+        output: 'approvalTimeoutMs 未配置或非法（必须由 stage.capabilityParams 显式传入）',
+      }
+    }
     const decision = await mgr.requestApproval(
       [primaryOwnerId],
       description,

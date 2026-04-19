@@ -101,7 +101,7 @@ describe('approve_l3 handler', () => {
     const result = await handleApproveL3({
       capabilityKey: 'approve_l3',
       context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
-      extraParams: { reportId: report.id },
+      extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
     expect(result.success).toBe(true)
@@ -132,7 +132,7 @@ describe('approve_l3 handler', () => {
       const r = await handleApproveL3({
         capabilityKey: 'approve_l3',
         context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
-        extraParams: { reportId: report.id },
+        extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
       })
 
       expect(r.success).toBe(false)
@@ -179,7 +179,7 @@ describe('approve_l3 handler', () => {
     await handleApproveL3({
       capabilityKey: 'approve_l3',
       context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
-      extraParams: { reportId: report.id },
+      extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
     // 只有从仓库 owner 收到 FYI DM（主仓库 owner 的审批 DM 由 approval-manager 发，被 mock 拦截了）
@@ -233,7 +233,7 @@ describe('approve_l3 handler', () => {
     await handleApproveL3({
       capabilityKey: 'approve_l3',
       context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
-      extraParams: { reportId: report.id },
+      extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
     // 去重后只发一次
@@ -275,7 +275,7 @@ describe('approve_l3 handler', () => {
     await handleApproveL3({
       capabilityKey: 'approve_l3',
       context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
-      extraParams: { reportId: report.id },
+      extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
     // 主 owner 已经由 approval-manager 发审批 DM，此处不应重复发 FYI
@@ -295,7 +295,7 @@ describe('approve_l3 handler', () => {
     const r = await handleApproveL3({
       capabilityKey: 'approve_l3',
       context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
-      extraParams: { reportId: report.id },
+      extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
     expect(r.success).toBe(false)
@@ -320,5 +320,48 @@ describe('approve_l3 handler', () => {
     })
     expect(r.success).toBe(false)
     expect(r.error).toBe('report_not_found')
+  })
+
+  // C3：approvalTimeoutMs fail-fast
+  it('missing approvalTimeoutMs → returns invalid_timeout', async () => {
+    const productLineId = await seedProductLine()
+    await seedProject(productLineId, {
+      name: 'pas-6.0',
+      gitlabPath: 'PAM/pas-6.0',
+      ownerId: 'u-primary',
+      ownerName: '张三',
+    })
+    const report = await seedReport(productLineId, 'PAM/pas-6.0')
+
+    // 未传 approvalTimeoutMs
+    const r = await handleApproveL3({
+      capabilityKey: 'approve_l3',
+      context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
+      extraParams: { reportId: report.id },
+    })
+    expect(r.success).toBe(false)
+    expect(r.error).toBe('invalid_timeout')
+    expect(r.output).toContain('approvalTimeoutMs')
+  })
+
+  it('非法 approvalTimeoutMs（负数 / 非数字）→ returns invalid_timeout', async () => {
+    const productLineId = await seedProductLine()
+    await seedProject(productLineId, {
+      name: 'pas-6.0',
+      gitlabPath: 'PAM/pas-6.0',
+      ownerId: 'u-primary',
+      ownerName: '张三',
+    })
+    const report = await seedReport(productLineId, 'PAM/pas-6.0')
+
+    for (const bad of [-1, 0, NaN, 'abc' as unknown as number]) {
+      const r = await handleApproveL3({
+        capabilityKey: 'approve_l3',
+        context: { taskId: 't', groupId: 'g', platform: 'pipeline', initiatorId: 'p', initiatorRole: 'admin' },
+        extraParams: { reportId: report.id, approvalTimeoutMs: bad },
+      })
+      expect(r.success).toBe(false)
+      expect(r.error).toBe('invalid_timeout')
+    }
   })
 })
