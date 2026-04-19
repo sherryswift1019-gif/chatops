@@ -200,15 +200,27 @@ export async function handleAnalysisComplete(
       }
 
       // fix 阶段失败（retryCount 耗尽）→ handover(fix_exhausted)
-      // 判定：有 fix_attempt failed 且没有 fix_attempt success（全失败）
-      // 注：部分 project 成功+部分失败也算"fix_exhausted"：PRD 的 partial failure policy
-      // 明确整条 Pipeline 终止 / 已成功 project 的代码丢弃，故全部进 handover 合理
+      // 判定：存在至少一个 scope project 的所有 fix_attempt 都 failed（从未 success）
+      // 注：
+      // - fix-runner 对已 success 的 project 会跳过（幂等），因此后续 retry 只重跑未成功的 project
+      // - 若所有 scope 都有过 success 的 fix_attempt，则 pipeline 失败根因不在 fix（可能是 create_mr / ai_review）
+      // - 若任一 scope 从未 success 过，则 fix 阶段确实耗尽 → handover
+      const scopes = await findByReportCode(reportId, 'scope_identified')
       const fixAttempts = await findByReportCode(reportId, 'fix_attempt')
-      const hasFailedFix = fixAttempts.some(e => e.status === 'failed')
-      if (hasFailedFix) {
+      const scopePaths = Array.from(
+        new Set(scopes.map(s => s.projectPath).filter((p): p is string => !!p)),
+      )
+      const fixExhausted =
+        scopePaths.length > 0 &&
+        scopePaths.some(
+          path =>
+            fixAttempts.some(e => e.projectPath === path && e.status === 'failed') &&
+            !fixAttempts.some(e => e.projectPath === path && e.status === 'success'),
+        )
+      if (fixExhausted) {
         const failedCount = fixAttempts.filter(e => e.status === 'failed').length
         console.log(
-          `[AgentCoordinator] report=${reportId} fix 阶段失败（${failedCount} 次）→ 触发 handover(fix_exhausted)`,
+          `[AgentCoordinator] report=${reportId} fix 阶段失败（${failedCount} 次，存在 project 全部 attempt 失败）→ 触发 handover(fix_exhausted)`,
         )
         await checkAndTriggerHandover(reportId, 'fix_exhausted', triggeredBy, {
           failedStage: `fix_bug_${level}`,
