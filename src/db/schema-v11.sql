@@ -154,7 +154,7 @@ INSERT INTO test_pipelines (product_line_id, name, description, stages, enabled,
 SELECT
   id AS product_line_id,
   'L4-复杂问题' AS name,
-  '无自动修复能力的 Bug 分析结果，仅创建 Issue 并通知触发人' AS description,
+  '无自动修复能力的 Bug 分析结果，仅创建 Issue 并通知各涉及 project 负责人（owner）人工接手' AS description,
   '[
     {
       "name": "通知", "stageType": "capability", "capabilityKey": "notify_bug",

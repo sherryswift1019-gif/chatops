@@ -116,7 +116,7 @@ FROM product_lines WHERE name = 'pam'
 
 -- L4-复杂问题（仅 notify）
 INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-SELECT id, 'L4-复杂问题', '无自动修复能力，仅创建 Issue 并通知触发人',
+SELECT id, 'L4-复杂问题', '无自动修复能力，仅创建 Issue 并通知各涉及 project 负责人（owner）人工接手',
   '[
     {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
   ]'::jsonb,

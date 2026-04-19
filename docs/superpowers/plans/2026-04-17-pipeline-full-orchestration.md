@@ -21,8 +21,19 @@
    - 影响范围：plan/spec 里所有"触发人 DM"相关描述失效
    - 具体规则：
      - `fix_success` / `fix_success_review_concerns`：发给 project owner（保留）
-     - `l4_created` / `approval_rejected` / `approval_timeout` / `approval_retry_analysis` / `fix_failed`：**不发任何 DM**（handler 直接返回 success，不写 notify 事件）
+     - `l4_created`：发给**各涉及 project 负责人**（主仓 + 从仓 owner，去重）—— 见下方第 2 条修订，原先误判为"不发"
+     - `approval_rejected` / `approval_timeout` / `approval_retry_analysis` / `fix_failed`：**不发任何 DM**（handler 直接返回 success，不写 notify 事件）
    - 代码已按此规则实施（commit `6682c06`），相关单测和集成测试已同步
+
+2. **L4 通知澄清**（Task 18 后续修订）
+   - 背景：spec 原有两处冲突（[spec:1059](../specs/2026-04-17-pipeline-full-orchestration-design.md#L1059) Pipeline description 说"通知触发人"，而 [spec:873](../specs/2026-04-17-pipeline-full-orchestration-design.md#L873) 行为矩阵表说"不发 DM"），第一轮实施（commit `6682c06`）按行为表做了"L4 不发"
+   - 用户澄清：L4 = "Claude 判断无法自动修，Issue 已建，**等人工接手**" —— 属于**有明确下一步待办**的场景，必须发 DM 让 owner 知晓
+   - 决策：L4 发 DM 给**各涉及 project 负责人**（主仓 + 从仓 owner，去重），不发触发人（与修订 1 保持一致）
+   - 和 fix_failed 等失败场景的区别：失败类已决策终止或可由重试按钮自行发起，L4 是任务卡壳等待接手，语义完全不同
+   - 影响范围：
+     - notify-handler：`shouldNotifyOwners('l4_created')` 从 `false` 改 `true`，`buildMessage` 新增 `'l4_created'` 模板
+     - spec 三处对齐（588 / 873 / 1059）
+     - e2e 新增 `bug-l4-flow.spec.ts` 专测 L4 场景；原误导性的 `bug-l4-multi-project.spec.ts`（实际测 L2）重命名
 
 ---
 
