@@ -18,13 +18,14 @@ vi.mock('../../agent/analysis/analyzer.js', () => ({
 
 vi.mock('../../agent/coordinator.js', () => ({
   handleAnalysisComplete: vi.fn(async () => {}),
+  checkAndTriggerHandover: vi.fn(async () => {}),
 }))
 
 import { registerBugAnalysisReportRoutes } from '../../admin/routes/bug-analysis-reports.js'
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { findByReport } from '../../db/repositories/bug-fix-events.js'
 import { handleAnalyzeBug } from '../../agent/analysis/analyzer.js'
-import { handleAnalysisComplete } from '../../agent/coordinator.js'
+import { handleAnalysisComplete, checkAndTriggerHandover } from '../../agent/coordinator.js'
 
 async function buildApp() {
   const app = Fastify()
@@ -241,6 +242,111 @@ describe('GET /bug-reports/:id/events', () => {
     expect(body.data[0].code).toBe('analysis')
     expect(body.data[1].code).toBe('scope_identified')
     expect(body.data[1].projectPath).toBe('PAM/x')
+    await app.close()
+  })
+})
+
+describe('POST /bug-reports/:id/handover', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const publishedReport = {
+    ...abortedReport,
+    status: 'published' as const,
+  }
+
+  it('returns 404 when report not found', async () => {
+    ;(getBugAnalysisReportById as any).mockResolvedValue(null)
+    const app = await buildApp()
+    const res = await app.inject({ method: 'POST', url: '/bug-reports/999/handover' })
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toMatchObject({ success: false, error: 'REPORT_NOT_FOUND' })
+    await app.close()
+  })
+
+  it('returns 400 when id is not a number', async () => {
+    const app = await buildApp()
+    const res = await app.inject({ method: 'POST', url: '/bug-reports/abc/handover' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json()).toMatchObject({ success: false, error: 'INVALID_ID' })
+    await app.close()
+  })
+
+  it.each([
+    ['pending_manual'],
+    ['completed'],
+    ['aborted'],
+  ])('returns 409 when status=%s (不允许转人工)', async status => {
+    ;(getBugAnalysisReportById as any).mockResolvedValue({ ...abortedReport, status })
+    const app = await buildApp()
+    const res = await app.inject({ method: 'POST', url: '/bug-reports/42/handover' })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toMatchObject({ success: false, error: 'INVALID_STATUS' })
+    await app.close()
+  })
+
+  it.each([
+    ['draft'],
+    ['published'],
+    ['pipeline_success'],
+  ])('success when status=%s → calls checkAndTriggerHandover(user_requested)', async status => {
+    ;(getBugAnalysisReportById as any)
+      .mockResolvedValueOnce({ ...abortedReport, status })  // 前置读
+      .mockResolvedValueOnce({ ...abortedReport, status: 'pending_manual' })  // handover 后的 reloaded 状态
+
+    const app = await buildApp()
+    const res = await app.inject({ method: 'POST', url: '/bug-reports/42/handover' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({
+      success: true,
+      data: { reportId: 42, status: 'pending_manual' },
+    })
+    expect(checkAndTriggerHandover).toHaveBeenCalledWith(42, 'user_requested', 'admin', undefined)
+    await app.close()
+  })
+
+  it('passes comment to checkAndTriggerHandover when body.comment provided', async () => {
+    ;(getBugAnalysisReportById as any)
+      .mockResolvedValueOnce(publishedReport)
+      .mockResolvedValueOnce({ ...abortedReport, status: 'pending_manual' })
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/bug-reports/42/handover',
+      headers: { 'content-type': 'application/json' },
+      payload: { comment: '这个方向 AI 走不通，我来改' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(checkAndTriggerHandover).toHaveBeenCalledWith(42, 'user_requested', 'admin', {
+      comment: '这个方向 AI 走不通，我来改',
+    })
+    await app.close()
+  })
+
+  it('ignores empty/whitespace-only comment', async () => {
+    ;(getBugAnalysisReportById as any)
+      .mockResolvedValueOnce(publishedReport)
+      .mockResolvedValueOnce({ ...abortedReport, status: 'pending_manual' })
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/bug-reports/42/handover',
+      headers: { 'content-type': 'application/json' },
+      payload: { comment: '   ' },
+    })
+    expect(res.statusCode).toBe(200)
+    expect(checkAndTriggerHandover).toHaveBeenCalledWith(42, 'user_requested', 'admin', undefined)
+    await app.close()
+  })
+
+  it('returns 500 when checkAndTriggerHandover throws', async () => {
+    ;(getBugAnalysisReportById as any).mockResolvedValue(publishedReport)
+    ;(checkAndTriggerHandover as any).mockRejectedValueOnce(new Error('DB 挂了'))
+    const app = await buildApp()
+    const res = await app.inject({ method: 'POST', url: '/bug-reports/42/handover' })
+    expect(res.statusCode).toBe(500)
+    expect(res.json()).toMatchObject({ success: false, error: 'INTERNAL_ERROR' })
     await app.close()
   })
 })

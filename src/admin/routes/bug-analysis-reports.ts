@@ -8,7 +8,7 @@ import {
 } from '../../db/repositories/bug-analysis-reports.js'
 import { findByReport } from '../../db/repositories/bug-fix-events.js'
 import { handleAnalyzeBug } from '../../agent/analysis/analyzer.js'
-import { handleAnalysisComplete } from '../../agent/coordinator.js'
+import { handleAnalysisComplete, checkAndTriggerHandover } from '../../agent/coordinator.js'
 
 const VALID_STATUSES: ReportStatus[] = [
   'draft',
@@ -158,4 +158,63 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
       return reply.code(500).send({ success: false, error: 'INTERNAL_ERROR', message: msg })
     }
   })
+
+  /**
+   * POST /bug-reports/:id/handover
+   * 用户主动把 Bug 转人工接手（V2 MVP 触发源：user_requested）。
+   * Body: { comment?: string } — 可选，用户说明转人工原因
+   * 状态要求：status in (draft, published, pipeline_success)
+   * - pending_manual：已在 handover 中 → 409
+   * - completed / aborted：终态 → 409（如需重新处理用 /retry）
+   */
+  app.post<{ Params: { id: string }; Body: { comment?: string } }>(
+    '/bug-reports/:id/handover',
+    async (req, reply) => {
+      const reportId = Number(req.params.id)
+      if (!Number.isFinite(reportId)) {
+        return reply.code(400).send({ success: false, error: 'INVALID_ID', message: '非法的报告 ID' })
+      }
+
+      const report = await getBugAnalysisReportById(reportId)
+      if (!report) {
+        return reply.code(404).send({ success: false, error: 'REPORT_NOT_FOUND', message: '报告不存在' })
+      }
+
+      const allowed: ReportStatus[] = ['draft', 'published', 'pipeline_success']
+      if (!allowed.includes(report.status)) {
+        return reply.code(409).send({
+          success: false,
+          error: 'INVALID_STATUS',
+          message: `当前 status=${report.status}，不允许转人工（仅 draft/published/pipeline_success 可触发）`,
+        })
+      }
+
+      const body = (req.body ?? {}) as { comment?: string }
+      const comment = typeof body.comment === 'string' && body.comment.trim().length > 0
+        ? body.comment.trim()
+        : undefined
+
+      try {
+        const initiatorId = (req as any).user?.id ?? 'admin'
+        await checkAndTriggerHandover(
+          reportId,
+          'user_requested',
+          initiatorId,
+          comment ? { comment } : undefined,
+        )
+        const reloaded = await getBugAnalysisReportById(reportId)
+        return reply.send({
+          success: true,
+          data: {
+            reportId,
+            status: reloaded?.status ?? report.status,
+          },
+        })
+      } catch (err) {
+        const msg = (err as Error)?.message ?? String(err)
+        console.error('[admin] handover endpoint error:', msg)
+        return reply.code(500).send({ success: false, error: 'INTERNAL_ERROR', message: msg })
+      }
+    },
+  )
 }
