@@ -41,6 +41,22 @@ export interface SystemConfigEntry {
   key: string; value: Record<string, unknown>; updatedAt: string
 }
 
+export interface DingTalkStatus {
+  configured: boolean
+  started: boolean
+  startedAt: number | null
+  lastEventAt: number | null
+  startError: string | null
+  connected: boolean
+  needsRestart: boolean
+}
+
+export interface ConnectionTestResult {
+  ok: boolean
+  user?: { username: string; name: string; email: string | null }
+  error?: string
+}
+
 export interface TestServer {
   id: number; productLineId: number; name: string; host: string; port: number
   username: string; authType: 'password' | 'key'; credential: string; role: string

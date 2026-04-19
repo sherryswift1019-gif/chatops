@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify'
+import axios from 'axios'
+import https from 'https'
 import { getAllConfig, getConfig, setConfig } from '../../db/repositories/system-config.js'
 import { listProductLines, createProductLine } from '../../db/repositories/product-lines.js'
 import { listMembers, addMember } from '../../db/repositories/product-line-members.js'
@@ -10,6 +12,8 @@ import { getProductLineCapabilities, batchSetProductLineCapabilities } from '../
 import { getApprovalRules, insertApprovalRule } from '../../db/repositories/approval-rules.js'
 import { listDingTalkUsers, upsertDingTalkUser } from '../../db/repositories/dingtalk-users.js'
 import { getPool } from '../../db/client.js'
+import type { IMAdapter } from '../../adapters/im/types.js'
+import { DingTalkAdapter } from '../../adapters/im/dingtalk.js'
 
 const SECRET_FIELDS = /secret|password|token|key/i
 
@@ -25,7 +29,33 @@ function maskSecrets(value: Record<string, unknown>): Record<string, unknown> {
   return masked
 }
 
-export async function registerSystemConfigRoutes(app: FastifyInstance): Promise<void> {
+export function describeAxiosError(err: unknown): string {
+  if (axios.isAxiosError(err)) {
+    if (err.response) {
+      const status = err.response.status
+      const data = err.response.data
+      const msg = typeof data === 'object' && data !== null
+        ? (data as { message?: string; error?: string; errors?: unknown }).message
+          ?? (data as { error?: string }).error
+          ?? JSON.stringify(data).slice(0, 200)
+        : String(data).slice(0, 200)
+      return `HTTP ${status}: ${msg}`
+    }
+    if (err.code === 'ECONNREFUSED') return '无法连接到服务器（ECONNREFUSED）'
+    if (err.code === 'ENOTFOUND') return 'DNS 解析失败（ENOTFOUND），请检查 URL'
+    if (err.code === 'ETIMEDOUT' || err.code === 'ECONNABORTED') return '请求超时，请检查网络或 URL'
+    if (err.code === 'DEPTH_ZERO_SELF_SIGNED_CERT' || err.code === 'SELF_SIGNED_CERT_IN_CHAIN') {
+      return '证书验证失败（自签名证书），可勾选"跳过证书验证"重试'
+    }
+    return err.message
+  }
+  return err instanceof Error ? err.message : String(err)
+}
+
+export async function registerSystemConfigRoutes(
+  app: FastifyInstance,
+  opts: { adapters: IMAdapter[] } = { adapters: [] }
+): Promise<void> {
   // ── System Config CRUD ─────────────────────────────────────────────────
 
   app.get('/system-config', async (_req, reply) => {
@@ -50,6 +80,89 @@ export async function registerSystemConfigRoutes(app: FastifyInstance): Promise<
       return reply.send({ key: entry.key, value: maskSecrets(entry.value), updatedAt: entry.updatedAt })
     }
   )
+
+  // ── DingTalk connection status ─────────────────────────────────────────
+
+  app.get('/system-config/dingtalk/status', async (_req, reply) => {
+    const dingCfg = await getConfig('dingtalk')
+    const v = (dingCfg?.value ?? {}) as Record<string, string>
+    if (!v.clientId || !v.clientSecret) {
+      return reply.send({
+        configured: false, started: false, startedAt: null, lastEventAt: null,
+        startError: null, connected: false, needsRestart: false,
+      })
+    }
+    const dingAdapter = opts.adapters.find(a => a.platform === 'dingtalk')
+    if (!dingAdapter || !(dingAdapter instanceof DingTalkAdapter)) {
+      return reply.send({
+        configured: true, started: false, startedAt: null, lastEventAt: null,
+        startError: '钉钉已配置，但 adapter 未启动（重启服务以生效）',
+        connected: false, needsRestart: true,
+      })
+    }
+    const status = dingAdapter.getConnectionStatus()
+    const needsRestart = !dingAdapter.credentialsMatch(v.clientId, v.clientSecret)
+    return reply.send({ ...status, needsRestart })
+  })
+
+  // ── GitLab test connection ─────────────────────────────────────────────
+
+  app.post('/system-config/gitlab/test', async (_req, reply) => {
+    const cfg = await getConfig('gitlab')
+    const v = (cfg?.value ?? {}) as Record<string, string>
+    if (!v.url || !v.token) {
+      return reply.send({ ok: false, error: 'GitLab URL 或 Token 未配置，请先保存后再测试' })
+    }
+    const skip = v.skipTlsVerify === 'true' || v.skipTlsVerify === (true as unknown as string)
+    const httpsAgent = skip ? new https.Agent({ rejectUnauthorized: false }) : undefined
+    try {
+      const res = await axios.get<{ id: number; username: string; name: string; email?: string }>(
+        `${v.url.replace(/\/$/, '')}/api/v4/user`,
+        { headers: { 'PRIVATE-TOKEN': v.token }, httpsAgent, timeout: 10000 }
+      )
+      return reply.send({
+        ok: true,
+        user: { username: res.data.username, name: res.data.name, email: res.data.email ?? null },
+      })
+    } catch (err) {
+      return reply.send({ ok: false, error: describeAxiosError(err) })
+    }
+  })
+
+  // ── Harbor test connection ─────────────────────────────────────────────
+
+  app.post('/system-config/harbor/test', async (_req, reply) => {
+    const cfg = await getConfig('harbor')
+    const v = (cfg?.value ?? {}) as Record<string, string>
+    const url = v.url ?? ''
+    const username = v.registryUser ?? v.username ?? ''
+    const password = v.registryPassword ?? v.password ?? ''
+    if (!url || !username || !password) {
+      return reply.send({ ok: false, error: 'Harbor URL / 用户名 / 密码未配置，请先保存后再测试' })
+    }
+    const skip = v.skipTlsVerify === 'true' || v.skipTlsVerify === (true as unknown as string)
+    const httpsAgent = new https.Agent({
+      rejectUnauthorized: !skip,
+      ...(v.caCert ? { ca: v.caCert } : {}),
+    })
+    const auth = Buffer.from(`${username}:${password}`).toString('base64')
+    try {
+      const res = await axios.get<{ username: string; realname?: string; email?: string }>(
+        `${url.replace(/\/$/, '')}/api/v2.0/users/current`,
+        { headers: { Authorization: `Basic ${auth}` }, httpsAgent, timeout: 10000 }
+      )
+      return reply.send({
+        ok: true,
+        user: {
+          username: res.data.username,
+          name: res.data.realname ?? res.data.username,
+          email: res.data.email ?? null,
+        },
+      })
+    } catch (err) {
+      return reply.send({ ok: false, error: describeAxiosError(err) })
+    }
+  })
 
   // ── Full Platform Export ────────────────────────────────────────────────
 

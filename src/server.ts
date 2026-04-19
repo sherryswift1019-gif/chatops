@@ -207,7 +207,7 @@ async function main(): Promise<void> {
   }
 
   // Admin API routes (under /admin prefix)
-  await app.register(adminPlugin, { prefix: '/admin' })
+  await app.register(adminPlugin, { prefix: '/admin', adapters })
 
   // Start pipeline scheduler
   const { startScheduler } = await import('./pipeline/scheduler.js')

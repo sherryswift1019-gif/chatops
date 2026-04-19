@@ -77,6 +77,11 @@ export class DingTalkAdapter implements IMAdapter {
   // Access token cache for OpenAPI (DMs)
   private accessTokenCache: AccessTokenCache | null = null
 
+  // Connection status tracking
+  private startedAt: number | null = null
+  private lastEventAt: number | null = null
+  private startError: string | null = null
+
   constructor(private readonly cfg: DingTalkStreamConfig) {
     this.client = new DWClient({
       clientId: cfg.clientId,
@@ -86,6 +91,7 @@ export class DingTalkAdapter implements IMAdapter {
 
     // Log ALL events for debugging
     this.client.registerAllEventListener((res: DWClientDownStream) => {
+      this.lastEventAt = Date.now()
       console.log('[DingTalk] Event received:', res.type, res.headers?.topic, res.headers?.messageId)
       return { status: EventAck.SUCCESS }
     })
@@ -105,11 +111,53 @@ export class DingTalkAdapter implements IMAdapter {
   onCardAction(handler: CardActionHandler): void { this.cardActionHandler = handler }
 
   async start(): Promise<void> {
-    await this.client.connect()
+    // Reset per-session state so a restart never inherits heartbeats or errors
+    // from a previous run.
+    this.lastEventAt = null
+    this.startError = null
+    try {
+      await this.client.connect()
+      this.startedAt = Date.now()
+    } catch (err) {
+      this.startError = err instanceof Error ? err.message : String(err)
+      this.startedAt = null
+      throw err
+    }
   }
 
   async stop(): Promise<void> {
     this.client.disconnect()
+    this.startedAt = null
+    this.lastEventAt = null
+  }
+
+  getConnectionStatus(): {
+    configured: boolean
+    started: boolean
+    startedAt: number | null
+    lastEventAt: number | null
+    startError: string | null
+    connected: boolean
+  } {
+    const now = Date.now()
+    const started = this.startedAt !== null
+    // Heuristic: within 60s after start, assume connecting (no events yet is normal).
+    // After that, require an event within the last 120s (keepAlive sends heartbeats).
+    const recentlyStarted = started && now - (this.startedAt as number) < 60_000
+    const hasRecentEvent = this.lastEventAt !== null && now - this.lastEventAt < 120_000
+    const connected = started && (recentlyStarted || hasRecentEvent)
+    return {
+      configured: true,
+      started,
+      startedAt: this.startedAt,
+      lastEventAt: this.lastEventAt,
+      startError: this.startError,
+      connected,
+    }
+  }
+
+  credentialsMatch(clientId: string, clientSecret: string): boolean {
+    return this.cfg.clientId === clientId && this.cfg.clientSecret === clientSecret
   }
 
   // Stream mode does not use HTTP webhooks

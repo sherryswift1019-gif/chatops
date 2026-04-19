@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { IMAdapter } from '../adapters/im/types.js'
 import { sessionPlugin, requireAuth } from './auth/session-plugin.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerSystemConfigRoutes } from './routes/system-config.js'
@@ -25,7 +26,7 @@ import { registerMetricsRoutes } from './routes/metrics.js'
 import { registerAuditLogRoutes } from './routes/audit-log.js'
 import { registerOnboardingRoutes } from './routes/onboarding.js'
 
-export async function adminPlugin(app: FastifyInstance): Promise<void> {
+export async function adminPlugin(app: FastifyInstance, opts: { adapters?: IMAdapter[] } = {}): Promise<void> {
   // Session middleware — must be registered before any route definition
   await app.register(sessionPlugin)
 
@@ -36,7 +37,7 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerAuthRoutes(app)
 
   // All other routes — require valid session
-  await registerSystemConfigRoutes(app)
+  await registerSystemConfigRoutes(app, { adapters: opts.adapters ?? [] })
   await registerProductLineRoutes(app)
   await registerProjectRoutes(app)
   await registerEnvironmentRoutes(app)
