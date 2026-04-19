@@ -14,6 +14,7 @@ const VALID_STATUSES: ReportStatus[] = [
   'draft',
   'published',
   'pipeline_success',
+  'pending_manual',
   'completed',
   'aborted',
 ]

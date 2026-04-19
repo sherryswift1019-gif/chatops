@@ -5,6 +5,7 @@ export type BugReportStatusFilter =
   | 'draft'
   | 'published'
   | 'pipeline_success'
+  | 'pending_manual'
   | 'completed'
   | 'aborted'
 export type BugReportLevelFilter = 'l1' | 'l2' | 'l3' | 'l4'
