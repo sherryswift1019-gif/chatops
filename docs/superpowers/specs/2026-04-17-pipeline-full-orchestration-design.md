@@ -279,12 +279,31 @@ Bug #123 涉及 2 个仓库 `PAM/pas-6.0` 和 `PAM/pas-api`，Pipeline 并行修
        │                                     │
        │ Pipeline onComplete 成功            │ Pipeline 失败 / 审批拒绝 / 审批超时
        ↓                                     ↓
- [pipeline_success]                    [aborted] ← 前端显示"重试"按钮
-       │
-       │ webhook: MR merged → Issue closed
-       ↓
-   [completed] ── 闭环，Bug 真正修完
+ [pipeline_success]                    [aborted] ── 前端显示"重试"按钮
+       │                                     │
+       │ webhook: MR merged → Issue closed   │ 用户点"重试"
+       ↓                                     ↓
+   [completed] ── 闭环，Bug 真正修完     [新 report draft] ── 新一轮独立生命周期
 ```
+
+**Mermaid 等价图**（便于 IDE 预览）：
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: report 创建（analyzer 进入）
+    draft --> published: analyzer 判 bug + Issue 创建成功
+    draft --> completed: analyzer 判非 bug（usage_issue 等）
+    published --> pipeline_success: Pipeline onComplete(success)
+    published --> aborted: Pipeline onComplete(failed)
+    pipeline_success --> completed: GitLab webhook MR merged
+    pipeline_success --> aborted: GitLab webhook MR closed（未合并）
+    aborted --> newDraft: 用户点 retry（reuseIssueId 起新 report）
+    newDraft --> [*]: 新 report 独立走完整生命周期
+    completed --> [*]
+    aborted --> [*]
+```
+
+**重要**：`aborted` 是终态——点"重试"**不会反转**原 report 的 status，而是创建一条**新 report**从 `draft` 开始走。原 report 保持 `aborted` 可审计。
 
 ### 状态含义与触发方
 
@@ -295,6 +314,18 @@ Bug #123 涉及 2 个仓库 `PAM/pas-6.0` 和 `PAM/pas-api`，Pipeline 并行修
 | `pipeline_success` | Pipeline 全部 stage 成功（MR 已创建，通知已发），等人工合并 MR | coordinator onComplete 回调（Pipeline.status=success 时）|
 | `completed` | 终态：MR 已合并 Issue 已关闭（bug 类）；或非 bug 分析直接结束（非 bug 类）| issue-handler 收到 MR merged webhook 时 / analyzer 分析结果非 bug 时 |
 | `aborted` | 终态：Pipeline 失败、审批拒绝、审批超时、MR 被人工关闭未合并 | coordinator onComplete 回调（Pipeline.status=failed 时）/ issue-handler 收到 MR closed 事件时 |
+
+### 状态转换代码位置对照
+
+| From | To | Trigger | 代码位置 |
+|---|---|---|---|
+| `draft` | `published` | `analyzer.handleAnalyzeBug` classification='bug' 分支 + Issue 创建成功 | [analyzer.ts](../../../src/agent/analysis/analyzer.ts) `await updateReportStatus(report.id, 'published')` |
+| `draft` | `completed` | `analyzer.handleAnalyzeBug` classification='non_bug' 分支 | [analyzer.ts](../../../src/agent/analysis/analyzer.ts) `updateReportStatus(report.id, 'completed')` 非 bug 分支 |
+| `published` | `pipeline_success` | `coordinator.onComplete({status:'success'})` | [coordinator.ts](../../../src/agent/coordinator.ts) `handleAnalysisComplete` 内部 `onComplete` 回调 |
+| `published` | `aborted` | `coordinator.onComplete({status:'failed'})` | [coordinator.ts](../../../src/agent/coordinator.ts) 同上 |
+| `pipeline_success` | `completed` | GitLab webhook `merge_request` action='merge' | [issue-handler.ts](../../../src/adapters/gitlab/issue-handler.ts) MR merged 分支（lifecycle_sync 事件） |
+| `pipeline_success` | `aborted` | GitLab webhook `merge_request` action='close'（且未 merged） | [issue-handler.ts](../../../src/adapters/gitlab/issue-handler.ts) MR closed 分支（lifecycle_sync 事件） |
+| `aborted` | *（新 report `draft`）* | 用户点重试 → `POST /admin/bug-reports/:id/retry` → 新 report 走 analyzer | [src/admin/routes/bug-analysis-reports.ts](../../../src/admin/routes/bug-analysis-reports.ts) retry endpoint |
 
 ### 前端展示（Bug 修复实例页面）
 

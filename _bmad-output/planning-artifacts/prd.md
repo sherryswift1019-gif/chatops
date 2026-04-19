@@ -509,6 +509,34 @@ classification:
 
 **为何不发触发人 DM**：触发人通常是测试/运营，他们关心"我报的 bug 进行得怎么样"；这个信息前端页面的状态 Tag + 事件时间线 + MR 链接已经全了，IM 推送反而增加消息骚扰。触发人在群里 @机器人 问 Bug 时会收到分析进度实时推送（FR5 里的"分析进度实时推送"），这已足够反馈。
 
+**多 project 部分失败策略（Partial Failure Policy）：** L3 / L4（或 L2 自动降级 L3）场景下同一 Bug 可能涉及多个 project（主仓 + 从仓）。若任一 project 的修复环节失败（如 `fix_attempt` 或 `create_mr`）：
+
+- **策略：整条 Pipeline 终止，已成功 project 的修复代码和 worktree 一并丢弃**（不 push，不建 MR）
+- **恢复路径**：用户从"Bug 修复实例"页面点"重试"按钮 → `reuseIssueId` 模式起新 report 重跑整条 Pipeline（不从失败 stage 续跑）
+- **设计权衡**：partial-success 的运维价值（保留部分 MR）不抵维护成本（幽灵分支难清理、MR 合入顺序复杂、owner 心智负担大）。MVP 阶段明确不走"部分成功就部分建 MR"路线
+- **未来演进方向**：若 partial-success 场景增多，可考虑 `onFailure: 'continue'` + 给成功 project 建 MR 并打 `partial-success` label，但需先设计"多 MR 合入顺序协调"产品方案
+
+**Bug 修复实例生命周期状态（Bug Report Status）：** `bug_analysis_reports.status` 共 5 个值，全生命周期转换见下表：
+
+| 状态 | 触发 | 含义 | 前端 UI 建议 | 可操作 |
+|---|---|---|---|---|
+| `draft` | analyzer 刚建 report | 分析进行中 | 灰色 Tag "分析中" | 无 |
+| `published` | classification='bug' + Issue 创建成功 | 已确认 bug，Pipeline 运行中 | 蓝色 Tag "修复中" | 看 Pipeline 实时进度 |
+| `pipeline_success` | Pipeline 所有 stage 成功 | MR 已建、等合并 | 绿色 Tag "MR 待合并" | 看 MR 链接 |
+| `completed` | 非 bug 直接 / MR merged webhook | 生命周期闭环 | 深绿 Tag "已完成" | 只读 |
+| `aborted` | Pipeline 失败 / MR close webhook（未 merged） | 失败或放弃 | 红色 Tag "已终止" | **重试按钮（触发 `reuseIssueId` 起新 report）** |
+
+**状态转换规则：**
+- `draft → published`：bug 分类 + Issue 创建成功
+- `draft → completed`：非 bug 分类（usage_issue 等）直接终结
+- `published → pipeline_success`：Pipeline `onComplete({status:'success'})`
+- `published → aborted`：Pipeline `onComplete({status:'failed'})`
+- `pipeline_success → completed`：GitLab webhook `merge_request` action='merge'
+- `pipeline_success → aborted`：GitLab webhook `merge_request` action='close'（且未 merged）
+- `aborted → [新 report draft]`：用户点重试按钮 → 新 report 独立走完整生命周期（原 report 保持 aborted，不反转）
+
+状态机 Mermaid 图 + 每条转换的代码位置见 spec [Pipeline 生命周期状态机](../../../docs/superpowers/specs/2026-04-17-pipeline-full-orchestration-design.md) 章节。
+
 #### 3. 文档分层架构：AI 摘要 + 独立知识库
 
 **创新点：** 区分"随代码走的文档"（AI 摘要）和"独立版本演进的文档"（知识库），用元数据实现版本匹配。

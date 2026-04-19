@@ -3864,6 +3864,150 @@ Task 18 最终范围（用户决定后扩展）：**文档 + Growth Backlog + E2
 
 - ~~Task 18 "PR"~~ — 用户未授权 push，保留本地 commit。后续用户自行决定 push/PR 时机。
 
+---
+
+## 后续代码改进（从 followups 吸收，2026-04-19）
+
+以下 4 项来自产品评审（2026-04-19）+ BMM 代码审查 + 一致性校对，均为**代码层待办**（不涉及 PRD 需求或 spec 设计变更）。需求层的"多 project 部分失败策略"和"生命周期状态机"已升级进 [PRD](../../../_bmad-output/planning-artifacts/prd.md) 和 [spec 状态机章节](../specs/2026-04-17-pipeline-full-orchestration-design.md)。
+
+按优先级递减排列：
+
+### 📌 C1 — analyzer createEvent 局部 audit（P2，原 followups Task F 的缩小版）
+
+**背景**：原 Task F 认为所有 handler 的 `createEvent` 都可能吞异常导致状态不一致。实际 grep 全部 `await createEvent`（notify / analyzer / mr-handler / reviewer / approve-l3-handler / fix-runner），**无任何 try/catch 吞**，Pipeline handler 外层 TriggerResult 正确失败，stage 层 retry 机制生效。Task F 降级为只 audit analyzer 一个文件。
+
+**要点**：
+- analyzer 外层有 `classifyError` 包装（Task 6 加的）
+- 需确认 `classifyError` 不会把"事件写入失败"归到非 critical 类型掩盖
+- 读 `src/agent/analysis/analyzer.ts` 的 `classifyError` 函数（约 line 65-80 附近）
+
+**验收**：
+- [ ] `src/__tests__/unit/analyzer.test.ts` 新增：`scope_identified createEvent 失败 → analyzer 返回 success=false`
+- [ ] 若 classifyError 确实掩盖，改为透传；若无问题，只补一条注释说明"createEvent 失败会经 classifyError 透传给 caller"
+
+### 📌 C2 — reuseIssueId 时同步更新 Issue body banner（P2，原 followups Task C）
+
+**背景**：每次 `reanalyze` 只往 Issue comment 追加一条 `🔄 第 N 次分析`，Issue description（body）始终停留在第一次的分析结果 → owner 打开 Issue 不翻评论看不到最新。
+
+**当前代码**（[analyzer.ts:271](../../../src/agent/analysis/analyzer.ts#L271)）：
+```ts
+if (reuseIssueId) {
+  const note = await gitlabPostIssueNote({ projectPath, issueIid: reuseIssueId, body: ... })
+  issueIid = reuseIssueId
+}
+```
+只 post comment，不更新 description。
+
+**方案**：每次 reanalyze 同时 PUT Issue description，**用 HTML 注释包裹 banner 便于幂等替换**：
+
+```markdown
+<!-- reanalyze-banner:start -->
+> ⚠️ 本 Issue 已经历 N 次重新分析。最新分析结果见 [comment #X](url)
+>
+> 原始分析保留如下 ⬇️
+<!-- reanalyze-banner:end -->
+
+<原 description 全文保留>
+```
+
+**实现**：
+1. POST comment（现有行为，保留）→ 拿 comment id 和 url
+2. GET Issue 当前 description
+3. 用正则匹配已有 banner：匹配到则替换（计数 +1，URL 更新），未匹配则在最前插入
+4. PUT Issue 更新 description
+5. **错误处理**：GET/PUT 失败不阻塞主流程（记 warning log 即可，因为 comment 已发出去，body banner 缺失是降级体验不是数据问题）
+
+**涉及文件**：
+- [src/agent/analysis/analyzer.ts](../../../src/agent/analysis/analyzer.ts) reuseIssueId 分支
+- [src/agent/analysis/gitlab-issue.ts](../../../src/agent/analysis/gitlab-issue.ts) 新增 `gitlabGetIssue` + `gitlabUpdateIssue` 两个封装
+
+**验收**：
+- [ ] `src/__tests__/unit/analyzer.test.ts` 新增 4 个测试：
+  - `reuseIssueId 首次 → Issue body 顶部插入 banner，原内容完整保留`
+  - `reuseIssueId 第 N 次 → banner 内容被替换（计数递增），不重复累积`
+  - `reuseIssueId → gitlabUpdateIssue 失败不阻塞主流程，正常返回 reportId`
+  - `非 reuseIssueId 场景（首次分析）→ 不调 gitlabUpdateIssue`
+
+### 📌 C3 — approvalTimeoutMs fail-fast（P3，原 followups Task G 的收紧）
+
+**背景**：M1 修复（commit `bab5b67`）已让 `approve_l3` handler 从 `capabilityParams.approvalTimeoutMs` 读取，但保留了默认值 `?? 3_600_000`。原 Task G 要求 fail-fast：没配置就直接 return error。
+
+**当前**（[approve-l3-handler.ts:85](../../../src/agent/approval/approve-l3-handler.ts#L85)）：
+```ts
+const timeoutMs = (opts.extraParams?.approvalTimeoutMs as number | undefined) ?? 3_600_000
+```
+
+**改为 fail-fast**（可选，优先级低）：
+```ts
+const timeoutMs = Number(opts.extraParams?.approvalTimeoutMs)
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  return { success: false, error: 'invalid_timeout', output: 'approvalTimeoutMs 未配置或非法（必须由 stage.capabilityParams 显式传入）' }
+}
+```
+
+**配套**：[schema-v11.sql](../../../src/db/schema-v11.sql) 和 [base.sql](../../../src/__tests__/e2e/fixtures/base.sql) 里 L3 pipeline 的 `approve_l3` stage `capabilityParams` 追加 `"approvalTimeoutMs": 3600000`，注释"必须与 timeoutSeconds 保持同值"。
+
+**涉及硬约束**：不改 executor/approval-manager，仅改 handler + DDL。
+
+**验收**：
+- [ ] `src/__tests__/unit/approve-l3-handler.test.ts` 新增：`未传 approvalTimeoutMs → 返回 error=invalid_timeout`
+- [ ] schema-v11.sql / base.sql L3 approve_l3 stage 含 `approvalTimeoutMs: 3600000`
+- [ ] 原有 `approve_l3` 测试全部通过（extraParams 里要补 `approvalTimeoutMs`）
+
+### 📌 C4 — 多 project 并发限制（P3，原 followups Task H）
+
+**背景**：[analyzer.ts:227](../../../src/agent/analysis/analyzer.ts#L227) 用 `Promise.all` 对所有涉及 project 并行跑详细分析：
+```ts
+const detailRuns = await Promise.all(
+  filterResult.involvedProjects.map(p => runClaudeDetailedAnalysis(p.projectPath, message))
+)
+```
+
+**风险**：Bug 涉及 5+ project 时同时起 N 个 Claude CLI → 本机 CPU/内存爆 + Anthropic rate limit 爆 + 钱包爆。fix-runner 同样可能有多 project 循环。
+
+**方案**：引入 `p-limit`（轻量 npm 包）限制并发：
+```bash
+pnpm add p-limit
+```
+```ts
+import pLimit from 'p-limit'
+const ANALYSIS_CONCURRENCY = Number(process.env.ANALYSIS_CONCURRENCY ?? 3)
+const limit = pLimit(ANALYSIS_CONCURRENCY)
+const detailRuns = await Promise.all(
+  filterResult.involvedProjects.map(p => limit(() => runClaudeDetailedAnalysis(...)))
+)
+```
+
+**建议**：
+- analyzer：`ANALYSIS_CONCURRENCY` 默认 3
+- fix-runner：`FIX_CONCURRENCY` 默认 2（fix 比分析更重）
+- [CLAUDE.md](../../../CLAUDE.md) Config 章节补这两个环境变量说明
+- [src/config.ts](../../../src/config.ts) 用 Zod 校验（optional int）
+
+**验收**：
+- [ ] `src/__tests__/unit/analyzer.test.ts` 新增：`并发最多 3 个 project 同时分析`（mock runClaudeDetailedAnalysis 统计 peak concurrency）
+- [ ] `src/__tests__/unit/fix-runner.test.ts` 类似测试
+- [ ] `pnpm test:e2e` L3 多 project 场景不倒退
+
+---
+
+## followups 文档已回收（2026-04-19）
+
+`docs/superpowers/plans/2026-04-17-pipeline-full-orchestration-followups.md` 的 8 个 Task 已全部分流：
+
+| Task | 归宿 |
+|---|---|
+| A 多 project 部分失败策略 | PRD "多 project 部分失败策略" 小节（本次加） |
+| B L4 通知 owner | ✅ 已实施（e5ae49c + e090042） |
+| C reuseIssueId Issue body banner | 本文档 C2 |
+| D 通知矩阵文档化 | PRD "通知策略" 小节（commit 587e682） |
+| E Pipeline 状态机 | PRD "Bug 生命周期状态" + spec "状态机" 章节 |
+| F createEvent throw | 本文档 C1（降级为 analyzer audit） |
+| G approvalTimeoutMs fail-fast | 本文档 C3 |
+| H 多 project 并发限制 | 本文档 C4 |
+
+followups.md 作为评审过程文件，吸收完毕后已删除。
+
 
 
 
