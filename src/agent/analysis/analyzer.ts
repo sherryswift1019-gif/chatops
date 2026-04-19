@@ -10,7 +10,12 @@ import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import { createEvent } from '../../db/repositories/bug-fix-events.js'
 import { runFilterStage, runDetailStage, mergeDetailResults } from './claude-runs.js'
-import { gitlabCreateIssue, gitlabPostIssueNote } from './gitlab-issue.js'
+import {
+  gitlabCreateIssue,
+  gitlabPostIssueNote,
+  gitlabGetIssue,
+  gitlabUpdateIssue,
+} from './gitlab-issue.js'
 import type {
   BugLevel,
   BugClassification,
@@ -115,6 +120,39 @@ function buildIssueTitle(summary: string): string {
 /** 计算 reuse 模式的 N（基于已有 create_issue 事件数量）—— 简单记录次数的字符串。 */
 function buildReuseMarker(): string {
   return `🔄 复用 Issue 的再次分析（${new Date().toISOString()}）`
+}
+
+// C2：reuseIssueId 时同步 Issue body banner。使用 HTML 注释做幂等标记，便于替换。
+const REANALYZE_BANNER_START = '<!-- reanalyze-banner:start -->'
+const REANALYZE_BANNER_END = '<!-- reanalyze-banner:end -->'
+const REANALYZE_BANNER_REGEX =
+  /<!-- reanalyze-banner:start -->[\s\S]*?<!-- reanalyze-banner:end -->\n*/
+
+function buildReanalyzeBanner(count: number, commentUrl: string): string {
+  return (
+    `${REANALYZE_BANNER_START}\n` +
+    `> ⚠️ 本 Issue 已经历 **${count}** 次重新分析。最新分析结果见 [comment](${commentUrl})\n` +
+    `>\n` +
+    `> 原始分析保留如下 ⬇️\n` +
+    `${REANALYZE_BANNER_END}\n\n`
+  )
+}
+
+/**
+ * 在现有 description 上应用 reanalyze banner：
+ * - 匹配到旧 banner → 替换为新 banner（计数 +1，URL 指向新 comment）
+ * - 未匹配 → 在最前插入 banner，原内容完整保留
+ */
+function applyReanalyzeBanner(current: string, commentUrl: string): string {
+  const match = current.match(REANALYZE_BANNER_REGEX)
+  if (match) {
+    // 从旧 banner 里解析计数：`第 **N** 次`
+    const countMatch = match[0].match(/\*\*(\d+)\*\*/)
+    const nextCount = countMatch ? Number(countMatch[1]) + 1 : 2
+    return current.replace(REANALYZE_BANNER_REGEX, buildReanalyzeBanner(nextCount, commentUrl))
+  }
+  // 首次插入 banner：计数 1，表示"这是第 1 次重新分析"
+  return buildReanalyzeBanner(1, commentUrl) + current
 }
 
 /**
@@ -284,6 +322,22 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
       issueIid = reuseIssueId
       issueUrl = note.issueUrl
       isReused = true
+
+      // C2：同步更新 Issue description，顶部加/更新 reanalyze banner。
+      // 失败不阻塞主流程（comment 已发出去，body banner 缺失是降级体验）。
+      const commentUrl = `${note.issueUrl}#note_${note.noteId}`
+      try {
+        const existing = await gitlabGetIssue(filterResult.primaryProjectPath, reuseIssueId)
+        const nextDescription = applyReanalyzeBanner(existing.description ?? '', commentUrl)
+        await gitlabUpdateIssue(filterResult.primaryProjectPath, reuseIssueId, {
+          description: nextDescription,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.warn(
+          `[AnalysisAgent] reuseIssueId=${reuseIssueId} body banner 同步失败（不阻塞主流程）: ${msg}`,
+        )
+      }
     } else {
       const created = await gitlabCreateIssue({
         projectPath: filterResult.primaryProjectPath,

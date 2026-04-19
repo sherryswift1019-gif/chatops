@@ -59,3 +59,30 @@ export async function gitlabPostIssueNote(input: PostIssueNoteInput): Promise<Po
   const issueUrl = `${url}/${input.projectPath}/-/issues/${input.issueIid}`
   return { noteId: response.data.id as number, issueUrl }
 }
+
+/** 读取现有 Issue 的 description。失败抛错，由调用方决定是否降级。 */
+export async function gitlabGetIssue(
+  projectPath: string,
+  issueIid: number,
+): Promise<{ description: string }> {
+  const { url, token } = getGitlabEnv()
+  const response = await axios.get(
+    `${url}/api/v4/projects/${encodeURIComponent(projectPath)}/issues/${issueIid}`,
+    { headers: { 'PRIVATE-TOKEN': token }, timeout: 15_000 },
+  )
+  return { description: (response.data?.description as string | null) ?? '' }
+}
+
+/** PUT 更新现有 Issue 的 description（用于 reuseIssueId 场景同步 body banner）。 */
+export async function gitlabUpdateIssue(
+  projectPath: string,
+  issueIid: number,
+  payload: { description: string },
+): Promise<void> {
+  const { url, token } = getGitlabEnv()
+  await axios.put(
+    `${url}/api/v4/projects/${encodeURIComponent(projectPath)}/issues/${issueIid}`,
+    { description: payload.description },
+    { headers: { 'PRIVATE-TOKEN': token }, timeout: 15_000 },
+  )
+}

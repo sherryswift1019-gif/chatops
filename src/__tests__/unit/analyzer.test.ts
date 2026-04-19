@@ -212,6 +212,12 @@ describe('analyzer multi-project support', () => {
     vi.mocked(runDetailStage).mockReset()
     vi.mocked(gitlabCreateIssue).mockReset()
     vi.mocked(gitlabPostIssueNote).mockReset()
+    // C2：reuseIssueId 场景下 analyzer 会额外调 gitlabGetIssue/gitlabUpdateIssue。
+    // 本 describe 不关心 body banner，给 stub 让它不抛错即可。
+    vi.mocked(gitlabGetIssue).mockReset()
+    vi.mocked(gitlabGetIssue).mockResolvedValue({ description: '' })
+    vi.mocked(gitlabUpdateIssue).mockReset()
+    vi.mocked(gitlabUpdateIssue).mockResolvedValue(undefined)
   })
 
   it('writes analysis + scope_identified + create_issue events for bug classification', async () => {
@@ -387,6 +393,137 @@ describe('analyzer multi-project support', () => {
     const issueEvents = await findByReportCode(reportId, 'create_issue')
     expect(issueEvents).toHaveLength(1)
     expect((issueEvents[0].data as { isReused: boolean }).isReused).toBe(true)
+  })
+})
+
+describe('analyzer reuseIssueId Issue body banner (C2)', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+    vi.mocked(gitlabPostIssueNote).mockReset()
+    vi.mocked(gitlabGetIssue).mockReset()
+    vi.mocked(gitlabUpdateIssue).mockReset()
+  })
+
+  function mockAnalysisBug() {
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue({
+      classification: 'bug',
+      level: 'l2',
+      confidence: 'high',
+      confidenceScore: 0.9,
+      rootCause: { type: 'business_logic', summary: '新分析', file: 'a.ts', lineRange: [1, 2] },
+      solutions: [{ id: 'opt-a', summary: 'fix', recommended: true, risk: 'low', effort: 'small' }],
+      affectedModules: ['auth'],
+      analysisSteps: ['P1'],
+      markdown: '## 新分析',
+    })
+    vi.mocked(gitlabPostIssueNote).mockResolvedValue({
+      noteId: 4242,
+      issueUrl: 'http://git.example.com/PAM/pas-api/-/issues/789',
+    })
+  }
+
+  it('reuseIssueId 首次：Issue body 顶部插入 banner，原内容完整保留', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    mockAnalysisBug()
+    vi.mocked(gitlabGetIssue).mockResolvedValue({
+      description: '## 原始分析\n\n根因：token 空值',
+    })
+    vi.mocked(gitlabUpdateIssue).mockResolvedValue(undefined)
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId, { reuseIssueId: 789 }))
+    expect(result.success).toBe(true)
+
+    expect(gitlabGetIssue).toHaveBeenCalledWith('PAM/pas-api', 789)
+    expect(gitlabUpdateIssue).toHaveBeenCalledTimes(1)
+    const [, , payload] = vi.mocked(gitlabUpdateIssue).mock.calls[0]
+    const desc = payload.description
+    expect(desc).toMatch(/<!-- reanalyze-banner:start -->/)
+    expect(desc).toMatch(/<!-- reanalyze-banner:end -->/)
+    expect(desc).toMatch(/\*\*1\*\* 次重新分析/)
+    expect(desc).toContain('#note_4242')
+    // 原内容完整保留
+    expect(desc).toContain('## 原始分析')
+    expect(desc).toContain('根因：token 空值')
+    // banner 在原内容之前
+    expect(desc.indexOf('<!-- reanalyze-banner:end -->')).toBeLessThan(desc.indexOf('## 原始分析'))
+  })
+
+  it('reuseIssueId 第 N 次：banner 内容被替换（计数递增），不重复累积', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    mockAnalysisBug()
+    // 已存在 banner（第 2 次），本次应变成第 3 次
+    const existingDescription =
+      '<!-- reanalyze-banner:start -->\n' +
+      '> ⚠️ 本 Issue 已经历 **2** 次重新分析。最新分析结果见 [comment](http://old)\n' +
+      '>\n' +
+      '> 原始分析保留如下 ⬇️\n' +
+      '<!-- reanalyze-banner:end -->\n\n' +
+      '## 原始分析\n\n根因：token 空值'
+    vi.mocked(gitlabGetIssue).mockResolvedValue({ description: existingDescription })
+    vi.mocked(gitlabUpdateIssue).mockResolvedValue(undefined)
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId, { reuseIssueId: 789 }))
+    expect(result.success).toBe(true)
+
+    const [, , payload] = vi.mocked(gitlabUpdateIssue).mock.calls[0]
+    const desc = payload.description
+    // 计数 +1 → 3
+    expect(desc).toMatch(/\*\*3\*\* 次重新分析/)
+    // 只替换不累积
+    const startMatches = desc.match(/<!-- reanalyze-banner:start -->/g) ?? []
+    expect(startMatches).toHaveLength(1)
+    const endMatches = desc.match(/<!-- reanalyze-banner:end -->/g) ?? []
+    expect(endMatches).toHaveLength(1)
+    // URL 指向新 comment（而非老 http://old）
+    expect(desc).toContain('#note_4242')
+    expect(desc).not.toContain('http://old')
+    // 原内容仍在
+    expect(desc).toContain('## 原始分析')
+  })
+
+  it('reuseIssueId：gitlabUpdateIssue 失败不阻塞主流程，analyzer 仍返回 success', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    mockAnalysisBug()
+    vi.mocked(gitlabGetIssue).mockResolvedValue({ description: '原文' })
+    vi.mocked(gitlabUpdateIssue).mockRejectedValue(new Error('gitlab 503'))
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId, { reuseIssueId: 789 }))
+
+    expect(result.success).toBe(true)
+    const reportId = (result.data as { reportId: number }).reportId
+    expect(reportId).toBeGreaterThan(0)
+    expect(gitlabPostIssueNote).toHaveBeenCalledTimes(1)
+    expect(gitlabUpdateIssue).toHaveBeenCalledTimes(1)
+  })
+
+  it('非 reuseIssueId 场景（首次分析）：不调 gitlabGetIssue / gitlabUpdateIssue', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    mockAnalysisBug()
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({
+      iid: 100,
+      url: 'http://git.example.com/PAM/pas-api/-/issues/100',
+    })
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(result.success).toBe(true)
+
+    expect(gitlabGetIssue).not.toHaveBeenCalled()
+    expect(gitlabUpdateIssue).not.toHaveBeenCalled()
   })
 })
 
