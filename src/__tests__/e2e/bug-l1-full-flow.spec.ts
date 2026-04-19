@@ -155,7 +155,7 @@ test.describe('L1 配置类 Bug 全链路', () => {
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
     // 点开 AntD Select（BugRunsPage 里只有一个 Select）
-    await pageCard.locator('.ant-select').click()
+    await pageCard.locator('.ant-select').first().click()
     // 弹出下拉后选择 PAM 选项
     await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
 

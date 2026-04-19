@@ -233,7 +233,7 @@ test.describe('群内 reanalyze 命令 → 触发重新分析（真实 IM 入口
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').click()
+    await pageCard.locator('.ant-select').first().click()
     await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
 
     // IssueCard 可见（同一 issueIid，两轮 report 合并到一张卡）

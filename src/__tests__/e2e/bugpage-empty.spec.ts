@@ -65,7 +65,7 @@ test.describe('BugRunsPage 空态占位', () => {
     await expect(pageCard.getByText('请先选择产品线')).toBeVisible({ timeout: 5_000 })
 
     // ── 分支 2：选了产品线但无报告 → "暂无分析报告" ───────────────────────
-    await pageCard.locator('.ant-select').click()
+    await pageCard.locator('.ant-select').first().click()
     await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
 
     // 列表加载后仍为空 → Empty + "暂无分析报告"

@@ -1,26 +1,19 @@
 /**
  * Task 18 Phase 3A Wave 2 — 场景 5：L3 审批超时 → status=aborted
  *
- * 【降级说明】
- *   当前产品代码的 approve_l3 handler 写死 `mgr.requestApproval(timeoutMs=3_600_000)`
- *   （即 1 小时），pipeline stage 的 timeoutSeconds 不会传入 approval-manager。
- *   因此 e2e 无法在合理时间内走 "approval-manager 内部 timeout → decision=timeout
- *   → 写 approval(status=failed,data.decision=timeout)" 这条路径。
- *
- *   降级方案：改走 "pipeline stage-level timeout" 路径。把 L3 pipeline approve_l3
- *   stage 的 timeoutSeconds 改成 2 秒，stage executor 的 timeoutPromise 会在 2s 后
- *   abort capability 并抛 `capability 执行超时`，pipeline onFailure=stop → aborted，
- *   coordinator 补发 notify_bug 完成闭环。
- *
- *   注意：stage-abort 路径下 approve_l3 handler 本身还 block 在 requestApproval 里
- *   （它不监听 signal），要 1 小时后才返回 → 届时会写一条 approval(decision=timeout)
- *   事件，但测试此刻看不到，所以【降级-DB】只断言 status + 无后续事件。
+ * 走正面路径：approve_l3 capability 的 capabilityParams 里注入 approvalTimeoutMs=2000，
+ * handler 透传给 PipelineApprovalManager.requestApproval，2 秒后内部 timeout 返回
+ * decision=timeout → handler 写 approval(status=failed, data.decision='timeout') 事件
+ * → capability 返回 success=false → pipeline onFailure=stop → aborted。
  *
  * 流程：
- *   1. beforeEach 把 L3 pipeline approve_l3 stage timeoutSeconds 改成 2 秒
- *   2. 异步触发 analyze-and-dispatch → 发审批 DM → 等 2 秒 stage timeout
- *   3. pipeline status=aborted；不出现 fix_attempt / create_mr / ai_review
- *   4. afterEach 恢复 timeoutSeconds=3600
+ *   1. beforeEach 在 L3 pipeline 的 approve_l3 stage capabilityParams 里注入
+ *      approvalTimeoutMs = 2000
+ *   2. 异步触发 analyze-and-dispatch → 发审批 DM → 2 秒后 approval-manager 超时
+ *   3. pipeline status=aborted；bug_fix_events 里能查到
+ *      approval(status=failed, data.decision='timeout')
+ *   4. 不出现 fix_attempt / create_mr / ai_review
+ *   5. afterEach 移除 approvalTimeoutMs，避免污染其他 spec
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { Pool } from 'pg'
@@ -63,24 +56,28 @@ async function pollUntil<T>(
 test.describe('L3 审批超时 → aborted', () => {
   test.beforeEach(async ({ request }) => {
     await resetPerTest(request, GITLAB_MOCK)
-    // 缩短 L3-业务逻辑 approve_l3 stage 的 timeoutSeconds（第 0 个 stage）
+    // 给 L3-业务逻辑 pipeline 的第一个 stage（approve_l3）capabilityParams 里注入 approvalTimeoutMs=2000
     await dbQuery(`
       UPDATE test_pipelines
-      SET stages = jsonb_set(stages, '{0,timeoutSeconds}', '2'::jsonb)
+      SET stages = jsonb_set(
+        stages,
+        '{0,capabilityParams,approvalTimeoutMs}',
+        '2000'::jsonb
+      )
       WHERE name = 'L3-业务逻辑'
     `)
   })
 
   test.afterEach(async () => {
-    // 恢复 approve_l3 stage timeoutSeconds，避免污染其他 spec
+    // 移除注入的 approvalTimeoutMs，避免污染后续 spec
     await dbQuery(`
       UPDATE test_pipelines
-      SET stages = jsonb_set(stages, '{0,timeoutSeconds}', '3600'::jsonb)
+      SET stages = stages #- '{0,capabilityParams,approvalTimeoutMs}'
       WHERE name = 'L3-业务逻辑'
     `)
   })
 
-  test('[降级-DB] analyze → L3 approve_l3 stage timeout → aborted（无后续 fix/mr/review）', async ({
+  test('analyze → L3 approve_l3 内部超时 → aborted（approval 事件 decision=timeout）', async ({
     request,
     page,
   }) => {
@@ -92,7 +89,7 @@ test.describe('L3 审批超时 → aborted', () => {
     expect(plRows.length).toBe(1)
     const productLineId = plRows[0].id
 
-    // ── 1. 塞 claude mock：只需要 analyze（stage-timeout 路径不会进入 fix 阶段） ─
+    // ── 1. 塞 claude mock：只需要 analyze（timeout 路径不会进入 fix 阶段） ─
     await seedClaudeMock(request, 'analyze_bug-filter', {
       involvedProjects: [
         { projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'test' },
@@ -138,7 +135,7 @@ test.describe('L3 审批超时 → aborted', () => {
     expect(classification).toBe('bug')
     expect(level).toBe('l3')
 
-    // ── 3. 等审批 DM 发送（确认 pipeline 已进入 approve_l3 block） ────────
+    // ── 3. 等审批 DM 发送（确认 pipeline 已进入 approve_l3） ──────────────
     await pollUntil(
       async () => {
         const r = await request.get('/admin/_e2e/messages?kind=direct&to=u-primary')
@@ -149,7 +146,7 @@ test.describe('L3 审批超时 → aborted', () => {
       { timeoutMs: 15_000, label: '主仓库 owner 收到审批 DM' },
     )
 
-    // ── 4. 等 stage-timeout 触发（2s + buffer），report 终态 aborted ──────
+    // ── 4. 等 approval-manager 超时（2s + buffer），report 终态 aborted ───
     await pollUntil(
       async () => {
         const rows = await dbQuery<{ status: string }>(
@@ -158,10 +155,10 @@ test.describe('L3 审批超时 → aborted', () => {
         )
         return rows[0]?.status === 'aborted' ? rows[0] : null
       },
-      { timeoutMs: 30_000, label: 'report status = aborted (stage timeout)' },
+      { timeoutMs: 30_000, label: 'report status = aborted (approval timeout)' },
     )
 
-    // ── 5. DB 断言：不走到 fix/create_mr/ai_review ────────────────────────
+    // ── 5. DB 断言：approval 事件存在，decision=timeout，status=failed ────
     const events = await dbQuery<{
       code: string
       status: string
@@ -174,9 +171,16 @@ test.describe('L3 审批超时 → aborted', () => {
     for (const expected of ['analysis', 'scope_identified', 'create_issue']) {
       expect(codes, `events 缺少 ${expected}`).toContain(expected)
     }
-    // stage-timeout abort 后 approve_l3 handler 仍 block（3600s 后才写 approval
-    // 事件），pipeline 执行器已转入 failed 分支。因此测试可观察到的事件里
-    // 不应出现 fix/mr/review。
+
+    // 核心断言：approval 事件存在 + decision=timeout + status=failed
+    const approvalEvents = events.filter(e => e.code === 'approval')
+    expect(approvalEvents.length, 'approval 事件至少一条').toBeGreaterThanOrEqual(1)
+    const timeoutApproval = approvalEvents.find(
+      e => e.status === 'failed' && e.data?.decision === 'timeout',
+    )
+    expect(timeoutApproval, 'approval 事件应包含 decision=timeout, status=failed').toBeTruthy()
+
+    // timeout 后不应走到 fix/mr/review
     expect(codes).not.toContain('fix_attempt')
     expect(codes).not.toContain('create_mr')
     expect(codes).not.toContain('ai_review')
@@ -191,7 +195,7 @@ test.describe('L3 审批超时 → aborted', () => {
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').click()
+    await pageCard.locator('.ant-select').first().click()
     await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
 
     const issueCardTitle = page.locator('text=/Issue #\\d+/').first()

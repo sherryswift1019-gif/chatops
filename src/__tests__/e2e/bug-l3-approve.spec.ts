@@ -232,7 +232,7 @@ test.describe('L3 审批通过 → 继续修复', () => {
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').click()
+    await pageCard.locator('.ant-select').first().click()
     await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
 
     const issueCardTitle = page.locator('text=/Issue #\\d+/').first()

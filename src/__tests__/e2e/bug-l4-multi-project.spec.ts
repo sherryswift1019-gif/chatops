@@ -223,7 +223,7 @@ test.describe('多 project 修复 → 主/从 MR description 差异', () => {
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').click()
+    await pageCard.locator('.ant-select').first().click()
     await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
 
     const issueCardTitle = page.locator('text=/Issue #\\d+/').first()

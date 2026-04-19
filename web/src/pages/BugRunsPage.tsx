@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Card, Collapse, Tag, Button, Select, Space, Spin, Timeline, Modal, message, Empty } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Card, Collapse, Tag, Button, Select, Space, Spin, Timeline, Modal, message, Empty, Pagination } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { Link } from 'react-router-dom'
 import {
-  getBugAnalysisReports,
+  getBugReports,
   retryBugReport,
   fetchBugEvents,
   type BugFixEvent,
+  type BugReportStatusFilter,
+  type BugReportLevelFilter,
 } from '../api/bug-analysis-reports'
 import { getProductLines } from '../api/product-lines'
 import type { BugAnalysisReport, ProductLine } from '../types'
@@ -21,6 +23,21 @@ const statusColors: Record<string, string> = {
   completed: 'success',
   aborted: 'error',
 }
+
+const STATUS_OPTIONS: { value: BugReportStatusFilter; label: string }[] = [
+  { value: 'draft', label: 'draft' },
+  { value: 'published', label: 'published' },
+  { value: 'pipeline_success', label: 'pipeline_success' },
+  { value: 'completed', label: 'completed' },
+  { value: 'aborted', label: 'aborted' },
+]
+
+const LEVEL_OPTIONS: { value: BugReportLevelFilter; label: string }[] = [
+  { value: 'l1', label: 'L1' },
+  { value: 'l2', label: 'L2' },
+  { value: 'l3', label: 'L3' },
+  { value: 'l4', label: 'L4' },
+]
 
 function truncate(s: string | null | undefined, n: number): string {
   if (!s) return '-'
@@ -49,9 +66,15 @@ function groupByIssueId(reports: BugAnalysisReport[]): Map<number, BugAnalysisRe
 
 export default function BugRunsPage() {
   const [reports, setReports] = useState<BugAnalysisReport[]>([])
+  const [total, setTotal] = useState(0)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedPL, setSelectedPL] = useState<number | undefined>()
+  const [statusFilter, setStatusFilter] = useState<BugReportStatusFilter[]>([])
+  const [levelFilter, setLevelFilter] = useState<BugReportLevelFilter[]>([])
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     getProductLines().then(setProductLines)
@@ -60,14 +83,26 @@ export default function BugRunsPage() {
   useEffect(() => {
     if (selectedPL) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPL])
+  }, [selectedPL, statusFilter, levelFilter, page, pageSize])
 
   async function load() {
     if (!selectedPL) return
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
     setLoading(true)
     try {
-      const res = await getBugAnalysisReports(selectedPL)
+      const res = await getBugReports({
+        productLineId: selectedPL,
+        page,
+        pageSize,
+        statuses: statusFilter.length > 0 ? statusFilter : undefined,
+        levels: levelFilter.length > 0 ? levelFilter : undefined,
+        signal: abortRef.current.signal,
+      })
       setReports(res.data)
+      setTotal(res.total)
+    } catch {
+      // ignore abort
     } finally {
       setLoading(false)
     }
@@ -75,17 +110,51 @@ export default function BugRunsPage() {
 
   const grouped = useMemo(() => groupByIssueId(reports), [reports])
 
+  // 筛选变更时重置到第 1 页
+  function onStatusChange(v: BugReportStatusFilter[]) {
+    setStatusFilter(v)
+    setPage(1)
+  }
+  function onLevelChange(v: BugReportLevelFilter[]) {
+    setLevelFilter(v)
+    setPage(1)
+  }
+  function onProductLineChange(v: number | undefined) {
+    setSelectedPL(v)
+    setPage(1)
+  }
+
   return (
     <Card
       title="Bug 修复实例"
       extra={
-        <Space>
+        <Space wrap>
           <Select
             style={{ width: 220 }}
             placeholder="选择产品线"
             value={selectedPL}
-            onChange={setSelectedPL}
+            onChange={onProductLineChange}
             options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))}
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            style={{ minWidth: 220 }}
+            placeholder="按状态筛选"
+            value={statusFilter}
+            onChange={onStatusChange}
+            options={STATUS_OPTIONS}
+            maxTagCount="responsive"
+          />
+          <Select
+            mode="multiple"
+            allowClear
+            style={{ minWidth: 160 }}
+            placeholder="按等级筛选"
+            value={levelFilter}
+            onChange={onLevelChange}
+            options={LEVEL_OPTIONS}
+            maxTagCount="responsive"
           />
           <Button icon={<ReloadOutlined />} onClick={load} disabled={!selectedPL}>刷新</Button>
         </Space>
@@ -95,11 +164,27 @@ export default function BugRunsPage() {
       {grouped.size === 0 && !loading ? (
         <Empty description={selectedPL ? '暂无分析报告' : '请先选择产品线'} />
       ) : (
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          {Array.from(grouped.entries()).map(([issueId, rounds]) => (
-            <IssueCard key={issueId} issueId={issueId} rounds={rounds} onRetry={load} />
-          ))}
-        </Space>
+        <>
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            {Array.from(grouped.entries()).map(([issueId, rounds]) => (
+              <IssueCard key={issueId} issueId={issueId} rounds={rounds} onRetry={load} />
+            ))}
+          </Space>
+          <div style={{ marginTop: 16, textAlign: 'right' }}>
+            <Pagination
+              current={page}
+              pageSize={pageSize}
+              total={total}
+              showSizeChanger
+              pageSizeOptions={['10', '20', '50', '100']}
+              showTotal={(t) => `共 ${t} 条`}
+              onChange={(p, s) => {
+                setPage(p)
+                setPageSize(s)
+              }}
+            />
+          </div>
+        </>
       )}
     </Card>
   )

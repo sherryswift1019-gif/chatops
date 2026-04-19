@@ -188,14 +188,20 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 0: 拦截审批命令（approve/reject）
+      // Step 0: 拦截审批命令（approve/reject/reanalyze）
+      //   先用纯函数 parseApprovalCommand 做快速识别（支持单测覆盖），
+      //   识别为命令再调 approval-manager.tryHandleCommand 去匹配 pending。
       const cleanedForApproval = prompt.replace(/@[\u4e00-\u9fff]+/g, '').trim()
       try {
-        const { PipelineApprovalManager } = await import('../pipeline/approval-manager.js')
-        const mgr = PipelineApprovalManager.getInstance()
-        if (mgr.tryHandleCommand(cleanedForApproval)) {
-          await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: '审批已处理 ✅', atDingtalkIds: atIds } as any)
-          return
+        const { parseApprovalCommand } = await import('../pipeline/approval-command-parser.js')
+        const parsed = parseApprovalCommand(cleanedForApproval)
+        if (parsed) {
+          const { PipelineApprovalManager } = await import('../pipeline/approval-manager.js')
+          const mgr = PipelineApprovalManager.getInstance()
+          if (mgr.tryHandleCommand(cleanedForApproval)) {
+            await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: '审批已处理 ✅', atDingtalkIds: atIds } as any)
+            return
+          }
         }
       } catch (err) {
         console.log('[Runner] approval command check skipped:', err instanceof Error ? err.message : '')

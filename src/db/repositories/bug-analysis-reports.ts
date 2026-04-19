@@ -121,8 +121,59 @@ export async function updateReportStatus(id: number, status: ReportStatus): Prom
 export async function listReportsByProductLine(productLineId: number, limit = 50): Promise<BugAnalysisReport[]> {
   const pool = getPool()
   const { rows } = await pool.query(
-    'SELECT * FROM bug_analysis_reports WHERE product_line_id = $1 ORDER BY created_at DESC LIMIT $2',
+    'SELECT * FROM bug_analysis_reports WHERE product_line_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2',
     [productLineId, limit]
   )
   return rows.map(mapRow)
+}
+
+/**
+ * 支持 status/level 筛选 + 服务端分页的版本。
+ *
+ * - statuses/levels 为空/undefined 表示不过滤
+ * - page 从 1 起
+ */
+export async function listReportsByProductLinePaged(params: {
+  productLineId: number
+  statuses?: ReportStatus[]
+  levels?: BugLevel[]
+  page: number
+  limit: number
+}): Promise<{ data: BugAnalysisReport[]; total: number }> {
+  const pool = getPool()
+  const { productLineId, statuses, levels, page, limit } = params
+
+  const where: string[] = ['product_line_id = $1']
+  const values: unknown[] = [productLineId]
+
+  if (statuses && statuses.length > 0) {
+    values.push(statuses)
+    where.push(`status = ANY($${values.length}::text[])`)
+  }
+  if (levels && levels.length > 0) {
+    values.push(levels)
+    where.push(`level = ANY($${values.length}::text[])`)
+  }
+
+  const whereSql = where.join(' AND ')
+  const offset = Math.max(0, (page - 1) * limit)
+
+  const countValues = [...values]
+  const countRes = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM bug_analysis_reports WHERE ${whereSql}`,
+    countValues,
+  )
+  const total = (countRes.rows[0]?.cnt as number) ?? 0
+
+  values.push(limit)
+  values.push(offset)
+  const listRes = await pool.query(
+    `SELECT * FROM bug_analysis_reports
+     WHERE ${whereSql}
+     ORDER BY created_at DESC, id DESC
+     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    values,
+  )
+
+  return { data: listRes.rows.map(mapRow), total }
 }

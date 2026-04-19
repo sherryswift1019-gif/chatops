@@ -1,10 +1,58 @@
 import client from './client'
 import type { BugAnalysisReport } from '../types'
 
+export type BugReportStatusFilter =
+  | 'draft'
+  | 'published'
+  | 'superseded'
+  | 'pipeline_success'
+  | 'completed'
+  | 'aborted'
+export type BugReportLevelFilter = 'l1' | 'l2' | 'l3' | 'l4'
+
+export interface GetBugReportsParams {
+  productLineId: number
+  page?: number
+  pageSize?: number
+  statuses?: BugReportStatusFilter[]
+  levels?: BugReportLevelFilter[]
+  signal?: AbortSignal
+}
+
+export interface GetBugReportsResponse {
+  data: BugAnalysisReport[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+// 老接口保留（兼容，不带筛选/分页）
 export const getBugAnalysisReports = (productLineId: number, limit = 50) =>
   client.get<{ data: BugAnalysisReport[]; total: number }>('/bug-analysis-reports', {
     params: { product_line_id: productLineId, limit },
   }).then(r => r.data)
+
+/**
+ * 带服务端分页 + status/level 筛选。
+ * 返回 {data, total, page, pageSize}。
+ */
+export async function getBugReports(p: GetBugReportsParams): Promise<GetBugReportsResponse> {
+  const { productLineId, page = 1, pageSize = 20, statuses, levels, signal } = p
+  const params: Record<string, unknown> = {
+    product_line_id: productLineId,
+    page,
+    pageSize,
+  }
+  if (statuses && statuses.length > 0) params.status = statuses.join(',')
+  if (levels && levels.length > 0) params.level = levels.join(',')
+  const { data } = await client.get<{
+    data: BugAnalysisReport[]
+    total: number
+    page: number
+    pageSize: number
+  }>('/bug-analysis-reports', { params, signal })
+  return data
+}
 
 export const getBugAnalysisReport = (id: number) =>
   client.get<{ data: BugAnalysisReport }>(`/bug-analysis-reports/${id}`).then(r => r.data.data)

@@ -1,24 +1,20 @@
 /**
- * Task 18 Phase 3B — BugRunsPage 场景 B1：列表筛选 — productLine
- *
- * [降级-BugRunsPage 无 status 筛选组件]
- * 原场景：productLine 下拉 + status 筛选双维度。
- * 实际：BugRunsPage 当前只有 productLine 下拉；status 仅作为 Tag 展示，无筛选控件。
- * 因此降级为：验证切换 productLine 下拉能改变卡片数量（含 status 多样性 DB 断言）。
+ * Task 18 Phase 3B — BugRunsPage 场景 B1：列表筛选（productLine + status + level）
  *
  * 前置：
  *   - base.sql 已建 'pam' 产品线
  *   - 本 spec 额外插入第二条 'plb' 产品线
- *   - 往两个产品线 INSERT 3 条 bug_analysis_reports（2 条 pam / 1 条 plb），
- *     状态各异（pipeline_success / aborted / draft）
+ *   - 往两个产品线 INSERT 4 条 bug_analysis_reports：
+ *       pam: 3 条（pipeline_success L1 / aborted L1 / aborted L3）
+ *       plb: 1 条（draft L3）
  *
  * 流程：
- *   1. 打开 /bug-runs，默认 Empty（未选产品线）
- *   2. 选 PAM → 断言 2 个 IssueCard（2 条 pam 报告 issueId 不同 → 2 组）
- *   3. 切到第二产品线 → 断言 1 个 IssueCard
- *   4. 再切回 PAM → 仍 2 个 IssueCard
- *
- * DB 辅助断言：3 条 reports 的 status 分布确实多样（pipeline_success + aborted + draft）。
+ *   1. 打开 /bug-runs → 默认 Empty
+ *   2. 选 PAM → 3 个 IssueCard（3 条报告）
+ *   3. 叠加 status=aborted → 只剩 2 条（L1 aborted + L3 aborted）
+ *   4. 再叠加 level=L1 → 只剩 1 条（L1 aborted）
+ *   5. 清掉筛选，切 PLB → 只剩 1 条（draft L3）
+ *   6. 切回 PAM → 恢复 3 条
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { Pool } from 'pg'
@@ -44,14 +40,14 @@ async function dbQuery<T = Record<string, unknown>>(sql: string, params: unknown
   }
 }
 
-test.describe('BugRunsPage 产品线筛选', () => {
+test.describe('BugRunsPage 筛选（productLine + status + level）', () => {
   test.beforeEach(async ({ request }) => {
     await resetPerTest(request, GITLAB_MOCK)
-    // 清理第二产品线遗留（不 CASCADE 避免连带 pam 的数据）
+    // 清理第二产品线遗留
     await dbQuery(`DELETE FROM product_lines WHERE name = 'plb-e2e'`)
   })
 
-  test('切产品线下拉 → IssueCard 数量随之变化', async ({ request, page }) => {
+  test('后端筛选：status + level query 参数正确过滤', async ({ request }) => {
     await loginAsAdmin(request)
 
     const pamRows = await dbQuery<{ id: number }>(
@@ -59,8 +55,56 @@ test.describe('BugRunsPage 产品线筛选', () => {
     )
     const pamId = pamRows[0].id
 
-    // 第二产品线（仅用于切 Select 校验；不需要 capabilities / projects，
-    // 因为本 spec 不跑 pipeline，只读 /admin/bug-analysis-reports）
+    await dbQuery(
+      `INSERT INTO bug_analysis_reports
+         (issue_id, issue_url, product_line_id, level, classification, confidence,
+          confidence_score, root_cause_summary, solutions_json, status)
+       VALUES
+         (101, 'http://mock-gitlab/PAM/pas-api/-/issues/101', $1,
+          'l1', 'bug', 'high', 0.9, 'A (pipeline_success L1)', '[]'::jsonb, 'pipeline_success'),
+         (102, 'http://mock-gitlab/PAM/pas-api/-/issues/102', $1,
+          'l1', 'bug', 'medium', 0.7, 'B (aborted L1)', '[]'::jsonb, 'aborted'),
+         (103, 'http://mock-gitlab/PAM/pas-api/-/issues/103', $1,
+          'l3', 'bug', 'low', 0.5, 'C (aborted L3)', '[]'::jsonb, 'aborted')`,
+      [pamId],
+    )
+
+    // 后端过滤 status=aborted → 2 条
+    const r1 = await request.get(`/admin/bug-analysis-reports?product_line_id=${pamId}&status=aborted`)
+    expect(r1.ok()).toBe(true)
+    const body1 = await r1.json()
+    expect(body1.total).toBe(2)
+    expect(body1.data.length).toBe(2)
+    for (const r of body1.data) expect(r.status).toBe('aborted')
+
+    // 后端过滤 status=aborted&level=l1 → 1 条
+    const r2 = await request.get(
+      `/admin/bug-analysis-reports?product_line_id=${pamId}&status=aborted&level=l1`,
+    )
+    expect(r2.ok()).toBe(true)
+    const body2 = await r2.json()
+    expect(body2.total).toBe(1)
+    expect(body2.data.length).toBe(1)
+    expect(body2.data[0].level).toBe('l1')
+    expect(body2.data[0].status).toBe('aborted')
+
+    // 多选：status=aborted,pipeline_success → 3 条
+    const r3 = await request.get(
+      `/admin/bug-analysis-reports?product_line_id=${pamId}&status=aborted,pipeline_success`,
+    )
+    expect(r3.ok()).toBe(true)
+    const body3 = await r3.json()
+    expect(body3.total).toBe(3)
+  })
+
+  test('前端 UI：productLine + status + level 叠加筛选 IssueCard', async ({ request, page }) => {
+    await loginAsAdmin(request)
+
+    const pamRows = await dbQuery<{ id: number }>(
+      `SELECT id FROM product_lines WHERE name = 'pam'`,
+    )
+    const pamId = pamRows[0].id
+
     const plbRows = await dbQuery<{ id: number }>(
       `INSERT INTO product_lines (name, display_name, description)
        VALUES ('plb-e2e', 'PLB 测试产线', 'B1 筛选 spec')
@@ -68,30 +112,21 @@ test.describe('BugRunsPage 产品线筛选', () => {
     )
     const plbId = plbRows[0].id
 
-    // 插 3 条报告：pam=2（issueId 不同 → 两组），plb=1
     await dbQuery(
       `INSERT INTO bug_analysis_reports
          (issue_id, issue_url, product_line_id, level, classification, confidence,
           confidence_score, root_cause_summary, solutions_json, status)
        VALUES
          (101, 'http://mock-gitlab/PAM/pas-api/-/issues/101', $1,
-          'l1', 'bug', 'high', 0.9, 'pam 报告 A（pipeline_success）',
-          '[]'::jsonb, 'pipeline_success'),
+          'l1', 'bug', 'high', 0.9, 'A (pipeline_success L1)', '[]'::jsonb, 'pipeline_success'),
          (102, 'http://mock-gitlab/PAM/pas-api/-/issues/102', $1,
-          'l2', 'bug', 'medium', 0.7, 'pam 报告 B（aborted）',
-          '[]'::jsonb, 'aborted'),
+          'l1', 'bug', 'medium', 0.7, 'B (aborted L1)', '[]'::jsonb, 'aborted'),
+         (103, 'http://mock-gitlab/PAM/pas-api/-/issues/103', $1,
+          'l3', 'bug', 'low', 0.5, 'C (aborted L3)', '[]'::jsonb, 'aborted'),
          (201, 'http://mock-gitlab/PLB/xxx/-/issues/201', $2,
-          'l3', 'bug', 'low', 0.4, 'plb 报告（draft）',
-          '[]'::jsonb, 'draft')`,
+          'l3', 'bug', 'low', 0.4, 'D (draft L3)', '[]'::jsonb, 'draft')`,
       [pamId, plbId],
     )
-
-    // DB 层确认 status 分布多样
-    const statusRows = await dbQuery<{ status: string; cnt: string }>(
-      `SELECT status, COUNT(*)::text AS cnt FROM bug_analysis_reports GROUP BY status ORDER BY status`,
-    )
-    const statuses = statusRows.map(r => r.status).sort()
-    expect(statuses).toEqual(['aborted', 'draft', 'pipeline_success'])
 
     // ── UI ────────────────────────────────────────────────────────────────
     const loginResp = await page.request.post('/admin/auth/login', {
@@ -106,28 +141,56 @@ test.describe('BugRunsPage 产品线筛选', () => {
     // 未选产品线 → Empty
     await expect(pageCard.getByText('请先选择产品线')).toBeVisible()
 
-    // 选 PAM → 2 个 IssueCard
-    await pageCard.locator('.ant-select').click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
-    // 两个 IssueCard 标题
-    await expect(page.locator('text=/Issue #101/')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('text=/Issue #102/')).toBeVisible({ timeout: 10_000 })
-    // 不应出现 plb 的 201
-    await expect(page.locator('text=/Issue #201/')).toHaveCount(0)
+    // 第 1 个 Select 是产品线，第 2 个是 status，第 3 个是 level
+    const plSelect = pageCard.locator('.ant-select').nth(0)
+    const statusSelect = pageCard.locator('.ant-select').nth(1)
+    const levelSelect = pageCard.locator('.ant-select').nth(2)
 
-    // 切到 PLB → 1 个 IssueCard
-    await pageCard.locator('.ant-select').click()
+    // 选 PAM → 3 个 IssueCard
+    await plSelect.click()
+    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    await expect(page.locator('text=/Issue #101/')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('text=/Issue #102/')).toBeVisible()
+    await expect(page.locator('text=/Issue #103/')).toBeVisible()
+
+    // 叠加 status=aborted → 只剩 102 / 103
+    await statusSelect.click()
+    await page.locator('.ant-select-item-option').filter({ hasText: /^aborted$/ }).click()
+    // 关闭 dropdown
+    await page.keyboard.press('Escape')
+    await expect(page.locator('text=/Issue #102/')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('text=/Issue #103/')).toBeVisible()
+    await expect(page.locator('text=/Issue #101/')).toHaveCount(0)
+
+    // 再叠加 level=L1 → 只剩 102
+    await levelSelect.click()
+    await page.locator('.ant-select-item-option').filter({ hasText: /^L1$/ }).click()
+    await page.keyboard.press('Escape')
+    await expect(page.locator('text=/Issue #102/')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('text=/Issue #103/')).toHaveCount(0)
+    await expect(page.locator('text=/Issue #101/')).toHaveCount(0)
+
+    // 清掉 level / status 筛选
+    await levelSelect.locator('.ant-select-clear').click({ force: true })
+    await statusSelect.locator('.ant-select-clear').click({ force: true })
+    await expect(page.locator('text=/Issue #101/')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('text=/Issue #102/')).toBeVisible()
+    await expect(page.locator('text=/Issue #103/')).toBeVisible()
+
+    // 切 PLB → 1 条
+    await plSelect.click()
     await page.locator('.ant-select-item-option').filter({ hasText: 'PLB 测试产线' }).click()
     await expect(page.locator('text=/Issue #201/')).toBeVisible({ timeout: 10_000 })
-    // pam 的两条消失
     await expect(page.locator('text=/Issue #101/')).toHaveCount(0)
     await expect(page.locator('text=/Issue #102/')).toHaveCount(0)
+    await expect(page.locator('text=/Issue #103/')).toHaveCount(0)
 
-    // 切回 PAM → 恢复 2 条
-    await pageCard.locator('.ant-select').click()
+    // 切回 PAM → 恢复 3 条
+    await plSelect.click()
     await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
     await expect(page.locator('text=/Issue #101/')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('text=/Issue #102/')).toBeVisible({ timeout: 10_000 })
+    await expect(page.locator('text=/Issue #102/')).toBeVisible()
+    await expect(page.locator('text=/Issue #103/')).toBeVisible()
     await expect(page.locator('text=/Issue #201/')).toHaveCount(0)
   })
 })

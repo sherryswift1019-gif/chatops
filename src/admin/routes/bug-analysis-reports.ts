@@ -1,15 +1,65 @@
 import type { FastifyInstance } from 'fastify'
-import { getBugAnalysisReportById, listReportsByProductLine } from '../../db/repositories/bug-analysis-reports.js'
+import {
+  getBugAnalysisReportById,
+  listReportsByProductLine,
+  listReportsByProductLinePaged,
+  type BugLevel,
+  type ReportStatus,
+} from '../../db/repositories/bug-analysis-reports.js'
 import { findByReport } from '../../db/repositories/bug-fix-events.js'
 import { handleAnalyzeBug } from '../../agent/analysis/analyzer.js'
 import { handleAnalysisComplete } from '../../agent/coordinator.js'
 
+const VALID_STATUSES: ReportStatus[] = [
+  'draft',
+  'published',
+  'superseded',
+  'pipeline_success',
+  'completed',
+  'aborted',
+]
+const VALID_LEVELS: BugLevel[] = ['l1', 'l2', 'l3', 'l4']
+
+function parseCsvEnum<T extends string>(
+  raw: unknown,
+  allowed: readonly T[],
+): T[] | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined
+  const text = String(raw)
+  const parts = text
+    .split(',')
+    .map(s => s.trim())
+    .filter(s => s.length > 0)
+  const filtered = parts.filter((p): p is T => (allowed as readonly string[]).includes(p))
+  return filtered.length > 0 ? filtered : undefined
+}
+
 export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Promise<void> {
   app.get('/bug-analysis-reports', async (req) => {
-    const query = req.query as any
+    const query = req.query as Record<string, unknown>
     const productLineId = Number(query.product_line_id)
-    const limit = Number(query.limit) || 50
     if (!productLineId) return { error: { code: 'MISSING_PARAM', message: 'product_line_id required' } }
+
+    const statuses = parseCsvEnum(query.status, VALID_STATUSES)
+    const levels = parseCsvEnum(query.level, VALID_LEVELS)
+
+    // 分页参数：page/pageSize 任一存在就走分页分支，否则走老 limit 行为（向后兼容）
+    const hasPaging = query.page !== undefined || query.pageSize !== undefined
+
+    if (hasPaging || statuses || levels) {
+      const page = Math.max(1, Number(query.page) || 1)
+      const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
+      const result = await listReportsByProductLinePaged({
+        productLineId,
+        statuses,
+        levels,
+        page,
+        limit: pageSize,
+      })
+      return { data: result.data, total: result.total, page, pageSize }
+    }
+
+    const limit = Number(query.limit) || 50
     const reports = await listReportsByProductLine(productLineId, limit)
     return { data: reports, total: reports.length }
   })
