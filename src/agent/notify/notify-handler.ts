@@ -40,10 +40,13 @@ interface ProjectMr {
 /**
  * V2 MVP: handover 事件数据结构（与 request-handover-handler.ts data 字段对齐）。
  * decideScenario 检测到 bug_fix_events(code='handover', status='success') 时装入 Scenario.handoverData。
+ *
+ * 注：handover 事件 data 里还有 projectPaths 字段，但 notify 发 DM 时使用的 project 列表
+ * 来自 gatherProjects（含 scope_identified / fix_attempt / create_mr 全量），更完整；
+ * handoverData 不重复提取 projectPaths，避免歧义。
  */
 interface HandoverData {
   reason: string               // fix_exhausted / l4_manual / user_requested / ... (V2 支持更多)
-  projectPaths: string[]
   fixBranch: string            // fix/issue-<iid>
   failedAt: string | null
   attemptCount: number | null
@@ -230,9 +233,6 @@ async function decideScenario(
     const data = (latestHandover.data ?? {}) as Record<string, unknown>
     const handoverData: HandoverData = {
       reason: typeof data.reason === 'string' ? data.reason : 'user_requested',
-      projectPaths: Array.isArray(data.projectPaths)
-        ? (data.projectPaths as unknown[]).filter((p): p is string => typeof p === 'string')
-        : [],
       fixBranch: typeof data.fixBranch === 'string' ? data.fixBranch : `fix/issue-${report.issueId}`,
       failedAt: typeof data.failedAt === 'string' ? data.failedAt : null,
       attemptCount: typeof data.attemptCount === 'number' ? data.attemptCount : null,
