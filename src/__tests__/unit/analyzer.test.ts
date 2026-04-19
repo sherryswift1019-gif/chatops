@@ -15,7 +15,21 @@ vi.mock('../../agent/analysis/claude-runs.js', async () => {
 vi.mock('../../agent/analysis/gitlab-issue.js', () => ({
   gitlabCreateIssue: vi.fn(),
   gitlabPostIssueNote: vi.fn(),
+  gitlabGetIssue: vi.fn(),
+  gitlabUpdateIssue: vi.fn(),
 }))
+
+// C1 专用：允许单测用 mock 劫持 createEvent
+vi.mock('../../db/repositories/bug-fix-events.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../db/repositories/bug-fix-events.js')>(
+      '../../db/repositories/bug-fix-events.js',
+    )
+  return {
+    ...actual,
+    createEvent: vi.fn(actual.createEvent),
+  }
+})
 
 // Mock worktree manager 避免真正 clone 仓库
 vi.mock('../../agent/worktree/manager.js', async () => {
@@ -50,11 +64,17 @@ import {
 import {
   findByReport,
   findByReportCode,
+  createEvent as createEventMock,
 } from '../../db/repositories/bug-fix-events.js'
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { runFilterStage, runDetailStage } from '../../agent/analysis/claude-runs.js'
 import { extractJson } from '../../agent/analysis/claude-runs.js'
-import { gitlabCreateIssue, gitlabPostIssueNote } from '../../agent/analysis/gitlab-issue.js'
+import {
+  gitlabCreateIssue,
+  gitlabPostIssueNote,
+  gitlabGetIssue,
+  gitlabUpdateIssue,
+} from '../../agent/analysis/gitlab-issue.js'
 
 // 保留原有的 parseAnalysisOutput / buildMarkdownReport 测试（向后兼容）
 describe('parseAnalysisOutput', () => {
@@ -367,6 +387,52 @@ describe('analyzer multi-project support', () => {
     const issueEvents = await findByReportCode(reportId, 'create_issue')
     expect(issueEvents).toHaveLength(1)
     expect((issueEvents[0].data as { isReused: boolean }).isReused).toBe(true)
+  })
+})
+
+describe('analyzer createEvent failure propagation (C1)', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+    vi.mocked(gitlabPostIssueNote).mockReset()
+    vi.mocked(createEventMock).mockReset()
+  })
+
+  it('createEvent 抛错时 handleAnalyzeBug 返回 success=false（不静默吞）', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue({
+      classification: 'bug',
+      level: 'l2',
+      confidence: 'high',
+      confidenceScore: 0.9,
+      rootCause: { type: 'business_logic', summary: 'x', file: 'a.ts', lineRange: [1, 2] },
+      solutions: [{ id: 'opt-a', summary: 'fix', recommended: true, risk: 'low', effort: 'small' }],
+      affectedModules: ['auth'],
+      analysisSteps: ['P1'],
+      markdown: '## x',
+    })
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({
+      iid: 1,
+      url: 'http://git.example.com/PAM/pas-api/-/issues/1',
+    })
+    // 模拟 DB 连接断开导致 createEvent 抛错
+    vi.mocked(createEventMock).mockRejectedValue(new Error('connection terminated unexpectedly'))
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId))
+
+    expect(result.success).toBe(false)
+    // classifyError 把普通 DB 错归到 analyzer_error（兜底类），不静默吞
+    expect(result.error).toBe('analyzer_error')
+    expect(result.output).toContain('connection terminated')
   })
 })
 

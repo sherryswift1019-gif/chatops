@@ -120,6 +120,11 @@ function buildReuseMarker(): string {
 /**
  * 把 handleAnalyzeBug 抛出的异常按错误特征分类为错误码。
  * 映射参考 spec "错误码汇总 → analyzer"。
+ *
+ * audit（C1）：createEvent / updateReportStatus / createStat 等 DB 写入失败**不会**被
+ * 本函数静默吞。未命中关键字的 DB 错误（如 `connection terminated`）落入兜底 `analyzer_error`，
+ * 由外层 handleAnalyzeBug 返回 `success: false`，Pipeline stage 层的 retry 机制生效。
+ * 对应单测：src/__tests__/unit/analyzer.test.ts `analyzer createEvent failure propagation (C1)`。
  */
 function classifyError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
