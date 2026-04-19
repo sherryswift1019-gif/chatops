@@ -139,13 +139,11 @@ export class DingTalkAdapter implements IMAdapter {
     startError: string | null
     connected: boolean
   } {
-    const now = Date.now()
     const started = this.startedAt !== null
-    // Heuristic: within 60s after start, assume connecting (no events yet is normal).
-    // After that, require an event within the last 120s (keepAlive sends heartbeats).
-    const recentlyStarted = started && now - (this.startedAt as number) < 60_000
-    const hasRecentEvent = this.lastEventAt !== null && now - this.lastEventAt < 120_000
-    const connected = started && (recentlyStarted || hasRecentEvent)
+    // SDK 的 keepAlive 是 WebSocket 原生 ping/pong，不经过 registerAllEventListener，
+    // 因此不能用 lastEventAt 推断连接健康。改用 SDK 暴露的 public 字段：
+    // socket 打开 (connected) + 已完成 DingTalk 服务端注册握手 (registered)。
+    const connected = started && this.client.connected && this.client.registered
     return {
       configured: true,
       started,

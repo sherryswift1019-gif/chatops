@@ -5,6 +5,9 @@ vi.mock('dingtalk-stream-sdk-nodejs', () => {
   const listeners = new Map<string, Function>()
   let allListener: Function | null = null
   const mockClient = {
+    // SDK public fields the adapter now reads directly to determine real connection state
+    connected: false,
+    registered: false,
     registerCallbackListener: vi.fn((topic: string, cb: Function) => {
       listeners.set(topic, cb)
       return mockClient
@@ -135,6 +138,9 @@ describe('DingTalkAdapter (Stream mode)', () => {
     // Also clear the captured listeners so each test gets a fresh adapter
     mockClient._listeners.clear()
     mockClient._resetAllListener()
+    // Reset SDK connection flags — tests opt-in by flipping these to true
+    mockClient.connected = false
+    mockClient.registered = false
     adapter = new DingTalkAdapter({ clientId: 'app1', clientSecret: 'secret1' })
   })
 
@@ -317,11 +323,14 @@ describe('DingTalkAdapter (Stream mode)', () => {
       })
     })
 
-    it('reports connected immediately after start() within the 60s grace window', async () => {
+    it('reports connected when SDK socket is open and registration is complete', async () => {
       const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
       vi.useFakeTimers()
       vi.setSystemTime(t0)
 
+      // Simulate SDK finishing WebSocket open + REGISTERED handshake
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
 
       const s = adapter.getConnectionStatus()
@@ -332,53 +341,61 @@ describe('DingTalkAdapter (Stream mode)', () => {
       expect(s.startError).toBeNull()
     })
 
-    it('flips to disconnected after 60s grace window expires with no events', async () => {
-      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
-      vi.useFakeTimers()
-      vi.setSystemTime(t0)
+    it('reports disconnected when SDK socket is open but registration has not completed', async () => {
+      mockClient.connected = true
+      mockClient.registered = false
       await adapter.start()
 
-      vi.setSystemTime(t0 + 61_000)
       const s = adapter.getConnectionStatus()
       expect(s.started).toBe(true)
       expect(s.connected).toBe(false)
     })
 
-    it('stays connected when any event arrives within 120s after the grace window', async () => {
-      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
-      vi.useFakeTimers()
-      vi.setSystemTime(t0)
+    it('flips to disconnected when SDK marks the socket closed (WS drop)', async () => {
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
-
-      // After grace window; would be disconnected without an event
-      vi.setSystemTime(t0 + 61_000)
-      expect(adapter.getConnectionStatus().connected).toBe(false)
-
-      // Heartbeat event arrives
-      mockClient._triggerAll({ type: 'SYSTEM', headers: { topic: 'system/ping', messageId: 'h1' } })
-      const afterEvent = adapter.getConnectionStatus()
-      expect(afterEvent.lastEventAt).toBe(t0 + 61_000)
-      expect(afterEvent.connected).toBe(true)
-
-      // Still connected 30s later
-      vi.setSystemTime(t0 + 91_000)
       expect(adapter.getConnectionStatus().connected).toBe(true)
+
+      // Simulate WebSocket close — SDK flips the public `connected` flag
+      mockClient.connected = false
+      expect(adapter.getConnectionStatus().connected).toBe(false)
     })
 
-    it('reports disconnected when the last event is older than 120s', async () => {
+    it('updates lastEventAt when a business event is received, independent of connected', async () => {
       const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
       vi.useFakeTimers()
       vi.setSystemTime(t0)
+      mockClient.connected = true
+      mockClient.registered = true
+      await adapter.start()
+      expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
+
+      vi.setSystemTime(t0 + 30_000)
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
+
+      const s = adapter.getConnectionStatus()
+      expect(s.lastEventAt).toBe(t0 + 30_000)
+      // lastEventAt age no longer affects `connected`
+      expect(s.connected).toBe(true)
+    })
+
+    it('preserves lastEventAt over time without affecting the connected flag', async () => {
+      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
+      vi.useFakeTimers()
+      vi.setSystemTime(t0)
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
 
-      vi.setSystemTime(t0 + 61_000)
-      mockClient._triggerAll({ type: 'SYSTEM', headers: { topic: 'system/ping', messageId: 'h1' } })
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
+      // Advance well past the old 120s heuristic window
+      vi.setSystemTime(t0 + 10 * 60_000)
 
-      // 121s after the event
-      vi.setSystemTime(t0 + 61_000 + 121_000)
       const s = adapter.getConnectionStatus()
-      expect(s.lastEventAt).toBe(t0 + 61_000)
-      expect(s.connected).toBe(false)
+      expect(s.lastEventAt).toBe(t0)
+      // Still connected because the SDK says so — event age is irrelevant
+      expect(s.connected).toBe(true)
     })
 
     it('records startError and stays not-started when connect() throws', async () => {
@@ -396,6 +413,8 @@ describe('DingTalkAdapter (Stream mode)', () => {
     it('stop() clears startedAt and reports disconnected', async () => {
       vi.useFakeTimers()
       vi.setSystemTime(Date.UTC(2026, 0, 1, 0, 0, 0))
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
       expect(adapter.getConnectionStatus().started).toBe(true)
 
@@ -406,47 +425,41 @@ describe('DingTalkAdapter (Stream mode)', () => {
       expect(s.connected).toBe(false)
     })
 
-    it('stop() clears lastEventAt so a restart does not inherit heartbeats', async () => {
+    it('stop() clears lastEventAt so a restart does not inherit old event timestamps', async () => {
       const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
       vi.useFakeTimers()
       vi.setSystemTime(t0)
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
 
-      // Heartbeat received during first session
       vi.setSystemTime(t0 + 10_000)
-      mockClient._triggerAll({ type: 'SYSTEM', headers: { topic: 'system/ping', messageId: 'h1' } })
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
       expect(adapter.getConnectionStatus().lastEventAt).toBe(t0 + 10_000)
 
-      // Stop clears both startedAt and lastEventAt
       await adapter.stop()
       expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
     })
 
-    it('restart does not report connected based on the previous session heartbeat', async () => {
+    it('restart starts with a fresh lastEventAt regardless of prior-session events', async () => {
       const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
       vi.useFakeTimers()
       vi.setSystemTime(t0)
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
 
-      // First session: heartbeat at t0+10s
       vi.setSystemTime(t0 + 10_000)
-      mockClient._triggerAll({ type: 'SYSTEM', headers: { topic: 'system/ping', messageId: 'h1' } })
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
 
-      // Stop at t0+20s
       vi.setSystemTime(t0 + 20_000)
       await adapter.stop()
 
-      // Restart at t0+30s (pre-stop heartbeat is still within 120s window if it leaked)
       vi.setSystemTime(t0 + 30_000)
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
       expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
-
-      // After 60s grace window expires, no new event → must be disconnected,
-      // regardless of the stale pre-restart heartbeat.
-      vi.setSystemTime(t0 + 30_000 + 61_000)
-      const s = adapter.getConnectionStatus()
-      expect(s.lastEventAt).toBeNull()
-      expect(s.connected).toBe(false)
     })
 
     it('start() clears startError from a previous failed attempt', async () => {
@@ -455,6 +468,8 @@ describe('DingTalkAdapter (Stream mode)', () => {
       expect(adapter.getConnectionStatus().startError).toBe('first try failed')
 
       // Next start succeeds
+      mockClient.connected = true
+      mockClient.registered = true
       await adapter.start()
       const s = adapter.getConnectionStatus()
       expect(s.startError).toBeNull()

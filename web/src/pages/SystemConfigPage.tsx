@@ -389,15 +389,15 @@ function resolveStatusDisplay(status: DingTalkStatus | null): {
     const age = status.lastEventAt ? Math.max(0, Math.round((Date.now() - status.lastEventAt) / 1000)) : null
     const desc = age !== null
       ? `最近事件：${age} 秒前`
-      : '启动中，尚未收到事件（正常现象，约 1 分钟内应收到心跳）'
+      : '已建立 Stream 连接，尚未收到业务事件（无人 @ 机器人时属正常现象）'
     return { type: 'success', message: '已连接（Stream 模式）', description: desc }
   }
   return {
     type: 'error',
-    message: '可能已断开连接',
+    message: '未连接',
     description: status.lastEventAt
-      ? `最近事件已超过 120 秒（${new Date(status.lastEventAt).toLocaleString()}），请检查网络或钉钉凭证`
-      : '启动后超过 60 秒仍未收到任何事件，请检查网络或钉钉凭证',
+      ? `Stream 连接已中断（最近一次事件：${new Date(status.lastEventAt).toLocaleString()}），请检查网络或钉钉凭证`
+      : 'Stream 未建立连接或尚未完成注册握手，请检查网络或钉钉凭证',
   }
 }
 
