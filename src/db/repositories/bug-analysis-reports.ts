@@ -6,7 +6,6 @@ export type ConfidenceLevel = 'high' | 'medium' | 'low'
 export type ReportStatus =
   | 'draft'
   | 'published'
-  | 'superseded'
   | 'pipeline_success'
   | 'completed'
   | 'aborted'

@@ -72,15 +72,22 @@ UPDATE capabilities SET
 WHERE key = 'search_knowledge' AND system_prompt IS NULL;
 
 -- ============================================================
--- 7. AI 助手 Pipeline 模板（L1/L2/L3 修复流程）
+-- 7. AI 助手 Pipeline 模板（L1/L2/L3/L4）
+-- 注意：stages 结构与 schema-v11.sql 的 UPDATE/INSERT 保持一致；
+-- 新环境走 seed.sql 初始化后即可直接跑全链路（analyze → fix → create_mr → ai_review → notify）。
 -- ============================================================
 
--- L1 配置类 Bug 修复（不重试，一次搞定）
+-- L1 配置类 Bug 修复
 INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
 SELECT id, 'L1-配置类', '不改代码，改配置/SQL/参数就能修。如初始化SQL缺失、错误码没加',
-  '[{"name":"L1 修复","stageType":"capability","capabilityKey":"fix_bug_l1","timeoutSeconds":600,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
+  '[
+    {"name":"L1 修复","stageType":"capability","capabilityKey":"fix_bug_l1","timeoutSeconds":1800,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
+  ]'::jsonb,
   '{}'::jsonb, '', true,
-  '{"reportId":null,"issueId":null}'::jsonb,
+  '{"reportId":null}'::jsonb,
   '{}'::jsonb
 FROM product_lines WHERE name = 'pam'
 ON CONFLICT DO NOTHING;
@@ -88,19 +95,42 @@ ON CONFLICT DO NOTHING;
 -- L2 简单代码 Bug 修复（含重试，最多 3 次）
 INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
 SELECT id, 'L2-代码缺陷', '代码有明确bug，修复方式确定。如并发缺同步、空指针、类型转换错误',
-  '[{"name":"L2 修复","stageType":"capability","capabilityKey":"fix_bug_l2","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
+  '[
+    {"name":"L2 修复","stageType":"capability","capabilityKey":"fix_bug_l2","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
+  ]'::jsonb,
   '{}'::jsonb, '', true,
-  '{"reportId":null,"issueId":null}'::jsonb,
+  '{"reportId":null}'::jsonb,
   '{}'::jsonb
 FROM product_lines WHERE name = 'pam'
 ON CONFLICT DO NOTHING;
 
--- L3 业务逻辑 Bug 修复（审批 + 修复）
+-- L3 业务逻辑 Bug 修复（capability 化审批 + 修复，approvalTimeoutMs 必须显式配置）
 INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
 SELECT id, 'L3-业务逻辑', '需要理解业务上下文才能判断对错。如流程判断错误、权限规则遗漏、状态机转换错误',
-  '[{"name":"方案审批","stageType":"approval","timeoutSeconds":86400,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"approvalDescription":"L3 Bug 修复方案审批"},{"name":"L3 修复","stageType":"capability","capabilityKey":"fix_bug_l3","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","issueId":"{{triggerParams.issueId}}"}}]'::jsonb,
+  '[
+    {"name":"方案审批","stageType":"capability","capabilityKey":"approve_l3","timeoutSeconds":3600,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","approvalTimeoutMs":3600000}},
+    {"name":"L3 修复","stageType":"capability","capabilityKey":"fix_bug_l3","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
+    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
+  ]'::jsonb,
   '{}'::jsonb, '', true,
-  '{"reportId":null,"issueId":null}'::jsonb,
+  '{"reportId":null}'::jsonb,
+  '{}'::jsonb
+FROM product_lines WHERE name = 'pam'
+ON CONFLICT DO NOTHING;
+
+-- L4 复杂问题（无自动修复，仅创建 Issue + DM 各 project owner 人工接手）
+INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
+SELECT id, 'L4-复杂问题', '无自动修复能力的 Bug 分析结果，仅创建 Issue 并通知各涉及 project 负责人（owner）人工接手',
+  '[
+    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
+  ]'::jsonb,
+  '{}'::jsonb, '', true,
+  '{"reportId":null}'::jsonb,
   '{}'::jsonb
 FROM product_lines WHERE name = 'pam'
 ON CONFLICT DO NOTHING;

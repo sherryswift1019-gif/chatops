@@ -4,7 +4,6 @@ import type { BugAnalysisReport } from '../types'
 export type BugReportStatusFilter =
   | 'draft'
   | 'published'
-  | 'superseded'
   | 'pipeline_success'
   | 'completed'
   | 'aborted'

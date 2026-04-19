@@ -18,7 +18,6 @@ const confidenceColors: Record<string, string> = { high: 'green', medium: 'gold'
 const statusColors: Record<string, string> = {
   draft: 'default',
   published: 'processing',
-  superseded: 'warning',
   pipeline_success: 'success',
   completed: 'success',
   aborted: 'error',

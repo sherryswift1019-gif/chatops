@@ -151,18 +151,28 @@ export async function handleAnalysisComplete(
       console.log(`[AgentCoordinator] report ${reportId} → aborted (errorMessage=${result.errorMessage ?? ''})`)
 
       // 补发 notify_bug（失败时 notify_bug stage 可能未运行）
+      // 幂等保护：若 Pipeline 内的 notify_bug stage 已经发过（例如 ai_review_mr
+      // onFailure=continue 场景下 Pipeline 仍会跑完 notify_bug stage 并最终以
+      // failed 收尾），避免 coordinator 再补发一次 → 同一 Pipeline 发两条 DM。
+      // 真相源：bug_fix_events(code='notify', status='success')
       try {
-        await triggerCapability({
-          capabilityKey: 'notify_bug',
-          context: {
-            taskId: `notify-fail-${reportId}`,
-            groupId: 'pipeline',
-            platform: 'api',
-            initiatorId: triggeredBy,
-            initiatorRole: 'admin',
-          },
-          extraParams: { reportId },
-        })
+        const existingNotify = await findByReportCode(reportId, 'notify')
+        const alreadyNotified = existingNotify.some(e => e.status === 'success')
+        if (alreadyNotified) {
+          console.log(`[AgentCoordinator] report=${reportId} notify 已执行过，跳过失败补发`)
+        } else {
+          await triggerCapability({
+            capabilityKey: 'notify_bug',
+            context: {
+              taskId: `notify-fail-${reportId}`,
+              groupId: 'pipeline',
+              platform: 'api',
+              initiatorId: triggeredBy,
+              initiatorRole: 'admin',
+            },
+            extraParams: { reportId },
+          })
+        }
       } catch (err) {
         console.error(`[AgentCoordinator] notify_bug on failed pipeline error:`, err)
       }

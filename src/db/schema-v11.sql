@@ -45,7 +45,7 @@ VALUES
    '对每个涉及的 project 创建 GitLab Merge Request，description 引用主 Issue',
    'action', '[]'::jsonb, false, true),
   ('notify_bug', '修复完成通知',
-   'Pipeline 终态通知：成功/失败 DM 给 project 负责人和触发人',
+   'Pipeline 终态通知：L4 创建 / AI Review 需关注时 DM 给各涉及 project 负责人（owner）。本版不发触发人 DM（触发人通过 Bug 修复实例页面查看进度）',
    'action', '[]'::jsonb, false, true)
 ON CONFLICT (key) DO NOTHING;
 

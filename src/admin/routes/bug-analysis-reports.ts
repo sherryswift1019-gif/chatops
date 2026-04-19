@@ -13,7 +13,6 @@ import { handleAnalysisComplete } from '../../agent/coordinator.js'
 const VALID_STATUSES: ReportStatus[] = [
   'draft',
   'published',
-  'superseded',
   'pipeline_success',
   'completed',
   'aborted',
