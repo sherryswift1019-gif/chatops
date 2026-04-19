@@ -626,6 +626,13 @@ describe('notify_bug handler', () => {
       expect(
         notifyEvents.every(e => (e.data as { messageKind?: string }).messageKind === 'handover'),
       ).toBe(true)
+      // handover 场景无 create_mr，mrIids 应为空数组（验证 buildOwnerMap 不误带入）
+      expect(
+        notifyEvents.every(e => {
+          const iids = (e.data as { mrIids?: unknown }).mrIids
+          return Array.isArray(iids) && iids.length === 0
+        }),
+      ).toBe(true)
     })
 
     it('handover 优先级高于其他场景：即使有 fix_attempt failed 也走 handover 路径', async () => {
@@ -677,8 +684,8 @@ describe('notify_bug handler', () => {
     it.each([
       ['fix_exhausted', 'AI 修复多次未通过'],
       ['l4_manual', '架构级改动'],
-      ['user_requested', '用户'],
-      ['low_confidence', '置信度'],
+      ['user_requested', '主动请求转人工'],
+      ['low_confidence', '置信度过低'],
     ])('reason=%s → 文案含对应中文描述', async (reason, expectedSubstring) => {
       const productLineId = await seedProductLine()
       await seedProject(productLineId, {
