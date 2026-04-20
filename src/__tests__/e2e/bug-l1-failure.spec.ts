@@ -1,15 +1,24 @@
 /**
- * Task 18 Phase 3A — 场景 1：L1 修复失败 → pipeline aborted
+ * Task 18 Phase 3A — 场景 1：L1 修复失败 → 触发 handover（MVP 后更新：pending_manual）
+ *
+ * ⚠️ 2026-04-20 update（handover MVP T5 之后）：
+ *   T5 commit（6c8b25a / a78230a）修改了 coordinator.onComplete(failed) 路径：
+ *   fix_attempt 失败时不再直接置 aborted，而是走 checkAndTriggerHandover(fix_exhausted)
+ *   → report.status = 'pending_manual'。原 spec 断言 status='aborted' 已不成立。
+ *   本次 spec 对齐 T5：断言 status='pending_manual'，UI Tag=pending_manual，
+ *   DB 事件流多一条 handover 事件。
  *
  * 流程：
  *   1. 触发 analyze_bug → level=l1
  *   2. L1 pipeline 第一个 stage fix_bug_l1 fix 失败（runFixForProject 返回 testPassed=false）
- *   3. fix_bug_l1 stage retryCount=0 + onFailure=stop → pipeline 直接 aborted
- *   4. coordinator.onComplete(failed) → 补发 notify_bug capability（补发仍进入 decideScenario，
- *      但失败场景 shouldNotifyOwners=false 不发 DM；这是当前代码真实行为）
- *   5. UI 打开 BugRunsPage：report 状态徽标 "aborted"，EventTimeline 含 "❌ ... 修复" 文案
- *   6. DB 断言：events 含 analysis / scope_identified / create_issue / fix_attempt(failed)
- *      且 不含 create_mr / ai_review
+ *   3. fix_bug_l1 stage retryCount=0 + onFailure=stop → pipeline failed
+ *   4. coordinator.onComplete(failed) 检测 fix_attempt(failed) 存在 → 触发 handover(fix_exhausted)
+ *      → request_handover 写 handover 事件 + status=pending_manual + GitLab label needs-manual
+ *      → notify_bug(kind='handover') 给各 project owner 发 DM
+ *   5. UI 打开 BugRunsPage：report 状态徽标 "pending_manual"（warning 橙色），
+ *      EventTimeline 含 "❌ ... 修复" 文案和 handover 事件
+ *   6. DB 断言：events 含 analysis / scope_identified / create_issue / fix_attempt(failed) /
+ *      handover(success) / notify；不含 create_mr / ai_review
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { Pool } from 'pg'
@@ -35,12 +44,12 @@ async function dbQuery<T = Record<string, unknown>>(sql: string, params: unknown
   }
 }
 
-test.describe('L1 修复失败 → aborted', () => {
+test.describe('L1 修复失败 → handover (pending_manual)', () => {
   test.beforeEach(async ({ request }) => {
     await resetPerTest(request, GITLAB_MOCK)
   })
 
-  test('analyze → L1 pipeline fix 失败 → aborted + UI 显示 error 标签', async ({ request, page }) => {
+  test('analyze → L1 pipeline fix 失败 → handover(pending_manual) + UI 显示 warning 标签', async ({ request, page }) => {
     await loginAsAdmin(request)
 
     const plRows = await dbQuery<{ id: number }>(
@@ -103,19 +112,20 @@ test.describe('L1 修复失败 → aborted', () => {
     expect(reportId).toBeGreaterThan(0)
     expect(pipelineRunId).toBeGreaterThan(0)
 
-    // ── 3. DB 断言：状态 aborted，events 含 fix_attempt=failed，不含 create_mr ──
+    // ── 3. DB 断言：状态 pending_manual（T5 后），events 含 fix_attempt=failed + handover，
+    //        不含 create_mr（Pipeline 失败中断）──
     const reportRows = await dbQuery<{ status: string; pipeline_run_id: number }>(
       `SELECT status, pipeline_run_id FROM bug_analysis_reports WHERE id = $1`,
       [reportId],
     )
-    expect(reportRows[0].status).toBe('aborted')
+    expect(reportRows[0].status).toBe('pending_manual')
 
     const events = await dbQuery<{ code: string; status: string; project_path: string | null }>(
       `SELECT code, status, project_path FROM bug_fix_events WHERE report_id = $1 ORDER BY id`,
       [reportId],
     )
     const codes = events.map(e => e.code)
-    for (const expected of ['analysis', 'scope_identified', 'create_issue', 'fix_attempt']) {
+    for (const expected of ['analysis', 'scope_identified', 'create_issue', 'fix_attempt', 'handover']) {
       expect(codes, `events 缺少 ${expected}`).toContain(expected)
     }
     // 失败后应无 MR / review（pipeline onFailure=stop）
@@ -127,7 +137,7 @@ test.describe('L1 修复失败 → aborted', () => {
     expect(fixAttempt?.status).toBe('failed')
     expect(fixAttempt?.project_path).toBe('PAM/pas-api')
 
-    // ── 4. UI：BugRunsPage 状态徽标 "aborted" + 失败事件 ────────────────────
+    // ── 4. UI：BugRunsPage 状态徽标 "pending_manual" + 失败事件 ────────────────────
     const loginResp = await page.request.post('/admin/auth/login', {
       data: { username: 'admin', password: 'admin' },
     })
@@ -144,8 +154,8 @@ test.describe('L1 修复失败 → aborted', () => {
     const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
     await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
 
-    // 状态标签 "aborted"（RoundHeader 里的 Tag）
-    await expect(page.locator('.ant-tag').filter({ hasText: /^aborted$/ }).first()).toBeVisible({
+    // 状态标签 "pending_manual"（T5 后 fix 失败进入 handover 路径）
+    await expect(page.locator('.ant-tag').filter({ hasText: /^pending_manual$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
 

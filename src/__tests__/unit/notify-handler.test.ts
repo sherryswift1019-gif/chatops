@@ -550,4 +550,176 @@ describe('notify_bug handler', () => {
     expect(result.error).toBe('no_recipients')
     expect(mockAdapter.sendDirectMessage).not.toHaveBeenCalled()
   })
+
+  describe('handover 场景（V2 MVP）', () => {
+    it('handover 事件存在 → 发 DM 给各涉及 project 的 owner，文案含 fix 分支 + 原因', async () => {
+      const productLineId = await seedProductLine()
+      await seedProject(productLineId, {
+        name: 'pas-api',
+        gitlabPath: 'PAM/pas-api',
+        ownerId: 'u-api-owner',
+        ownerName: 'API Owner',
+      })
+      await seedProject(productLineId, {
+        name: 'pas-web',
+        gitlabPath: 'PAM/pas-web',
+        ownerId: 'u-web-owner',
+        ownerName: 'Web Owner',
+      })
+      const report = await seedReport({
+        productLineId,
+        primaryProjectPath: 'PAM/pas-api',
+        level: 'l2',
+        classification: 'bug',
+      })
+      await createEvent({
+        reportId: report.id,
+        projectPath: 'PAM/pas-api',
+        code: 'scope_identified',
+        data: { isPrimary: true },
+      })
+      await createEvent({
+        reportId: report.id,
+        projectPath: 'PAM/pas-web',
+        code: 'scope_identified',
+        data: { isPrimary: false },
+      })
+      // 关键：写一条 handover success 事件
+      await createEvent({
+        reportId: report.id,
+        projectPath: null,
+        code: 'handover',
+        status: 'success',
+        data: {
+          reason: 'fix_exhausted',
+          projectPaths: ['PAM/pas-api', 'PAM/pas-web'],
+          fixBranch: 'fix/issue-888',
+          failedAt: 'fix_bug_l2',
+          attemptCount: 3,
+          comment: null,
+          nextAction: 'await_owner',
+        },
+      })
+
+      const result = await handleNotify({
+        capabilityKey: 'notify_bug',
+        context: baseCtx,
+        extraParams: { reportId: report.id },
+      })
+
+      expect(result.success).toBe(true)
+      expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(2)
+      const recipients = mockAdapter.sendDirectMessage.mock.calls.map(c => c[0] as string)
+      expect(new Set(recipients)).toEqual(new Set(['u-api-owner', 'u-web-owner']))
+
+      // 文案包含 handover 关键词
+      const msg = mockAdapter.sendDirectMessage.mock.calls[0][1] as { text: string }
+      expect(msg.text).toContain('接手')
+      expect(msg.text).toContain('fix/issue-888')
+      expect(msg.text).toContain('AI 修复多次未通过')  // reasonToCn(fix_exhausted)
+      expect(msg.text).toContain('needs-manual')
+
+      // notify 事件写入，messageKind='handover'
+      const notifyEvents = await findByReportCode(report.id, 'notify')
+      expect(notifyEvents.length).toBe(2)
+      expect(notifyEvents.every(e => e.status === 'success')).toBe(true)
+      expect(
+        notifyEvents.every(e => (e.data as { messageKind?: string }).messageKind === 'handover'),
+      ).toBe(true)
+      // handover 场景无 create_mr，mrIids 应为空数组（验证 buildOwnerMap 不误带入）
+      expect(
+        notifyEvents.every(e => {
+          const iids = (e.data as { mrIids?: unknown }).mrIids
+          return Array.isArray(iids) && iids.length === 0
+        }),
+      ).toBe(true)
+    })
+
+    it('handover 优先级高于其他场景：即使有 fix_attempt failed 也走 handover 路径', async () => {
+      const productLineId = await seedProductLine()
+      await seedProject(productLineId, {
+        name: 'pas-api',
+        gitlabPath: 'PAM/pas-api',
+        ownerId: 'u-api',
+        ownerName: 'API',
+      })
+      const report = await seedReport({
+        productLineId,
+        primaryProjectPath: 'PAM/pas-api',
+      })
+      await createEvent({
+        reportId: report.id,
+        projectPath: 'PAM/pas-api',
+        code: 'scope_identified',
+        data: { isPrimary: true },
+      })
+      await createEvent({
+        reportId: report.id,
+        projectPath: 'PAM/pas-api',
+        code: 'fix_attempt',
+        status: 'failed',
+        data: { branch: 'fix/issue-888', error: '测试挂了' },
+      })
+      await createEvent({
+        reportId: report.id,
+        projectPath: null,
+        code: 'handover',
+        status: 'success',
+        data: { reason: 'fix_exhausted', projectPaths: ['PAM/pas-api'], fixBranch: 'fix/issue-888' },
+      })
+
+      const result = await handleNotify({
+        capabilityKey: 'notify_bug',
+        context: baseCtx,
+        extraParams: { reportId: report.id },
+      })
+
+      expect(result.success).toBe(true)
+      // 发了 DM（fix_failed 本应不发，但 handover 优先生效）
+      expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
+      const notifyEvents = await findByReportCode(report.id, 'notify')
+      expect((notifyEvents[0].data as { messageKind?: string }).messageKind).toBe('handover')
+    })
+
+    it.each([
+      ['fix_exhausted', 'AI 修复多次未通过'],
+      ['l4_manual', '架构级改动'],
+      ['user_requested', '主动请求转人工'],
+      ['low_confidence', '置信度过低'],
+    ])('reason=%s → 文案含对应中文描述', async (reason, expectedSubstring) => {
+      const productLineId = await seedProductLine()
+      await seedProject(productLineId, {
+        name: 'pas-api',
+        gitlabPath: 'PAM/pas-api',
+        ownerId: 'u-api',
+        ownerName: 'API',
+      })
+      const report = await seedReport({
+        productLineId,
+        primaryProjectPath: 'PAM/pas-api',
+      })
+      await createEvent({
+        reportId: report.id,
+        projectPath: 'PAM/pas-api',
+        code: 'scope_identified',
+        data: { isPrimary: true },
+      })
+      await createEvent({
+        reportId: report.id,
+        projectPath: null,
+        code: 'handover',
+        status: 'success',
+        data: { reason, projectPaths: ['PAM/pas-api'], fixBranch: 'fix/issue-888' },
+      })
+
+      await handleNotify({
+        capabilityKey: 'notify_bug',
+        context: baseCtx,
+        extraParams: { reportId: report.id },
+      })
+
+      const msg = mockAdapter.sendDirectMessage.mock.calls[0][1] as { text: string }
+      expect(msg.text).toContain(expectedSubstring)
+    })
+  })
 })

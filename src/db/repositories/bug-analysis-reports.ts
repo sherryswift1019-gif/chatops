@@ -7,6 +7,7 @@ export type ReportStatus =
   | 'draft'
   | 'published'
   | 'pipeline_success'
+  | 'pending_manual'
   | 'completed'
   | 'aborted'
 

@@ -56,12 +56,13 @@ vi.mock('../../agent/worktree/manager.js', async () => {
   }
 })
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { resetTestDb, getTestPool } from '../helpers/db.js'
 import {
   parseAnalysisOutput,
   buildMarkdownReport,
   handleAnalyzeBug,
+  registerAnalysisBugHandler,
 } from '../../agent/analysis/analyzer.js'
 import {
   findByReport,
@@ -667,5 +668,517 @@ describe('extractJson', () => {
 
   it('handles array response', () => {
     expect(JSON.parse(extractJson('```\n[1,2,3]\n```'))).toEqual([1, 2, 3])
+  })
+})
+
+// ============================================================
+// 补充分支覆盖
+// ============================================================
+
+describe('parseAnalysisOutput 边界分支', () => {
+  it('unclosed JSON（只有 { 没有 }）返回 null（end=-1 分支）', () => {
+    // `{` 被找到但闭合找不到 → end 还是 -1 → return null
+    const input = '{ "classification": "bug" '
+    expect(parseAnalysisOutput(input)).toBeNull()
+  })
+
+  it('缺 required 字段时返回 null', () => {
+    // 有 classification 但缺 level
+    const text = '{ "classification": "bug", "confidence": "high", "root_cause": {}, "solutions": [] }'
+    expect(parseAnalysisOutput(text)).toBeNull()
+  })
+
+  it('root_cause.summary 为空时返回 null', () => {
+    const text = JSON.stringify({
+      classification: 'bug',
+      level: 'l1',
+      confidence: 'high',
+      root_cause: { summary: '' },
+      solutions: [{}],
+    })
+    expect(parseAnalysisOutput(text)).toBeNull()
+  })
+
+  it('solutions 非数组时返回 null', () => {
+    const text = JSON.stringify({
+      classification: 'bug',
+      level: 'l1',
+      confidence: 'high',
+      root_cause: { summary: 'x', file: 'a', line_range: [1, 2] },
+      solutions: 'not-array',
+    })
+    expect(parseAnalysisOutput(text)).toBeNull()
+  })
+})
+
+describe('buildMarkdownReport 边界分支', () => {
+  const base = {
+    classification: 'bug' as const,
+    level: 'l2' as const,
+    confidence: 'medium' as const,
+    confidence_score: 0.5,
+    root_cause: { type: 'biz', summary: 's', file: 'f', line_range: [1, 2] },
+    solutions: [{ id: 'a', summary: 's', recommended: false, risk: 'low' as const, effort: 'small' as const }],
+    affected_modules: [],
+    analysis_steps: [],
+  }
+
+  it('affected_modules 为空时显示 `-`', () => {
+    const md = buildMarkdownReport(base)
+    expect(md).toContain('### 影响模块\n\n-')
+  })
+
+  it('confidence_score 缺失时回退为 0 (0%)', () => {
+    const md = buildMarkdownReport({ ...base, confidence_score: undefined as unknown as number })
+    expect(md).toContain('(0%)')
+  })
+
+  it('非 recommended 方案不显示"推荐"标签', () => {
+    const md = buildMarkdownReport(base)
+    expect(md).not.toContain('（推荐）')
+  })
+
+  it('未知 level 时直接显示原值（LEVEL_LABEL fallback）', () => {
+    const md = buildMarkdownReport({ ...base, level: 'l99' as unknown as 'l1' })
+    expect(md).toContain('**等级**: l99')
+  })
+
+  it('analysis_steps 缺失时渲染空串', () => {
+    const md = buildMarkdownReport({ ...base, analysis_steps: undefined as unknown as string[] })
+    expect(md).toContain('### 分析步骤\n\n\n')
+  })
+})
+
+describe('registerAnalysisBugHandler', () => {
+  it('调用不抛错，注册 analyze_bug handler', () => {
+    expect(() => registerAnalysisBugHandler()).not.toThrow()
+  })
+})
+
+describe('handleAnalyzeBug 入口校验分支', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+  })
+
+  it('缺 productLineId → success=false', async () => {
+    const res = await handleAnalyzeBug({
+      capabilityKey: 'analyze_bug',
+      context: { taskId: 't', groupId: 'g', platform: 'dingtalk', initiatorId: 'u', initiatorRole: 'developer' } as any,
+      extraParams: { message: 'x' },
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('productLineId')
+  })
+
+  it('缺 message → success=false', async () => {
+    const res = await handleAnalyzeBug({
+      capabilityKey: 'analyze_bug',
+      context: { taskId: 't', groupId: 'g', platform: 'dingtalk', initiatorId: 'u', initiatorRole: 'developer' } as any,
+      extraParams: { productLineId: 7 },
+    })
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('message')
+  })
+
+  it('产品线无 knowledge_repo → success=false', async () => {
+    // seed productLine 但不 seed product_knowledge_repos
+    const pool = getTestPool()
+    const { rows } = await pool.query(
+      `INSERT INTO product_lines (name, display_name, description) VALUES ('empty', 'E', 'e') RETURNING id`,
+    )
+    const pid = rows[0].id as number
+    await pool.query(
+      `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
+       VALUES ('analyze_bug', 'a', '', 'action', '[]'::jsonb, false, true, 'sp')
+       ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
+    )
+    const res = await handleAnalyzeBug(buildOpts(pid))
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('未配置代码仓库')
+  })
+
+  it('capability 无 systemPrompt → success=false', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    // 清空 systemPrompt
+    const pool = getTestPool()
+    await pool.query(`UPDATE capabilities SET system_prompt = '' WHERE key = 'analyze_bug'`)
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('未配置 systemPrompt')
+  })
+
+  it('productLine 下 0 个 project → 返回 "未配置任何 project"', async () => {
+    // 准备数据：有 product_line + knowledgeRepo + capability，但 projects 表无记录
+    const productLineId = await seedBaseData({ projects: [] })
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('未配置任何 project')
+  })
+})
+
+describe('handleAnalyzeBug 错误分类 classifyError', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+    vi.mocked(gitlabPostIssueNote).mockReset()
+  })
+
+  async function setupBug() {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    return productLineId
+  }
+
+  it('包含 timeout → claude_timeout', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('claude cli timeout after 600s'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(false)
+    expect(res.error).toBe('claude_timeout')
+  })
+
+  it('包含中文"超时"→ claude_timeout', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('连接超时'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('claude_timeout')
+  })
+
+  it('包含 "timed out" → claude_timeout', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('operation timed out'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('claude_timeout')
+  })
+
+  it('SyntaxError 或 "unexpected token" → claude_invalid_json', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new SyntaxError('Unexpected token } in JSON'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('claude_invalid_json')
+  })
+
+  it('"未返回 json" → claude_invalid_json', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('Claude 未返回 json 响应'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('claude_invalid_json')
+  })
+
+  it('"未解析到 json" → claude_invalid_json', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('未解析到 json'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('claude_invalid_json')
+  })
+
+  it('"字段缺失" → claude_invalid_json', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('字段缺失: classification'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('claude_invalid_json')
+  })
+
+  it('"json.parse" 关键字 → claude_invalid_json', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('json.parse failed: abc'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('claude_invalid_json')
+  })
+
+  it('Issue 创建失败（GitLab 错误）→ issue_create_failed', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockResolvedValue({
+      classification: 'bug',
+      level: 'l2',
+      confidence: 'high',
+      confidenceScore: 0.9,
+      rootCause: { type: 'x', summary: 'x', file: 'a', lineRange: [1, 2] },
+      solutions: [{ id: 'a', summary: 's', recommended: true, risk: 'low', effort: 'small' }],
+      affectedModules: [],
+      analysisSteps: [],
+      markdown: '## x',
+    })
+    vi.mocked(gitlabCreateIssue).mockRejectedValue(new Error('create issue on gitlab 403'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('issue_create_failed')
+  })
+
+  it('无 "issue" 关键字的 GitLab 错误归入兜底 analyzer_error', async () => {
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('random DB crash'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('analyzer_error')
+  })
+
+  it('"no projects" 关键字 → no_projects（通过 inner Error 构造测试）', async () => {
+    // 由于 "no projects" 的正规路径是前置校验（走 analyzer_error 兜底），
+    // 这里通过让 runDetailStage 抛 no projects 文案来触发 classifyError 的该分支
+    const productLineId = await setupBug()
+    vi.mocked(runDetailStage).mockRejectedValue(new Error('no projects available'))
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.error).toBe('no_projects')
+  })
+
+  it('非 Error 对象（字符串）也被 classifyError 处理', async () => {
+    const productLineId = await setupBug()
+    // eslint-disable-next-line no-throw-literal
+    vi.mocked(runDetailStage).mockImplementation(async () => {
+      throw 'plain string error'
+    })
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(false)
+    expect(res.error).toBe('analyzer_error')
+    expect(res.output).toContain('plain string error')
+  })
+})
+
+describe('handleAnalyzeBug 阶段 A worktree / filter 失败', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+  })
+
+  it('阶段 A acquire 抛错 → "阶段A 主仓库 clone 失败"', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    // 让 acquire 抛错（第一次调用）
+    const wtm = await import('../../agent/worktree/manager.js')
+    vi.mocked(wtm.acquire).mockRejectedValueOnce(new Error('git clone 403'))
+
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('阶段A 主仓库 clone 失败')
+  })
+
+  it('阶段 A filter 抛错 → "阶段A 筛选失败"（release 仍被调用）', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    const wtm = await import('../../agent/worktree/manager.js')
+    vi.mocked(runFilterStage).mockRejectedValue(new Error('filter boom'))
+
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(false)
+    expect(res.error).toContain('阶段A 筛选失败')
+    // finally 块保证 release 被调一次
+    expect(vi.mocked(wtm.release)).toHaveBeenCalled()
+  })
+})
+
+describe('handleAnalyzeBug ANALYSIS_CONCURRENCY 环境变量', () => {
+  const original = process.env.ANALYSIS_CONCURRENCY
+
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+  })
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.ANALYSIS_CONCURRENCY
+    else process.env.ANALYSIS_CONCURRENCY = original
+  })
+
+  it('ANALYSIS_CONCURRENCY=0 时回退默认 3', async () => {
+    process.env.ANALYSIS_CONCURRENCY = '0'
+    const productLineId = await seedBaseData({
+      projects: [
+        { name: 'a', gitlabPath: 'PAM/a' },
+        { name: 'b', gitlabPath: 'PAM/b' },
+      ],
+    })
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [
+        { projectPath: 'PAM/a', isPrimary: true, sourceBranch: 'master' },
+        { projectPath: 'PAM/b', isPrimary: false, sourceBranch: 'master' },
+      ],
+      primaryProjectPath: 'PAM/a',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue({
+      classification: 'bug',
+      level: 'l2',
+      confidence: 'medium',
+      confidenceScore: 0.7,
+      rootCause: { type: 'x', summary: 'x', file: 'a.ts', lineRange: [1, 2] },
+      solutions: [{ id: 'a', summary: 'fix', recommended: true, risk: 'low', effort: 'small' }],
+      affectedModules: [],
+      analysisSteps: [],
+      markdown: '## x',
+    })
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 1, url: 'http://x' })
+
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(true)
+    expect(vi.mocked(runDetailStage)).toHaveBeenCalledTimes(2)
+  })
+
+  it('ANALYSIS_CONCURRENCY=NaN 时回退默认 3', async () => {
+    process.env.ANALYSIS_CONCURRENCY = 'abc'
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'a', gitlabPath: 'PAM/a' }],
+    })
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/a', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/a',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue({
+      classification: 'bug',
+      level: 'l2',
+      confidence: 'medium',
+      confidenceScore: 0.7,
+      rootCause: { type: 'x', summary: 'x', file: 'a.ts', lineRange: [1, 2] },
+      solutions: [{ id: 'a', summary: 'fix', recommended: true, risk: 'low', effort: 'small' }],
+      affectedModules: [],
+      analysisSteps: [],
+      markdown: '## x',
+    })
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 1, url: 'http://x' })
+
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(true)
+  })
+})
+
+describe('handleAnalyzeBug affectedModulesByProject 边界', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+  })
+
+  it('某 project 在 affectedModulesByProject 里无对应项时 fallback 为 []', async () => {
+    const productLineId = await seedBaseData({
+      projects: [
+        { name: 'a', gitlabPath: 'PAM/a' },
+        { name: 'b', gitlabPath: 'PAM/b' },
+      ],
+    })
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [
+        { projectPath: 'PAM/a', isPrimary: true, sourceBranch: 'master' },
+        { projectPath: 'PAM/b', isPrimary: false, sourceBranch: 'master' },
+      ],
+      primaryProjectPath: 'PAM/a',
+    })
+    // PAM/a 有 affected_modules=['m1']，PAM/b 的 affected_modules=[]（空数组）
+    vi.mocked(runDetailStage).mockImplementation(async (input) => ({
+      classification: 'bug',
+      level: 'l2',
+      confidence: 'medium',
+      confidenceScore: 0.7,
+      rootCause: { type: 'x', summary: 'x', file: 'a.ts', lineRange: [1, 2] },
+      solutions: [{ id: 'a', summary: 'fix', recommended: true, risk: 'low', effort: 'small' }],
+      affectedModules: input.projectPath === 'PAM/a' ? ['m1'] : [],
+      analysisSteps: [],
+      markdown: '## x',
+    }))
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 2, url: 'http://x' })
+
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(true)
+    const reportId = (res.data as { reportId: number }).reportId
+    const events = await findByReportCode(reportId, 'scope_identified')
+    const pb = events.find(e => e.projectPath === 'PAM/b')!
+    // 空数组时事件的 affectedModules 是 []（而非 undefined）
+    expect((pb.data as any).affectedModules).toEqual([])
+  })
+})
+
+// L4 分类：analyzer 自己不会触发 Pipeline（交由 coordinator），但 analyzer 里把 L4 正常写入
+// status=published（走 bug 分支）。确认 L4 报告 published，而非被 analyzer 吞掉。
+describe('handleAnalyzeBug L4 分类', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+  })
+
+  it('L4 bug：report.status=published，level=l4 写入', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue({
+      classification: 'bug',
+      level: 'l4',
+      confidence: 'low',
+      confidenceScore: 0.3,
+      rootCause: { type: 'arch', summary: '架构问题', file: 'x', lineRange: [1, 1] },
+      solutions: [],
+      affectedModules: [],
+      analysisSteps: [],
+      markdown: '## L4',
+    })
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 4, url: 'http://x/4' })
+
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(true)
+    expect((res.data as { level: string }).level).toBe('l4')
+
+    const reportId = (res.data as { reportId: number }).reportId
+    const report = await getBugAnalysisReportById(reportId)
+    expect(report?.level).toBe('l4')
+    expect(report?.status).toBe('published')
+  })
+})
+
+describe('handleAnalyzeBug config_issue 分类', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    vi.mocked(runFilterStage).mockReset()
+    vi.mocked(runDetailStage).mockReset()
+    vi.mocked(gitlabCreateIssue).mockReset()
+  })
+
+  it('config_issue：status=completed，不创建 issue，不写 scope_identified', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue({
+      classification: 'config_issue',
+      level: 'l1',
+      confidence: 'high',
+      confidenceScore: 0.95,
+      rootCause: { type: 'config', summary: '配置问题', file: '-', lineRange: [] },
+      solutions: [],
+      affectedModules: [],
+      analysisSteps: [],
+      markdown: '## config',
+    })
+
+    const res = await handleAnalyzeBug(buildOpts(productLineId))
+    expect(res.success).toBe(true)
+    expect((res.data as any).classification).toBe('config_issue')
+    const reportId = (res.data as any).reportId as number
+    const report = await getBugAnalysisReportById(reportId)
+    expect(report?.status).toBe('completed')
+
+    expect(gitlabCreateIssue).not.toHaveBeenCalled()
+    const scopes = await findByReportCode(reportId, 'scope_identified')
+    expect(scopes).toHaveLength(0)
   })
 })

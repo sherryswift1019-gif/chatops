@@ -217,4 +217,38 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
       data: { reportId, classification, level, pipelineRunId },
     })
   })
+
+  /**
+   * 直接触发一个 capability（绕过 Pipeline stage 封装），供 e2e 测试验证 capability
+   * handler 自身行为（例如 fix-runner 的跨调用幂等：对已有 success fix_attempt 的
+   * project 跳过不重跑）。
+   *
+   * capability stage 执行器当前不做 retry（executor.ts:287-319），因此 Pipeline 内的
+   * fix_bug_l2 stage 失败即停；fix-runner 内部"幂等跳过"逻辑需要外部多次调用 handler
+   * 才能触发——本路由即为此触发源，仅在 E2E_MODE=1 下暴露。
+   *
+   * Body: { capabilityKey, extraParams: Record<string, unknown> }
+   * 返回：{ ok: true, result: TriggerResult }
+   */
+  app.post<{
+    Body: { capabilityKey: string; extraParams?: Record<string, unknown> }
+  }>('/_e2e/trigger-capability', async (req, reply) => {
+    const { capabilityKey, extraParams } = req.body ?? ({} as any)
+    if (!capabilityKey) {
+      return reply.status(400).send({ error: 'capabilityKey required' })
+    }
+    const { triggerCapability } = await import('../../agent/coordinator.js')
+    const result = await triggerCapability({
+      capabilityKey,
+      context: {
+        taskId: `e2e-trig-${Date.now()}`,
+        groupId: 'e2e',
+        platform: 'e2e',
+        initiatorId: 'u-trigger',
+        initiatorRole: 'developer',
+      },
+      extraParams,
+    })
+    return reply.send({ ok: true, result })
+  })
 }

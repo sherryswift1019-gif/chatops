@@ -5,6 +5,7 @@ export type BugReportStatusFilter =
   | 'draft'
   | 'published'
   | 'pipeline_success'
+  | 'pending_manual'
   | 'completed'
   | 'aborted'
 export type BugReportLevelFilter = 'l1' | 'l2' | 'l3' | 'l4'
@@ -72,6 +73,34 @@ export async function retryBugReport(id: number): Promise<RetryBugReportResult> 
   }>(`/bug-reports/${id}/retry`)
   if (!data.success || !data.data) {
     throw new Error(data.message ?? data.error ?? 'retry failed')
+  }
+  return data.data
+}
+
+export interface HandoverBugReportResult {
+  reportId: number
+  status: string
+}
+
+/**
+ * 用户主动把 Bug 转人工接手（V2 MVP）。
+ * 状态要求：draft / published / pipeline_success；其他 status 后端返回 409。
+ * @param id report id
+ * @param comment 可选，用户说明转人工原因
+ */
+export async function handoverBugReport(
+  id: number,
+  comment?: string,
+): Promise<HandoverBugReportResult> {
+  const body = comment && comment.trim().length > 0 ? { comment: comment.trim() } : {}
+  const { data } = await client.post<{
+    success: boolean
+    error?: string
+    message?: string
+    data?: HandoverBugReportResult
+  }>(`/bug-reports/${id}/handover`, body)
+  if (!data.success || !data.data) {
+    throw new Error(data.message ?? data.error ?? 'handover failed')
   }
   return data.data
 }

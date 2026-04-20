@@ -1,24 +1,21 @@
 /**
- * Task 18 后续修订 — L4 通知澄清：
- *   L4 = Claude 分析后判定无法自动修复，仅建 Issue 并通知涉及 project owner 人工接手
+ * handover-mvp T4 修订 — L4 不再走 L4-复杂问题 Pipeline，改由 coordinator 直接
+ * checkAndTriggerHandover(reason='l4_manual')，同一事件模型下覆盖 L4 → handover 路径。
  *
- * 和 bug-l2-multi-project.spec.ts（原名 bug-l4-multi-project）的区别：
- *   - 那个实际是 L2（多 project 走完整 fix→MR→review→notify 链路）
- *   - 本 spec 才是真正的 L4：单 project / 单 Pipeline stage(notify_bug) / 发 owner DM / UI 能看到 L4 tag
- *
- * 流程：
+ * 新路径流程（commit 445409e）：
  *   1. filter 返回 1 个 project（PAM/pas-api, primary）
  *   2. detail 返回 classification='bug', level='l4'
- *   3. handleAnalysisComplete 触发 L4 pipeline（base.sql 里只有 notify_bug 一个 stage）
- *   4. notify_bug handler:
- *      - scenario 判定为 l4_created（classification='bug' + level='l4' + 无 MR）
- *      - shouldNotifyOwners('l4_created')=true → 给 u-primary（PAM/pas-api owner）发 DM
- *      - 写 bug_fix_events(code='notify', status='success', data.userId='u-primary')
- *   5. 断言：
- *      - DB: report.status='pipeline_success' + level='l4'
- *      - DB: 事件流含 analysis / scope_identified / create_issue / notify；不含 fix_attempt / create_mr / ai_review
- *      - MockIMAdapter: /admin/_e2e/messages?kind=direct&to=u-primary 含 "L4" / "无法自动修复" 文案
- *      - UI: BugRunsPage 显示 L4 tag + pipeline_success + Timeline 有"通知"事件
+ *   3. handleAnalysisComplete 见 level='l4' → 直接 checkAndTriggerHandover('l4_manual')
+ *      - request_handover：打 needs-manual label + 写 handover 事件 + status='pending_manual'
+ *      - notify_bug：decideScenario 见 handover 事件 → kind='handover' → DM owner
+ *   4. 断言：
+ *      - DB: report.status='pending_manual' + level='l4'（不再是 pipeline_success）
+ *      - DB: 事件流含 analysis / scope_identified / create_issue / handover / notify
+ *             handover.data.reason='l4_manual'、fixBranch='fix/issue-N'
+ *             notify.data.messageKind='handover'
+ *             不含 fix_attempt / create_mr / ai_review
+ *      - MockIMAdapter DM 含「架构级」「AI 放弃自动修复」「needs-manual」「fix/issue-」关键词
+ *      - UI: BugRunsPage 显示 L4 tag + pending_manual tag
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { Pool } from 'pg'
@@ -63,12 +60,12 @@ async function fetchMessages(
   return (await r.json()) as RecordedMessage[]
 }
 
-test.describe('L4 架构级 Bug 单 project 通知 owner 人工接手', () => {
+test.describe('L4 架构级 Bug → handover 路径（不再走 L4 Pipeline）', () => {
   test.beforeEach(async ({ request }) => {
     await resetPerTest(request, GITLAB_MOCK)
   })
 
-  test('L4 → 仅建 Issue + notify owner DM + UI 展示 L4 tag', async ({ request, page }) => {
+  test('L4 → checkAndTriggerHandover(l4_manual) → pending_manual + handover 事件 + owner DM', async ({ request, page }) => {
     await loginAsAdmin(request)
 
     const plRows = await dbQuery<{ id: number }>(
@@ -126,15 +123,15 @@ test.describe('L4 架构级 Bug 单 project 通知 owner 人工接手', () => {
     expect(level).toBe('l4')
 
     // ── 3. DB 断言 ──────────────────────────────────────────────────
-    // 3.1 report 终态
+    // 3.1 report 终态：pending_manual（而不是 pipeline_success）
     const reportRows = await dbQuery<{ status: string; level: string }>(
       `SELECT status, level FROM bug_analysis_reports WHERE id = $1`,
       [reportId],
     )
-    expect(reportRows[0].status).toBe('pipeline_success')
+    expect(reportRows[0].status).toBe('pending_manual')
     expect(reportRows[0].level).toBe('l4')
 
-    // 3.2 事件流：应有 analysis / scope_identified / create_issue / notify
+    // 3.2 事件流：应有 analysis / scope_identified / create_issue / handover / notify
     const events = await dbQuery<{ code: string; status: string; data: Record<string, unknown> }>(
       `SELECT code, status, data FROM bug_fix_events WHERE report_id = $1 ORDER BY id`,
       [reportId],
@@ -143,27 +140,40 @@ test.describe('L4 架构级 Bug 单 project 通知 owner 人工接手', () => {
     expect(codes).toContain('analysis')
     expect(codes).toContain('scope_identified')
     expect(codes).toContain('create_issue')
+    expect(codes).toContain('handover')
     expect(codes).toContain('notify')
-    // L4 不应有 fix_attempt / create_mr / ai_review
+    // L4（新路径）不应有 fix_attempt / create_mr / ai_review
     expect(codes).not.toContain('fix_attempt')
     expect(codes).not.toContain('create_mr')
     expect(codes).not.toContain('ai_review')
 
-    // 3.3 notify 事件详情
+    // 3.3 handover 事件详情
+    const handoverEvt = events.find(e => e.code === 'handover' && e.status === 'success')
+    expect(handoverEvt, '应有 code=handover status=success 事件').toBeTruthy()
+    expect(handoverEvt!.data.reason).toBe('l4_manual')
+    expect(String(handoverEvt!.data.fixBranch)).toMatch(/^fix\/issue-\d+/)
+    // 新路径对 L4 单 project 场景：labelAdded=true（mock GitLab 兜底返回 ok）
+    expect(handoverEvt!.data.labelAdded).toBe(true)
+
+    // 3.4 notify 事件详情：messageKind=handover（不再是 l4_created）
     const notifyEvents = events.filter(e => e.code === 'notify')
     expect(notifyEvents.length).toBeGreaterThanOrEqual(1)
-    const notifyToPrimary = notifyEvents.find(e => e.data.userId === 'u-primary')
-    expect(notifyToPrimary, '应有一条 notify 事件发给 PAM/pas-api 的 owner u-primary').toBeTruthy()
+    const notifyToPrimary = notifyEvents.find(
+      e => e.data.userId === 'u-primary' && e.data.messageKind === 'handover',
+    )
+    expect(notifyToPrimary, '应有一条 notify 事件 messageKind=handover 发给 u-primary').toBeTruthy()
     expect(notifyToPrimary!.status).toBe('success')
-    expect(notifyToPrimary!.data.messageKind).toBe('l4_created')
 
-    // ── 4. MockIMAdapter 断言：u-primary 收到 L4 文案 DM ──────────────
+    // ── 4. MockIMAdapter 断言：u-primary 收到 handover 文案 DM ────────
     const messages = await fetchMessages(request, { kind: 'direct', to: 'u-primary' })
     expect(messages.length).toBeGreaterThanOrEqual(1)
-    const l4Msg = messages.find(m => (m.text ?? '').includes('L4'))
-    expect(l4Msg, 'u-primary 应收到 L4 文案的 direct message').toBeTruthy()
-    expect(l4Msg!.text).toContain('无法自动修复')
-    expect(l4Msg!.text).toContain('Issue:')
+    // handover DM 的特征文案：needs-manual + fix/issue- + "架构级" + "AI 放弃自动修复"
+    const handoverMsg = messages.find(m => {
+      const t = m.text ?? ''
+      return t.includes('needs-manual') && t.includes('fix/issue-') && t.includes('架构级')
+    })
+    expect(handoverMsg, 'u-primary 应收到 handover 文案 DM').toBeTruthy()
+    expect(handoverMsg!.text).toContain('AI 放弃自动修复')
 
     // ── 5. UI 断言 ───────────────────────────────────────────────────
     const loginResp = await page.request.post('/admin/auth/login', {
@@ -185,12 +195,12 @@ test.describe('L4 架构级 Bug 单 project 通知 owner 人工接手', () => {
     await expect(page.locator('.ant-tag').filter({ hasText: /^L4$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
-    // pipeline_success 状态 tag
+    // pending_manual 状态 tag（不再是 pipeline_success）
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^pipeline_success$/ }).first(),
+      page.locator('.ant-tag').filter({ hasText: /^pending_manual$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
 
-    // Timeline 应该有"通知"事件
+    // Timeline 应该有"通知"事件（handover kind 也走 notify event）
     await expect(page.locator('.ant-timeline').getByText(/通知|notify/).first()).toBeVisible({
       timeout: 10_000,
     })

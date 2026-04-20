@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom'
 import {
   getBugReports,
   retryBugReport,
+  handoverBugReport,
   fetchBugEvents,
   type BugFixEvent,
   type BugReportStatusFilter,
@@ -19,6 +20,7 @@ const statusColors: Record<string, string> = {
   draft: 'default',
   published: 'processing',
   pipeline_success: 'success',
+  pending_manual: 'warning',
   completed: 'success',
   aborted: 'error',
 }
@@ -27,6 +29,7 @@ const STATUS_OPTIONS: { value: BugReportStatusFilter; label: string }[] = [
   { value: 'draft', label: 'draft' },
   { value: 'published', label: 'published' },
   { value: 'pipeline_success', label: 'pipeline_success' },
+  { value: 'pending_manual', label: 'pending_manual' },
   { value: 'completed', label: 'completed' },
   { value: 'aborted', label: 'aborted' },
 ]
@@ -276,7 +279,12 @@ function IssueCard({
     return {
       key: String(r.id),
       label: <RoundHeader report={r} roundNumber={roundNumber} />,
-      extra: <RetryButtonExtra report={r} onRetry={onRetry} />,
+      extra: (
+        <Space size={4}>
+          <HandoverButtonExtra report={r} onAction={onRetry} />
+          <RetryButtonExtra report={r} onRetry={onRetry} />
+        </Space>
+      ),
       children: <RoundBody report={r} />,
     }
   })
@@ -347,6 +355,43 @@ function RetryButtonExtra({
       }}
     >
       重试
+    </Button>
+  )
+}
+
+function HandoverButtonExtra({
+  report,
+  onAction,
+}: {
+  report: BugAnalysisReport
+  onAction: () => void
+}) {
+  // 仅在 draft / published / pipeline_success 状态显示（后端 API 也做同样校验）
+  const allowed = ['draft', 'published', 'pipeline_success']
+  if (!allowed.includes(report.status)) return null
+  return (
+    <Button
+      size="small"
+      onClick={(e) => {
+        e.stopPropagation()
+        Modal.confirm({
+          title: '确认转人工接手？',
+          content: 'AI 将放弃自动处理，Issue 打 needs-manual label 并 DM 负责人。fix 分支保留。',
+          okText: '确认转人工',
+          cancelText: '取消',
+          onOk: async () => {
+            try {
+              const r = await handoverBugReport(report.id)
+              message.success(`已转人工接手（status=${r.status}）`)
+              onAction()
+            } catch (err) {
+              message.error(`转人工失败: ${(err as Error).message}`)
+            }
+          },
+        })
+      }}
+    >
+      转人工
     </Button>
   )
 }

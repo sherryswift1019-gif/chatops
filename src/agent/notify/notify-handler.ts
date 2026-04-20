@@ -22,6 +22,7 @@ export type MessageKind =
   | 'fix_success'
   | 'fix_success_review_concerns'
   | 'fix_failed'
+  | 'handover'
 
 interface ReviewInfo {
   label: 'ai-approved' | 'ai-needs-attention' | null
@@ -36,11 +37,28 @@ interface ProjectMr {
   fixError: string | null
 }
 
+/**
+ * V2 MVP: handover 事件数据结构（与 request-handover-handler.ts data 字段对齐）。
+ * decideScenario 检测到 bug_fix_events(code='handover', status='success') 时装入 Scenario.handoverData。
+ *
+ * 注：handover 事件 data 里还有 projectPaths 字段，但 notify 发 DM 时使用的 project 列表
+ * 来自 gatherProjects（含 scope_identified / fix_attempt / create_mr 全量），更完整；
+ * handoverData 不重复提取 projectPaths，避免歧义。
+ */
+interface HandoverData {
+  reason: string               // fix_exhausted / l4_manual / user_requested / ... (V2 支持更多)
+  fixBranch: string            // fix/issue-<iid>
+  failedAt: string | null
+  attemptCount: number | null
+  comment: string | null
+}
+
 interface Scenario {
   kind: MessageKind
   projects: ProjectMr[]
   approvalDecision: 'rejected' | 'timeout' | 'retry_analysis' | null
   lastFixError: string | null
+  handoverData: HandoverData | null
 }
 
 interface MessageCtx {
@@ -208,6 +226,27 @@ async function decideScenario(
   report: BugAnalysisReport,
   projectMrs: ProjectMr[],
 ): Promise<Scenario> {
+  // handover 事件优先级最高（V2 MVP）
+  const handoverEvents = await findByReportCode(reportId, 'handover')
+  const latestHandover = handoverEvents.find(e => e.status === 'success')
+  if (latestHandover) {
+    const data = (latestHandover.data ?? {}) as Record<string, unknown>
+    const handoverData: HandoverData = {
+      reason: typeof data.reason === 'string' ? data.reason : 'user_requested',
+      fixBranch: typeof data.fixBranch === 'string' ? data.fixBranch : `fix/issue-${report.issueId}`,
+      failedAt: typeof data.failedAt === 'string' ? data.failedAt : null,
+      attemptCount: typeof data.attemptCount === 'number' ? data.attemptCount : null,
+      comment: typeof data.comment === 'string' ? data.comment : null,
+    }
+    return {
+      kind: 'handover',
+      projects: projectMrs,
+      approvalDecision: null,
+      lastFixError: null,
+      handoverData,
+    }
+  }
+
   // approval 事件优先
   const approvals = await findByReportCode(reportId, 'approval')
   const latestApproval = approvals.length > 0 ? approvals[approvals.length - 1] : null
@@ -221,10 +260,10 @@ async function decideScenario(
     : null
 
   if (approvalDecision === 'rejected') {
-    return { kind: 'approval_rejected', projects: projectMrs, approvalDecision: 'rejected', lastFixError: null }
+    return { kind: 'approval_rejected', projects: projectMrs, approvalDecision: 'rejected', lastFixError: null, handoverData: null }
   }
   if (approvalDecision === 'timeout') {
-    return { kind: 'approval_timeout', projects: projectMrs, approvalDecision: 'timeout', lastFixError: null }
+    return { kind: 'approval_timeout', projects: projectMrs, approvalDecision: 'timeout', lastFixError: null, handoverData: null }
   }
   if (approvalDecision === 'retry_analysis') {
     return {
@@ -232,13 +271,14 @@ async function decideScenario(
       projects: projectMrs,
       approvalDecision: 'retry_analysis',
       lastFixError: null,
+      handoverData: null,
     }
   }
 
   // L4 / 非 bug 分类 + 无 MR
   const hasAnyMr = projectMrs.some(p => typeof p.mrIid === 'number')
   if (report.classification === 'bug' && report.level === 'l4' && !hasAnyMr) {
-    return { kind: 'l4_created', projects: projectMrs, approvalDecision: null, lastFixError: null }
+    return { kind: 'l4_created', projects: projectMrs, approvalDecision: null, lastFixError: null, handoverData: null }
   }
 
   // 修复结果判断
@@ -254,6 +294,7 @@ async function decideScenario(
       projects: projectMrs,
       approvalDecision: null,
       lastFixError: lastFailed?.fixError ?? null,
+      handoverData: null,
     }
   }
 
@@ -265,9 +306,10 @@ async function decideScenario(
         projects: projectMrs,
         approvalDecision: null,
         lastFixError: null,
+        handoverData: null,
       }
     }
-    return { kind: 'fix_success', projects: projectMrs, approvalDecision: null, lastFixError: null }
+    return { kind: 'fix_success', projects: projectMrs, approvalDecision: null, lastFixError: null, handoverData: null }
   }
 
   // 兜底：当前状态不典型（例如有 MR 但部分 fix failed），按 success-with-concerns 的形式通报
@@ -278,11 +320,12 @@ async function decideScenario(
       projects: projectMrs,
       approvalDecision: null,
       lastFixError: null,
+      handoverData: null,
     }
   }
 
   // 完全没有有效事件（罕见）→ 以 fix_failed 兜底
-  return { kind: 'fix_failed', projects: projectMrs, approvalDecision: null, lastFixError: null }
+  return { kind: 'fix_failed', projects: projectMrs, approvalDecision: null, lastFixError: null, handoverData: null }
 }
 
 function shouldNotifyOwners(kind: MessageKind): boolean {
@@ -290,6 +333,7 @@ function shouldNotifyOwners(kind: MessageKind): boolean {
     case 'fix_success':
     case 'fix_success_review_concerns':
     case 'l4_created':
+    case 'handover':
       return true
     case 'fix_failed':
     case 'approval_rejected':
@@ -299,6 +343,19 @@ function shouldNotifyOwners(kind: MessageKind): boolean {
     default:
       return false
   }
+}
+
+function reasonToCn(reason: string): string {
+  const map: Record<string, string> = {
+    fix_exhausted: 'AI 修复多次未通过',
+    revise_exhausted: 'AI 修订多次仍未通过',
+    l4_manual: 'Bug 需架构级改动，AI 无法自动修复',
+    low_confidence: 'AI 分析置信度过低',
+    user_requested: '用户在前端主动请求转人工',
+    owner_label: '你在 GitLab 标记了 needs-manual',
+    tag_unrevisable: 'tag 版本 Bug 无法自动处理',
+  }
+  return map[reason] ?? reason
 }
 
 /**
@@ -350,6 +407,37 @@ export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null 
         `Issue: ${report.issueUrl}`,
         '',
         `📋 根因摘要：${summary || '（未提取到摘要，详见 Issue 正文）'}`,
+      ].join('\n')
+    }
+    case 'handover': {
+      const { handoverData } = ctx.scenario
+      const reasonCn = handoverData ? reasonToCn(handoverData.reason) : 'AI 无法继续'
+      const fixBranch = handoverData?.fixBranch ?? `fix/issue-${report.issueId}`
+      const attemptLine = handoverData?.attemptCount
+        ? `AI 已尝试 ${handoverData.attemptCount} 次`
+        : null
+      const ownerProjectsLine = ctx.projectPaths.length > 0
+        ? `你负责的服务：${ctx.projectPaths.join(', ')}`
+        : null
+      const summary = (report.rootCauseSummary ?? '').slice(0, 200)
+      const commentLine = handoverData?.comment
+        ? `用户说明：${handoverData.comment}`
+        : null
+      return [
+        `🛠 Bug 需你接手（AI 放弃自动修复）`,
+        '',
+        `原因：${reasonCn}`,
+        ...(attemptLine ? [attemptLine] : []),
+        ...(ownerProjectsLine ? [ownerProjectsLine] : []),
+        '',
+        `Issue：${report.issueUrl}`,
+        `fix 分支：${fixBranch}（已 push 到 GitLab，含 AI 的尝试 commit）`,
+        `Issue label：needs-manual`,
+        '',
+        `📋 根因摘要：${summary || '（详见 Issue 正文）'}`,
+        ...(commentLine ? ['', commentLine] : []),
+        '',
+        `请在 GitLab checkout 分支继续修改，或关闭 Issue 放弃。`,
       ].join('\n')
     }
     default:

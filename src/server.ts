@@ -49,6 +49,7 @@ import { registerReviewHandler } from './agent/review/reviewer.js'
 import { registerApproveL3Handler } from './agent/approval/approve-l3-handler.js'
 import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
 import { registerNotifyHandler } from './agent/notify/notify-handler.js'
+import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
 import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
 
@@ -186,6 +187,7 @@ async function main(): Promise<void> {
   registerApproveL3Handler()
   registerCreateMrHandler()
   registerNotifyHandler()
+  registerRequestHandoverHandler()
 
   // 启动 worktree 清理调度器
   startCleanupScheduler()
