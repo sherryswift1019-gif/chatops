@@ -1,7 +1,28 @@
 /**
  * Task 18 Phase 3A Wave 2 — 场景 7：重试按钮 → 新 pipeline_run
  *
- * 流程：
+ * ⚠️ 2026-04-20 update（handover MVP T5 之后本 spec 的测试场景不可达，已 skip）：
+ *   原 spec 的前置条件是"L1 fix 失败 → report.status=aborted → 用户点前端重试按钮"。
+ *   T5 commit（6c8b25a / a78230a）后，L1/L2 fix 失败会走 checkAndTriggerHandover(
+ *   fix_exhausted) → status=**pending_manual** 而非 aborted。
+ *
+ *   前端 BugRunsPage 的"重试"按钮显示条件是 `status === 'aborted'`（参考
+ *   web/src/pages/BugRunsPage.tsx RetryButtonExtra）——因此 pending_manual 状态下
+ *   **没有重试按钮可点**。原 spec 的 UI 路径在当前实现下不可复现。
+ *
+ *   产品语义角度，这是刻意的设计：pending_manual 表示 AI 放弃，等 owner 在 GitLab
+ *   接手（fix 分支保留），前端不提供"重新让 AI 试"的入口（避免用户反复消耗 token）。
+ *   aborted 只在审批拒绝/超时/create_mr 失败等非 fix 失败场景出现。
+ *
+ *   后续选项：
+ *   1. 把本 spec 重写为"L3 审批 reject → aborted → 点重试"（参考 bug-l3-reject.spec）
+ *   2. 把本 spec 重写为"create_mr 失败 → aborted → 点重试"（需要 mock create_mr 失败）
+ *   3. 保留 skip，依赖 POST /admin/bug-reports/:id/retry 的单测覆盖
+ *      （src/__tests__/unit/admin-bug-reports.test.ts 里已有 retry 端点 8 条单测）
+ *
+ *   当前决策（2026-04-20）：选项 3——单测覆盖足够，e2e 的前端按钮路径待 V2 重写。
+ *
+ * 原流程：
  *   1. 先触发一次 L1 修复失败（fix=testPassed=false）→ status=aborted
  *   2. 再 seed 一组 happy-path mock（第二轮 analyze 会用到；reuseIssue → 走
  *      gitlabPostIssueNote 不创建新 issue，但 filter/detail/fix/review 仍走 mock）
@@ -57,7 +78,8 @@ test.describe('重试按钮 → 新 pipeline_run', () => {
     await resetPerTest(request, GITLAB_MOCK)
   })
 
-  test('L1 fail → 点击重试按钮 → 新 pipeline_success', async ({ request, page }) => {
+  // eslint-disable-next-line playwright/no-skipped-test
+  test.skip('L1 fail → 点击重试按钮 → 新 pipeline_success', async ({ request, page }) => {
     await loginAsAdmin(request)
 
     const plRows = await dbQuery<{ id: number }>(

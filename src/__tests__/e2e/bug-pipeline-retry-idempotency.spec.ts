@@ -1,6 +1,23 @@
 /**
  * handover-mvp V1 AC4 — fix-runner 跨调用幂等（已 success 的 project 不被重跑）。
  *
+ * ⚠️ AC4 语义偏离声明（2026-04-20 与主 agent 讨论后保留）：
+ *   V1 spec 原 AC4 措辞是"Pipeline 阶段重试幂等"——假设 capability stage 失败后
+ *   executor 会自动 retry 同一 stage。但当前 executor 实现（src/pipeline/executor.ts
+ *   的 capability stage 分支）不做 stage-level retry 循环（仅 script stage 有）。
+ *   因此"stage 级重试幂等"场景在现有代码里无路径可触达，原意不可直接 e2e 测。
+ *
+ *   V2 spec（docs/superpowers/specs/2026-04-19-bug-fix-workflow-v2-design.md）
+ *   通过 revise-pipeline 机制以"启一条新 Pipeline"的方式实现类似效果，不依赖
+ *   executor 的 stage retry。V2 实施后本 spec 的断言应迁移到 revise-pipeline 路径。
+ *
+ *   本 spec 覆盖的是**AC4 的核心价值**：fix-runner 自身的跨调用幂等逻辑
+ *   （fix-runner.ts:65-72）——外部多次触发 fix_bug_l2 时，已存在 success
+ *   fix_attempt 的 project 会被跳过。触发路径靠 _e2e/trigger-capability 测试路由
+ *   （仅 E2E_MODE 生效）直接调 handler，绕过 Pipeline executor。
+ *
+ *   硬约束：不可改 executor.ts（严益昌原创 6 文件零改动），workaround 保留。
+ *
  * 业务背景（与原 AC4 措辞的对齐）：
  *   当前 MVP 下 Pipeline capability stage 执行器（executor.ts:287-319）不做 retry，
  *   即 capability stage retryCount 在 "stage 级重试" 意义下不生效。fix-runner 自身
