@@ -1,31 +1,59 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Card, Collapse, Tag, Button, Select, Space, Spin, Statistic, Row, Col, Timeline, Modal, message, Empty, Pagination } from 'antd'
+import { Card, Table, Tag, Button, Select, Space, Modal, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import { Link } from 'react-router-dom'
+import { useSearchParams } from 'react-router-dom'
 import {
-  getBugReports,
+  listBugReports,
   retryBugReport,
   handoverBugReport,
-  fetchBugEvents,
-  type BugFixEvent,
-  type BugReportStatusFilter,
-  type BugReportLevelFilter,
 } from '../api/bug-analysis-reports'
 import { getProductLines } from '../api/product-lines'
+import BugRunDetailDrawer from '../components/BugRunDetailDrawer'
 import type { BugAnalysisReport, ProductLine } from '../types'
 
-const levelColors: Record<string, string> = { l1: 'green', l2: 'blue', l3: 'orange', l4: 'red' }
-const confidenceColors: Record<string, string> = { high: 'green', medium: 'gold', low: 'red' }
-const statusColors: Record<string, string> = {
-  draft: 'default',
-  published: 'processing',
-  pipeline_success: 'success',
-  pending_manual: 'warning',
-  completed: 'success',
-  aborted: 'error',
+// ─── 就地定义 LevelTag / StatusTag（与 BugRunDetailDrawer 一致）─────
+
+const LEVEL_COLOR: Record<string, string> = {
+  l1: 'blue',
+  l2: 'cyan',
+  l3: 'orange',
+  l4: 'purple',
 }
 
-const STATUS_OPTIONS: { value: BugReportStatusFilter; label: string }[] = [
+function LevelTag({ level }: { level: string | null | undefined }) {
+  if (!level) return <Tag color="default">—</Tag>
+  const key = String(level).toLowerCase()
+  const color = LEVEL_COLOR[key] ?? 'default'
+  return <Tag color={color}>{key.toUpperCase()}</Tag>
+}
+
+const STATUS_META: Record<string, { color: string; label: string }> = {
+  draft: { color: 'default', label: '草稿' },
+  published: { color: 'processing', label: '已发布' },
+  pipeline_success: { color: 'cyan', label: 'Pipeline 成功' },
+  pending_manual: { color: 'orange', label: '待人工接手' },
+  completed: { color: 'success', label: '已完成' },
+  aborted: { color: 'error', label: '已终止' },
+}
+
+function StatusTag({ status }: { status: string | null | undefined }) {
+  if (!status) return <Tag>—</Tag>
+  const meta = STATUS_META[status]
+  if (!meta) return <Tag>{status}</Tag>
+  return <Tag color={meta.color}>{meta.label}</Tag>
+}
+
+// ─── 工具 ─────────────────────────────────────────────────────────
+
+function formatDateTime(s: string | null | undefined): string {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return String(s)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+const STATUS_OPTIONS = [
   { value: 'draft', label: 'draft' },
   { value: 'published', label: 'published' },
   { value: 'pipeline_success', label: 'pipeline_success' },
@@ -34,104 +62,56 @@ const STATUS_OPTIONS: { value: BugReportStatusFilter; label: string }[] = [
   { value: 'aborted', label: 'aborted' },
 ]
 
-const LEVEL_OPTIONS: { value: BugReportLevelFilter; label: string }[] = [
+const LEVEL_OPTIONS = [
   { value: 'l1', label: 'L1' },
   { value: 'l2', label: 'L2' },
   { value: 'l3', label: 'L3' },
   { value: 'l4', label: 'L4' },
 ]
 
-function truncate(s: string | null | undefined, n: number): string {
-  if (!s) return '-'
-  return s.length > n ? `${s.slice(0, n)}…` : s
-}
-
-function formatTime(iso: string): string {
-  const d = new Date(iso)
-  const pad = (x: number) => String(x).padStart(2, '0')
-  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-}
-
-function groupByIssueId(reports: BugAnalysisReport[]): Map<number, BugAnalysisReport[]> {
-  const map = new Map<number, BugAnalysisReport[]>()
-  for (const r of reports) {
-    const list = map.get(r.issueId) ?? []
-    list.push(r)
-    map.set(r.issueId, list)
-  }
-  // 每组按 created_at DESC 排序
-  for (const list of map.values()) {
-    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-  }
-  return map
-}
-
 export default function BugRunsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // URL → state
+  const productLineIdStr = searchParams.get('productLine')
+  const productLineId = productLineIdStr ? Number(productLineIdStr) : undefined
+  const status = searchParams.get('status') || undefined
+  const level = searchParams.get('level') || undefined
+  const page = Number(searchParams.get('page') || 1)
+  const pageSize = Number(searchParams.get('pageSize') || 20)
+
   const [reports, setReports] = useState<BugAnalysisReport[]>([])
   const [total, setTotal] = useState(0)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [loading, setLoading] = useState(false)
-  const [selectedPL, setSelectedPL] = useState<number | undefined>()
-  const [statusFilter, setStatusFilter] = useState<BugReportStatusFilter[]>([])
-  const [levelFilter, setLevelFilter] = useState<BugReportLevelFilter[]>([])
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(20)
-  // G5 补偿：顶部状态分布 Stat（不受筛选影响，反映整个产品线的全局态）
-  const [stats, setStats] = useState<{ total: number; success: number; aborted: number } | null>(null)
+  const [selectedReport, setSelectedReport] = useState<BugAnalysisReport | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
-    getProductLines().then(setProductLines)
+    getProductLines().then(setProductLines).catch(() => {})
   }, [])
 
   useEffect(() => {
-    if (selectedPL) load()
+    load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPL, statusFilter, levelFilter, page, pageSize])
-
-  // 产品线变化时独立刷新全局 stats（不受筛选/分页影响）
-  useEffect(() => {
-    if (!selectedPL) { setStats(null); return }
-    loadStats(selectedPL)
-  }, [selectedPL, page]) // page 变化时也刷（重试/新 bug 可能改变分布）
-
-  async function loadStats(pl: number) {
-    try {
-      const [totalRes, successRes, abortedRes] = await Promise.all([
-        getBugReports({ productLineId: pl, page: 1, pageSize: 1 }),
-        getBugReports({ productLineId: pl, page: 1, pageSize: 1, statuses: ['pipeline_success', 'completed'] }),
-        getBugReports({ productLineId: pl, page: 1, pageSize: 1, statuses: ['aborted'] }),
-      ])
-      setStats({ total: totalRes.total, success: successRes.total, aborted: abortedRes.total })
-    } catch (err) {
-      console.error('[BugRunsPage] loadStats failed:', err)
-      // stats 加载失败不阻塞主列表
-    }
-  }
-
-  function filterAborted() {
-    setStatusFilter(['aborted'])
-    setPage(1)
-  }
+  }, [productLineId, status, level, page, pageSize])
 
   async function load() {
-    if (!selectedPL) return
     abortRef.current?.abort()
     abortRef.current = new AbortController()
     setLoading(true)
     try {
-      const res = await getBugReports({
-        productLineId: selectedPL,
+      const res = await listBugReports({
+        productLineId,
+        status,
+        level,
         page,
         pageSize,
-        statuses: statusFilter.length > 0 ? statusFilter : undefined,
-        levels: levelFilter.length > 0 ? levelFilter : undefined,
         signal: abortRef.current.signal,
       })
       setReports(res.data)
       setTotal(res.total)
     } catch (err) {
-      // AbortError：切筛选/翻页时主动 abort，不算错误
       const isAbort =
         (err as { name?: string })?.name === 'AbortError' ||
         (err as { code?: string })?.code === 'ERR_CANCELED'
@@ -145,374 +125,207 @@ export default function BugRunsPage() {
     }
   }
 
-  const grouped = useMemo(() => groupByIssueId(reports), [reports])
-
-  // 筛选变更时重置到第 1 页
-  function onStatusChange(v: BugReportStatusFilter[]) {
-    setStatusFilter(v)
-    setPage(1)
-  }
-  function onLevelChange(v: BugReportLevelFilter[]) {
-    setLevelFilter(v)
-    setPage(1)
-  }
-  function onProductLineChange(v: number | undefined) {
-    setSelectedPL(v)
-    setPage(1)
+  function setFilter(key: string, value: string | number | undefined) {
+    const next = new URLSearchParams(searchParams)
+    if (value == null || value === '') next.delete(key)
+    else next.set(key, String(value))
+    next.delete('page') // 筛选变化回到第 1 页
+    setSearchParams(next, { replace: true })
   }
 
-  return (
-    <Card
-      title="Bug 修复实例"
-      extra={
-        <Space wrap>
-          <Select
-            style={{ width: 220 }}
-            placeholder="选择产品线"
-            value={selectedPL}
-            onChange={onProductLineChange}
-            options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))}
-          />
-          <Select
-            mode="multiple"
-            allowClear
-            style={{ minWidth: 220 }}
-            placeholder="按状态筛选"
-            value={statusFilter}
-            onChange={onStatusChange}
-            options={STATUS_OPTIONS}
-            maxTagCount="responsive"
-          />
-          <Select
-            mode="multiple"
-            allowClear
-            style={{ minWidth: 160 }}
-            placeholder="按等级筛选"
-            value={levelFilter}
-            onChange={onLevelChange}
-            options={LEVEL_OPTIONS}
-            maxTagCount="responsive"
-          />
-          <Button icon={<ReloadOutlined />} onClick={load} disabled={!selectedPL}>刷新</Button>
-        </Space>
-      }
-      loading={loading}
-    >
-      {/* G5 补偿：全局状态概览，失败数红色+可点，解决"失败沉默"问题 */}
-      {selectedPL && stats && (
-        <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={6}>
-            <Statistic title="总计" value={stats.total} />
-          </Col>
-          <Col span={6}>
-            <Statistic title="成功/已完成" value={stats.success} valueStyle={{ color: '#52c41a' }} />
-          </Col>
-          <Col span={6}>
-            <Statistic
-              title={
-                <span>
-                  失败（aborted）
-                  {stats.aborted > 0 && (
-                    <Button type="link" size="small" onClick={filterAborted} style={{ padding: 0, marginLeft: 8 }}>
-                      查看
-                    </Button>
-                  )}
-                </span>
-              }
-              value={stats.aborted}
-              valueStyle={{ color: stats.aborted > 0 ? '#cf1322' : '#999' }}
-            />
-          </Col>
-          <Col span={6}>
-            <Statistic
-              title="其他（进行中 / 草稿）"
-              value={Math.max(0, stats.total - stats.success - stats.aborted)}
-              valueStyle={{ color: '#1677ff' }}
-            />
-          </Col>
-        </Row>
-      )}
-      {grouped.size === 0 && !loading ? (
-        <Empty description={selectedPL ? '暂无分析报告' : '请先选择产品线'} />
-      ) : (
-        <>
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
-            {Array.from(grouped.entries()).map(([issueId, rounds]) => (
-              <IssueCard key={issueId} issueId={issueId} rounds={rounds} onRetry={load} />
-            ))}
-          </Space>
-          <div style={{ marginTop: 16, textAlign: 'right' }}>
-            <Pagination
-              current={page}
-              pageSize={pageSize}
-              total={total}
-              showSizeChanger
-              pageSizeOptions={['10', '20', '50', '100']}
-              showTotal={(t) => `共 ${t} 条`}
-              onChange={(p, s) => {
-                setPage(p)
-                setPageSize(s)
-              }}
-            />
-          </div>
-        </>
-      )}
-    </Card>
-  )
-}
+  function onPageChange(p: number, ps: number) {
+    const next = new URLSearchParams(searchParams)
+    next.set('page', String(p))
+    next.set('pageSize', String(ps))
+    setSearchParams(next, { replace: true })
+  }
 
-function IssueCard({
-  issueId,
-  rounds,
-  onRetry,
-}: {
-  issueId: number
-  rounds: BugAnalysisReport[]
-  onRetry: () => void
-}) {
-  const latest = rounds[0]
-  const totalRounds = rounds.length
-  const title = `Issue #${issueId} · ${truncate(latest.rootCauseSummary, 50)}`
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (productLineId != null) n++
+    if (status) n++
+    if (level) n++
+    return n
+  }, [productLineId, status, level])
 
-  const items = rounds.map((r, idx) => {
-    const roundNumber = totalRounds - idx
-    return {
-      key: String(r.id),
-      label: <RoundHeader report={r} roundNumber={roundNumber} />,
-      extra: (
+  async function handleRetry(record: BugAnalysisReport) {
+    Modal.confirm({
+      title: '确认重新开始处理吗？',
+      content: '将产生新一轮分析和新 Pipeline 实例（消耗 Claude token）。',
+      okText: '确认重试',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const r = await retryBugReport(record.id)
+          message.success(
+            `已启动新一轮：报告 #${r.newReportId}${r.newRunId ? ` / 执行 #${r.newRunId}` : ''}`,
+          )
+          load()
+        } catch (err) {
+          message.error(`重试失败: ${(err as Error).message}`)
+        }
+      },
+    })
+  }
+
+  async function handleHandover(record: BugAnalysisReport) {
+    Modal.confirm({
+      title: '确认转人工接手？',
+      content: 'AI 将放弃自动处理，Issue 打 needs-manual label 并 DM 负责人。',
+      okText: '确认转人工',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const r = await handoverBugReport(record.id, 'user_requested')
+          message.success(`已转人工接手（status=${r.status}）`)
+          load()
+        } catch (err) {
+          message.error(`转人工失败: ${(err as Error).message}`)
+        }
+      },
+    })
+  }
+
+  const columns = [
+    {
+      title: '产品线',
+      dataIndex: 'productLineName',
+      width: 140,
+      render: (v: string | undefined) => <Tag>{v || '—'}</Tag>,
+    },
+    {
+      title: '摘要',
+      dataIndex: 'rootCauseSummary',
+      ellipsis: { showTitle: true },
+      render: (v: string | null) => v || '—',
+    },
+    {
+      title: '等级',
+      dataIndex: 'level',
+      width: 80,
+      render: (v: string | null) => <LevelTag level={v} />,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 130,
+      render: (v: string | null) => <StatusTag status={v} />,
+    },
+    {
+      title: '触发人',
+      dataIndex: 'metadata',
+      width: 140,
+      render: (m: Record<string, unknown> | null) => {
+        const id = m?.initiatorId
+        return typeof id === 'string' || typeof id === 'number' ? id : '—'
+      },
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      width: 160,
+      defaultSortOrder: 'descend' as const,
+      sorter: (a: BugAnalysisReport, b: BugAnalysisReport) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      render: (v: string) => formatDateTime(v),
+    },
+    {
+      title: '完成时间',
+      dataIndex: 'completedAt',
+      width: 160,
+      render: (v: string | null) => (v ? formatDateTime(v) : '—'),
+    },
+    {
+      title: '操作',
+      fixed: 'right' as const,
+      width: 280,
+      render: (_: unknown, record: BugAnalysisReport) => (
         <Space size={4}>
-          <HandoverButtonExtra report={r} onAction={onRetry} />
-          <RetryButtonExtra report={r} onRetry={onRetry} />
+          <Button type="link" size="small" onClick={() => setSelectedReport(record)}>
+            详情
+          </Button>
+          {record.issueUrl && (
+            <Button type="link" size="small" href={record.issueUrl} target="_blank" rel="noopener noreferrer">
+              查看 Issue
+            </Button>
+          )}
+          {record.status === 'aborted' && (
+            <>
+              <Button type="link" size="small" danger onClick={() => handleRetry(record)}>
+                重试
+              </Button>
+              <Button type="link" size="small" onClick={() => handleHandover(record)}>
+                转人工
+              </Button>
+            </>
+          )}
         </Space>
       ),
-      children: <RoundBody report={r} />,
-    }
-  })
+    },
+  ]
 
   return (
-    <Card
-      size="small"
-      title={
-        <Space>
-          <span>{title}</span>
-          {latest.issueUrl && (
-            <a href={latest.issueUrl} target="_blank" rel="noopener noreferrer">查看 Issue</a>
-          )}
-          <Tag>{totalRounds} 轮</Tag>
-        </Space>
-      }
-    >
-      <Collapse defaultActiveKey={[String(latest.id)]} items={items} />
-    </Card>
+    <>
+      <Card
+        title="Bug 修复实例"
+        extra={
+          <Space wrap>
+            <Select
+              allowClear
+              style={{ width: 220 }}
+              placeholder="产品线"
+              value={productLineId}
+              onChange={(v) => setFilter('productLine', v)}
+              options={productLines.map((p) => ({ value: p.id, label: p.displayName }))}
+            />
+            <Select
+              allowClear
+              style={{ minWidth: 180 }}
+              placeholder="状态"
+              value={status}
+              onChange={(v) => setFilter('status', v)}
+              options={STATUS_OPTIONS}
+            />
+            <Select
+              allowClear
+              style={{ minWidth: 120 }}
+              placeholder="等级"
+              value={level}
+              onChange={(v) => setFilter('level', v)}
+              options={LEVEL_OPTIONS}
+            />
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={reports}
+          loading={loading}
+          scroll={{ x: 1400 }}
+          locale={{
+            emptyText: activeFilterCount > 0 ? '当前筛选条件下无结果，试试调整筛选' : '暂无 Bug 修复实例',
+          }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 条`,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            onChange: onPageChange,
+          }}
+        />
+      </Card>
+
+      <BugRunDetailDrawer
+        open={!!selectedReport}
+        report={selectedReport}
+        onClose={() => setSelectedReport(null)}
+      />
+    </>
   )
-}
-
-function RoundHeader({ report, roundNumber }: { report: BugAnalysisReport; roundNumber: number }) {
-  return (
-    <Space wrap>
-      <strong>第 {roundNumber} 轮</strong>
-      <Tag color={levelColors[report.level]}>{report.level.toUpperCase()}</Tag>
-      <Tag color={confidenceColors[report.confidence]}>{report.confidence}</Tag>
-      <Tag>{report.classification}</Tag>
-      <Tag color={statusColors[report.status] ?? 'default'}>{report.status}</Tag>
-      <span style={{ color: '#8B93A8' }}>{formatTime(report.createdAt)}</span>
-    </Space>
-  )
-}
-
-function RetryButtonExtra({
-  report,
-  onRetry,
-}: {
-  report: BugAnalysisReport
-  onRetry: () => void
-}) {
-  if (report.status !== 'aborted') return null
-  return (
-    <Button
-      type="primary"
-      danger
-      size="small"
-      onClick={(e) => {
-        e.stopPropagation()
-        Modal.confirm({
-          title: '确认重新开始处理吗？',
-          content: '将产生新一轮分析和新 Pipeline 实例（消耗 Claude token）。',
-          okText: '确认重试',
-          cancelText: '取消',
-          onOk: async () => {
-            try {
-              const r = await retryBugReport(report.id)
-              message.success(
-                `已启动新一轮：报告 #${r.newReportId}${r.newRunId ? ` / 执行 #${r.newRunId}` : ''}`,
-              )
-              onRetry()
-            } catch (err) {
-              message.error(`重试失败: ${(err as Error).message}`)
-            }
-          },
-        })
-      }}
-    >
-      重试
-    </Button>
-  )
-}
-
-function HandoverButtonExtra({
-  report,
-  onAction,
-}: {
-  report: BugAnalysisReport
-  onAction: () => void
-}) {
-  // 仅在 draft / published / pipeline_success 状态显示（后端 API 也做同样校验）
-  const allowed = ['draft', 'published', 'pipeline_success']
-  if (!allowed.includes(report.status)) return null
-  return (
-    <Button
-      size="small"
-      onClick={(e) => {
-        e.stopPropagation()
-        Modal.confirm({
-          title: '确认转人工接手？',
-          content: 'AI 将放弃自动处理，Issue 打 needs-manual label 并 DM 负责人。fix 分支保留。',
-          okText: '确认转人工',
-          cancelText: '取消',
-          onOk: async () => {
-            try {
-              const r = await handoverBugReport(report.id)
-              message.success(`已转人工接手（status=${r.status}）`)
-              onAction()
-            } catch (err) {
-              message.error(`转人工失败: ${(err as Error).message}`)
-            }
-          },
-        })
-      }}
-    >
-      转人工
-    </Button>
-  )
-}
-
-function RoundBody({ report }: { report: BugAnalysisReport }) {
-  return (
-    <div>
-      {report.rootCauseSummary && (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ fontWeight: 500, marginBottom: 4 }}>根因</div>
-          <div>{report.rootCauseSummary}</div>
-        </div>
-      )}
-
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontWeight: 500, marginBottom: 4 }}>事件时间线</div>
-        <EventTimeline reportId={report.id} />
-      </div>
-
-      <Space>
-        {report.pipelineRunId && (
-          <Link to="/test-runs">查看执行记录 #{report.pipelineRunId}</Link>
-        )}
-        {report.issueUrl && (
-          <a href={report.issueUrl} target="_blank" rel="noopener noreferrer">打开 Issue</a>
-        )}
-      </Space>
-    </div>
-  )
-}
-
-function EventTimeline({ reportId }: { reportId: number }) {
-  const [events, setEvents] = useState<BugFixEvent[] | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    fetchBugEvents(reportId)
-      .then((evs) => {
-        if (!cancelled) setEvents(evs)
-      })
-      .catch(() => {
-        if (!cancelled) setEvents([])
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [reportId])
-
-  if (loading || events === null) return <Spin size="small" />
-  if (events.length === 0) return <span style={{ color: '#8B93A8' }}>暂无事件</span>
-
-  const items = events.map((e) => ({
-    color: e.status === 'failed' ? 'red' : 'green',
-    label: formatTime(e.createdAt),
-    children: <EventContent event={e} />,
-  }))
-
-  return <Timeline mode="left" items={items} />
-}
-
-function EventContent({ event }: { event: BugFixEvent }) {
-  const d = event.data as Record<string, any>
-  switch (event.code) {
-    case 'analysis':
-      return (
-        <span>
-          分析完成 · level={String(d.level ?? '-')} · classification={String(d.classification ?? '-')}
-        </span>
-      )
-    case 'scope_identified':
-      return (
-        <span>
-          锁定 {event.projectPath ?? '-'}（{d.isPrimary ? '主仓库' : '从仓库'}）
-        </span>
-      )
-    case 'create_issue':
-      return d.issueUrl ? (
-        <a href={String(d.issueUrl)} target="_blank" rel="noopener noreferrer">
-          创建 Issue #{String(d.issueIid ?? '-')}
-        </a>
-      ) : (
-        <span>创建 Issue #{String(d.issueIid ?? '-')}</span>
-      )
-    case 'fix_attempt':
-      return (
-        <span>
-          {event.status === 'success' ? '✅' : '❌'} {event.projectPath ?? '-'} 修复
-          {d.attempt !== undefined ? `（attempt=${String(d.attempt)}）` : ''}
-        </span>
-      )
-    case 'create_mr':
-      return d.mrUrl ? (
-        <a href={String(d.mrUrl)} target="_blank" rel="noopener noreferrer">
-          MR !{String(d.mrIid ?? '-')}（{event.projectPath ?? '-'}）
-        </a>
-      ) : (
-        <span>MR !{String(d.mrIid ?? '-')}（{event.projectPath ?? '-'}）</span>
-      )
-    case 'ai_review':
-      return <span>AI Review: {String(d.label ?? '-')}</span>
-    case 'approval':
-      return <span>审批: {String(d.decision ?? '-')}</span>
-    case 'notify':
-      return (
-        <span>
-          {event.status === 'success' ? '✅' : '❌'} 通知 {String(d.userId ?? '-')}（
-          {String(d.messageKind ?? '-')}）
-        </span>
-      )
-    case 'lifecycle_sync':
-      return (
-        <span>
-          MR {String(d.mrAction ?? '-')} → {String(d.targetStatus ?? '-')}
-        </span>
-      )
-    default:
-      return <span>{event.code}</span>
-  }
 }

@@ -1,31 +1,6 @@
 import client from './client'
 import type { BugAnalysisReport } from '../types'
 
-export type BugReportStatusFilter =
-  | 'draft'
-  | 'published'
-  | 'pipeline_success'
-  | 'pending_manual'
-  | 'completed'
-  | 'aborted'
-export type BugReportLevelFilter = 'l1' | 'l2' | 'l3' | 'l4'
-
-export interface GetBugReportsParams {
-  productLineId: number
-  page?: number
-  pageSize?: number
-  statuses?: BugReportStatusFilter[]
-  levels?: BugReportLevelFilter[]
-  signal?: AbortSignal
-}
-
-export interface GetBugReportsResponse {
-  data: BugAnalysisReport[]
-  total: number
-  page: number
-  pageSize: number
-}
-
 // 老接口保留（兼容，不带筛选/分页）
 export const getBugAnalysisReports = (productLineId: number, limit = 50) =>
   client.get<{ data: BugAnalysisReport[]; total: number }>('/bug-analysis-reports', {
@@ -33,35 +8,9 @@ export const getBugAnalysisReports = (productLineId: number, limit = 50) =>
   }).then(r => r.data)
 
 /**
- * 带服务端分页 + status/level 筛选。
- * 返回 {data, total, page, pageSize}。
- */
-export async function getBugReports(p: GetBugReportsParams): Promise<GetBugReportsResponse> {
-  const { productLineId, page = 1, pageSize = 20, statuses, levels, signal } = p
-  const params: Record<string, unknown> = {
-    product_line_id: productLineId,
-    page,
-    pageSize,
-  }
-  if (statuses && statuses.length > 0) params.status = statuses.join(',')
-  if (levels && levels.length > 0) params.level = levels.join(',')
-  const { data } = await client.get<{
-    data: BugAnalysisReport[]
-    total: number
-    page: number
-    pageSize: number
-  }>('/bug-analysis-reports', { params, signal })
-  return data
-}
-
-/**
- * 新版签名：productLineId 可选、支持按 issueId 过滤。
- * 与 getBugReports() 共享后端接口，返回结构相同。
- *
- * 与 getBugReports 的区别：
- * - productLineId 改为可选（用于跨产品线 / 按 issue 直查场景）
- * - 新增 issueId 参数，可精确拉取某 Issue 下的所有报告
- * - status / level 为单值字符串（保留后端多值 CSV 协议的单项用法）
+ * 按条件拉取 Bug 分析报告列表（服务端分页）。
+ * 支持按 productLineId / issueId / status / level 过滤。
+ * status / level 为单值字符串（沿用后端多值 CSV 协议的单项用法）。
  */
 export interface ListReportsParams {
   productLineId?: number
