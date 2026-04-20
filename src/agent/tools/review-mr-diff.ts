@@ -1,6 +1,7 @@
 import { registerTool } from './index.js'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 import axios from 'axios'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 const reviewMrDiffTool: AgentTool = {
   name: 'review_mr_diff',
@@ -18,10 +19,9 @@ const reviewMrDiffTool: AgentTool = {
   async execute(params: unknown, ctx: TaskContext): Promise<ToolResult> {
     const { projectPath, mrIid } = params as { projectPath: string; mrIid: number }
 
-    const gitlabUrl = process.env.GITLAB_URL
-    const gitlabToken = process.env.GITLAB_TOKEN
+    const { url: gitlabUrl, token: gitlabToken } = await resolveGitlabConfig()
     if (!gitlabUrl || !gitlabToken) {
-      return { success: false, output: '缺少 GITLAB_URL 或 GITLAB_TOKEN' }
+      return { success: false, output: '缺少 GitLab 配置（请在 admin UI 或 .env 中设置 URL 和 Token）' }
     }
 
     const encodedPath = encodeURIComponent(projectPath)
