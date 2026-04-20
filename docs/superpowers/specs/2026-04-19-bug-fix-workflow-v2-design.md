@@ -1443,8 +1443,8 @@ export async function handleAnalysisComplete(reportId, level, classification, tr
 
 ### 19.3 E2E 测试（Playwright）
 
-- `src/__tests__/e2e/bug-v2-revise-flow.spec.ts`（新）：点击"转修订"按钮 + 查看多轮分组视图
-- `src/__tests__/e2e/bug-v2-handover-flow.spec.ts`（新）：点击"转人工处理"按钮 + 查看 pending_manual 状态
+- `src/__tests__/mock-e2e/bug-v2-revise-flow.spec.ts`（新）：点击"转修订"按钮 + 查看多轮分组视图
+- `src/__tests__/mock-e2e/bug-v2-handover-flow.spec.ts`（新）：点击"转人工处理"按钮 + 查看 pending_manual 状态
 
 ### 19.4 回归测试清单
 

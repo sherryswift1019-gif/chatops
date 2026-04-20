@@ -3953,7 +3953,7 @@ if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
 }
 ```
 
-**配套**：[schema-v11.sql](../../../src/db/schema-v11.sql) 和 [base.sql](../../../src/__tests__/e2e/fixtures/base.sql) 里 L3 pipeline 的 `approve_l3` stage `capabilityParams` 追加 `"approvalTimeoutMs": 3600000`，注释"必须与 timeoutSeconds 保持同值"。
+**配套**：[schema-v11.sql](../../../src/db/schema-v11.sql) 和 [base.sql](../../../src/__tests__/mock-e2e/fixtures/base.sql) 里 L3 pipeline 的 `approve_l3` stage `capabilityParams` 追加 `"approvalTimeoutMs": 3600000`，注释"必须与 timeoutSeconds 保持同值"。
 
 **涉及硬约束**：不改 executor/approval-manager，仅改 handler + DDL。
 

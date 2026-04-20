@@ -30,7 +30,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   // eslint-disable-next-line no-console
   console.log('[e2e] globalSetup: loading base.sql')
   const sql = readFileSync(
-    join(process.cwd(), 'src/__tests__/e2e/fixtures/base.sql'),
+    join(process.cwd(), 'src/__tests__/mock-e2e/fixtures/base.sql'),
     'utf8',
   )
   await getTestPool().query(sql)
