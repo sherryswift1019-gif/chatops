@@ -21,18 +21,31 @@
 ## 跑
 
 ```bash
-# 本地
-pnpm test:e2e              # headless 跑全部
-pnpm test:e2e --headed     # 看浏览器
-pnpm test:e2e --ui         # Playwright UI mode
-pnpm test:e2e specname     # 单个 spec
+# 本地（必须显式指定测试库，绝不能用开发/生产库）
+DATABASE_URL=postgres://chatops:chatops@localhost:5432/chatops_test pnpm test:e2e
+DATABASE_URL=postgres://chatops:chatops@localhost:5432/chatops_test pnpm test:e2e --headed     # 看浏览器
+DATABASE_URL=postgres://chatops:chatops@localhost:5432/chatops_test pnpm test:e2e --ui         # Playwright UI mode
+DATABASE_URL=postgres://chatops:chatops@localhost:5432/chatops_test pnpm test:e2e specname     # 单个 spec
 ```
+
+> ⚠️ **必须显式指定 DATABASE_URL=chatops_test 测试库** ⚠️
+>
+> `global-setup.ts` 在每次 e2e run 开始前会 `DROP SCHEMA public CASCADE`，**全量重置**所连接的数据库。
+> 如果忘记传 `DATABASE_URL`，会 fallback 到 `.env` 里的开发库 `postgres://chatops:chatops@localhost:5432/chatops`——**开发/验收数据全部被清空**。
+>
+> 本项目有过一次这种事故：`bug_analysis_reports` 里残留了一条 mock seed 脏数据（`[PAM/pas-api] 跨服务字段不一致...`），就是 e2e 没分流 DATABASE_URL 导致的。2026-04-20 清理完毕。
+>
+> **前置检查脚本**（可以贴到你的 shell alias 里）：
+> ```bash
+> # alias test:e2e='DATABASE_URL=postgres://chatops:chatops@localhost:5432/chatops_test pnpm test:e2e'
+> ```
+> 或者 CI 里把 DATABASE_URL 固化在 job env 里，本地开发机靠这个前置检查。
 
 > npm script 名保留 `test:e2e` 未改，避免破坏现有习惯。Playwright 官方术语也仍用 "e2e"。
 
 ## 约定
 
-1. **DB**：每个 spec 开始前 reset + 重新 seed，保证独立
+1. **DB**：每个 spec 开始前 reset + 重新 seed，保证独立。**必须指向 chatops_test 库**（见上）
 2. **Mock**：外部依赖（Claude CLI、GitLab API）全部 mock，不打真网络
 3. **并发**：workers=1，避免 DB 冲突
 4. **Build**：自动跑 `web && pnpm build` 生成前端产物，后端 fastify-static serve
