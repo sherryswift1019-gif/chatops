@@ -1,5 +1,13 @@
 # Bug 分析修复工作流 V1 — 实现计划
 
+> **⚠️ 2026-04-20 更新**：本 plan 的 Task 15（BugRunsPage 前端改造）里"按 issue_id 聚合 + Collapse/Tree"的实现路径偏离了 PRD §0.4 "[扩展] 复用/扩展 TestRunsPage" 的原意。落地后 UX 不达标（必须先选产品线、列表卡片形式难以扫描、多轮信息挤在列表里）。
+>
+> **UI 回正**：见 [2026-04-20-bugruns-ui-refactor.md](./2026-04-20-bugruns-ui-refactor.md)（13 个 TDD task 分 5 阶段：schema v14 加 completed_at → 后端 list 接口扩展 → 前端 API 类型 → Drawer 组件 → BugRunsPage 重写 Table + URL query → e2e 全量对齐）
+>
+> **spec 源头补齐**：见 [2026-04-17-bug-fix-workflow-orchestration-design.md §前端展示→UI 约定（2026-04-20 追加补齐）](../specs/2026-04-17-bug-fix-workflow-orchestration-design.md)
+>
+> Task 15 的产物（IssueCard / Collapse / 按 issue_id 预聚合）已在 04-20 refactor 中整体替换为 Table + Drawer。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把 Bug 修复主流程（分析 → 修复 → MR → Review → 通知 → 合并闭环）全部纳入 Pipeline 引擎驱动，每个环节独立可追踪可重试，业务数据落 `bug_fix_events` 表供阶段间传递和前端时间线展示。

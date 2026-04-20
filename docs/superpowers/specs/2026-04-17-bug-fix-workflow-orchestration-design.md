@@ -357,16 +357,18 @@ stateDiagram-v2
 - **默认范围**：**显示所有产品线**。产品线作为**可选**筛选器，不再强制必选
 - **列定义**（从左到右 8 列）：
 
-  | 列名 | 来源 | 说明 |
-  |------|------|------|
-  | 产品线 | `product_line_name`（后端 join `product_lines.name`） | Tag |
-  | 摘要 | `root_cause_summary`，无则 fallback 到 `metadata.userMessage` 截断 | 最多 2 行，超出省略；鼠标悬停 Tooltip 展示完整 |
-  | 等级 | `level` | Tag：L1（蓝）/L2（青）/L3（橙）/L4（紫）/ —（config_issue/usage_issue 场景） |
-  | 状态 | `status` | 按上方状态徽标 |
-  | 触发人 | `metadata.initiatorId` 或 `agent_session_id` 回溯 | 文本（钉钉/飞书 user id） |
-  | 创建时间 | `created_at` | `YYYY-MM-DD HH:mm`，**默认按此列 desc 排** |
-  | 完成时间 | `completed_at`（schema v14 新增字段，终态时写入） | 未完成显示 "—" |
-  | 操作 | — | 见下方按钮规则 |
+  > **字段命名约定**：后端 repository 的 `mapRow` 把 DB snake_case 转为 camelCase 再返回，所以 **HTTP API 返回的字段是 camelCase**（`productLineName` / `completedAt` / `rootCauseSummary`）。前端 `BugAnalysisReport` 接口也是 camelCase。下表"来源"列给出 **DB snake_case 字段名** 以便追溯 schema，**实际前端代码中访问的字段是 camelCase**。
+
+  | 列名 | 来源（DB 字段） | 前端访问名 | 说明 |
+  |------|-----------------|-----------|------|
+  | 产品线 | join `product_lines.name` | `productLineName` | Tag |
+  | 摘要 | `root_cause_summary`，无则 fallback 到 `metadata.userMessage` 截断 | `rootCauseSummary` | 最多 2 行，超出省略；鼠标悬停 Tooltip 展示完整 |
+  | 等级 | `level` | `level` | Tag：L1（蓝）/L2（青）/L3（橙）/L4（紫）/ —（config_issue/usage_issue 场景） |
+  | 状态 | `status` | `status` | 按上方状态徽标 |
+  | 触发人 | `metadata.initiatorId` 或 `agent_session_id` 回溯 | `metadata?.initiatorId` | 文本（钉钉/飞书 user id） |
+  | 创建时间 | `created_at` | `createdAt` | `YYYY-MM-DD HH:mm`，**默认按此列 desc 排** |
+  | 完成时间 | `completed_at`（schema v14 新增字段，终态时写入） | `completedAt` | 未完成显示 "—" |
+  | 操作 | — | — | 见下方按钮规则 |
 
 - **操作列按钮**：
 
@@ -402,7 +404,7 @@ stateDiagram-v2
   - **备选方案**（`solutions_json` 里其它）—— Collapse 默认收起
   - **受影响模块**（`affected_modules`）—— Tag list
   - **分析步骤**（`analysis_steps`）—— 编号列表
-  - **完整报告**（`report.markdown`）—— Collapse 默认收起，展开后 react-markdown 渲染
+  - **完整报告 Markdown**（⚠️ 2026-04-20 Task 5 落地时发现）：数据库 schema 里**无 `markdown` 字段**，`GET /bug-analysis-reports/:id` 接口当前不返回 markdown 原文。Drawer 里保留此区块作为 **Collapse 占位**，未命中时显示"（当前报告未提供 Markdown 原文）"兜底。如需真正渲染：后续在后端 `getBugAnalysisReport` 端点动态拼接（根据 `rootCauseSummary` + `solutionsJson` + `analysisSteps` 生成 md 字符串）或加 schema 字段，放到 Growth Backlog
   - **原始 metadata**（`metadata` JSONB）—— Collapse 默认收起，展开后 JSON pretty-print
 
   **Section 3：执行结果**（从 `bug_fix_events` 聚合，按 project 分组）
