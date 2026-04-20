@@ -46,6 +46,36 @@ pnpm test:e2e specname     # 单个 spec
 | 钉钉 / 飞书 | 未接 | 沙盒群 webhook |
 | 适用场景 | CI / PR gate / 本地回归 | 重大版本人工验收 |
 
+## 与 `integration/` 的差异
+
+项目里 `src/__tests__/` 下同时存在 `integration/` 和 `mock-e2e/`，两者都"带 mock"，但粒度和覆盖层完全不同——不是替代关系，是**测试倒金字塔里的两层**。
+
+| 维度 | `integration/`（Vitest） | `mock-e2e/`（Playwright） |
+|---|---|---|
+| 测试框架 | Vitest | Playwright |
+| Mock 方式 | `vi.mock()` 在**代码层**替换模块 | 独立 **HTTP 进程**冒充 GitLab，Claude 由 e2e-store 种 fake 响应 |
+| 被测载体 | 直接 import handler 函数，Node 进程内跑 | 真启 Fastify（3001）+ 真启 Chromium 访问 `web/dist` |
+| 前端 UI | 完全不涉及 | 真渲染，页面点击 + 断言 DOM |
+| 数据库 | 真 PostgreSQL | 真 PostgreSQL |
+| 网络层 | 无（函数直接返回 mock 值） | 真 HTTP 请求穿到 mock server |
+| 跑法 | `pnpm test` | `pnpm test:e2e` |
+| 速度 | 秒级 | 分钟级 |
+| 典型场景 | "handleAnalysisComplete 在 L2 多 project 下事件流是否对" | "用户点重试按钮 → 后端 → UI 显示新 run" |
+
+选择原则：
+
+- 测**后端模块之间的协同**（handler + coordinator + repository + capability）→ 写在 `integration/`，快、稳、易调试
+- 测**用户可见的 UI 路径 + HTTP 链路**（按钮状态、筛选、翻页、跨页面数据流）→ 写在 `mock-e2e/`
+- 测**纯函数 / 分支逻辑** → 写在 `unit/`
+
+```
+       mock-e2e（少，覆盖 UI 路径）
+              ↑
+     integration（中，覆盖后端模块协同）
+              ↑
+            unit（多，覆盖纯函数分支）
+```
+
 ## 范围
 
 当前覆盖场景分布在 `.spec.ts` 文件里，按业务域命名：
