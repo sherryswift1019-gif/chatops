@@ -329,18 +329,134 @@ stateDiagram-v2
 
 ### 前端展示（Bug 修复实例页面）
 
-| 当前 status | UI 显示 | 重试按钮 |
-|------------|---------|---------|
-| `draft` | 🔄 分析中 | 无 |
-| `published` | 🔄 修复中 | 无 |
-| `pipeline_success` | ⏳ 等待合并 | 无 |
-| `completed` | ✅ 已完成 | 无 |
-| `aborted` | ❌ 已取消 / 已失败 | ✅ 显示"重试" |
+| 当前 status | UI 显示 | 重试按钮 | 转人工按钮 |
+|------------|---------|---------|----------|
+| `draft` | 🔄 分析中 | 无 | 无 |
+| `published` | 🔄 修复中 | 无 | 无 |
+| `pipeline_success` | ⏳ 等待合并 | 无 | 无 |
+| `pending_manual` | 👤 待人工接手 | 无 | 无（已是 handover 终态） |
+| `completed` | ✅ 已完成 | 无 | 无 |
+| `aborted` | ❌ 已取消 / 已失败 | ✅ 显示"重试" | ✅ 显示"转人工"（V2 spec §9.3 触发源 `user_requested`） |
 
 **说明**：
 - `published` 和 `pipeline_success` 两个中间态便于前端展示进度
 - `aborted` 是所有"业务失败"（拒绝/超时/关闭/Pipeline失败）的统一终态，**不细分**——因为前端展示和重试逻辑都一样
-- `completed` 和 `aborted` 是终态，不可再变
+- `pending_manual` 是 handover MVP 引入的终态（2026-04-18 T5 之后 fix 失败走这里，不再走 aborted），前端独立徽标
+- `completed` `aborted` `pending_manual` 都是终态，不可再变
+
+---
+
+### UI 约定（2026-04-20 追加补齐）
+
+> **背景**：PRD §0.4 明确"[扩展] **复用/扩展 TestRunsPage**"，但 2026-04-17 plan Task 15 自行引入了"按 issue_id 聚合 + Collapse/Tree"的实现路径，偏离 PRD 原意。代码按 plan 执行后发现 UX 不达标（必须先选产品线、列表卡片形式难以扫描、多轮信息挤在列表里）。本节补齐 UI 约定作为源头回正依据，之后 plan/代码/e2e 按此对齐。
+
+#### 列表视图
+
+- **形态**：AntD `Table`，与 [TestRunsPage](../../../web/src/pages/TestRunsPage.tsx) 一致
+- **一行语义**：一行 = 一个 `bug_analysis_report`（不再按 issue_id 预聚合）
+- **默认范围**：**显示所有产品线**。产品线作为**可选**筛选器，不再强制必选
+- **列定义**（从左到右 8 列）：
+
+  | 列名 | 来源 | 说明 |
+  |------|------|------|
+  | 产品线 | `product_line_name`（后端 join `product_lines.name`） | Tag |
+  | 摘要 | `root_cause_summary`，无则 fallback 到 `metadata.userMessage` 截断 | 最多 2 行，超出省略；鼠标悬停 Tooltip 展示完整 |
+  | 等级 | `level` | Tag：L1（蓝）/L2（青）/L3（橙）/L4（紫）/ —（config_issue/usage_issue 场景） |
+  | 状态 | `status` | 按上方状态徽标 |
+  | 触发人 | `metadata.initiatorId` 或 `agent_session_id` 回溯 | 文本（钉钉/飞书 user id） |
+  | 创建时间 | `created_at` | `YYYY-MM-DD HH:mm`，**默认按此列 desc 排** |
+  | 完成时间 | `completed_at`（schema v14 新增字段，终态时写入） | 未完成显示 "—" |
+  | 操作 | — | 见下方按钮规则 |
+
+- **操作列按钮**：
+
+  | 按钮 | 显示条件 | 行为 |
+  |------|---------|------|
+  | 详情 | 始终 | 打开 Drawer |
+  | 查看 Issue | `issue_id` 非空 | 新窗口打开 GitLab Issue |
+  | 重试 | `status = aborted` | 调 `POST /admin/bug-reports/:id/retry`（已有） |
+  | 转人工 | `status = aborted` | 调 `POST /admin/bug-reports/:id/handover`（已有） |
+
+- **筛选器**（在表格上方工具栏，全部非必选）：产品线 / 状态 / 等级 / 分类。筛选参数用**前端 URL query**（浏览器地址栏 `?productLine=1&status=aborted&page=2`），作用是刷新/分享/浏览器前进后退都保留筛选状态。**与后端 GET 接口的 query string 是两回事，不要混淆**
+- **分页**：服务端分页，默认 `pageSize=20`，后端 `GET /admin/bug-analysis-reports` 已支持 `page/pageSize`
+
+#### 详情视图（Drawer）
+
+- **形态**：点击列表行"详情"按钮 → AntD `Drawer`（宽度 960px，右侧滑出）
+- **原则**：**业务价值字段全展示**——不遮不藏。复杂字段折叠默认收起（如 `metadata` JSONB、`solutions_json` 非推荐方案），点击展开看全量
+- **内容结构**（从上到下）：
+
+  **Section 1：基础元数据**（Descriptions 组件，2 列）
+  - report id / issue_id（带 Issue URL 链接）
+  - 产品线 / 等级（Tag）/ 分类（Tag: bug / config_issue / usage_issue）
+  - 当前状态（按状态徽标）/ 触发人（id）
+  - 置信度（`confidence` + `confidenceScore` 两者一起 `high (0.92)` 形式显示）
+  - 主仓库路径（`primary_project_path`）
+  - Pipeline Run（`pipeline_run_id` 带跳转链接到 TestRunsPage）
+  - Agent Session ID（`agent_session_id`，带复制按钮）
+  - 创建时间 / 更新时间 / 完成时间
+
+  **Section 2：分析内容**（Descriptions + 折叠块）
+  - **根因摘要**（`root_cause_summary`）—— 文本展示
+  - **推荐方案**（`solutions_json` 里 `recommended=true` 的那一个）—— 卡片高亮
+  - **备选方案**（`solutions_json` 里其它）—— Collapse 默认收起
+  - **受影响模块**（`affected_modules`）—— Tag list
+  - **分析步骤**（`analysis_steps`）—— 编号列表
+  - **完整报告**（`report.markdown`）—— Collapse 默认收起，展开后 react-markdown 渲染
+  - **原始 metadata**（`metadata` JSONB）—— Collapse 默认收起，展开后 JSON pretty-print
+
+  **Section 3：执行结果**（从 `bug_fix_events` 聚合，按 project 分组）
+  - **Issue 信息**（从 `create_issue` 事件）：Issue IID / URL / isReused 标记
+  - **修复尝试**（`fix_attempt` 事件，每个 project 多条）：每条显示 attempt 编号 + branch 名 + testPassed + error（失败时）+ output 摘要（折叠）
+  - **Merge Request**（`create_mr` 事件）：MR IID / MR URL（带跳转）
+  - **AI Review**（`ai_review` 事件）：label（Tag：ai-approved 绿 / ai-needs-attention 橙）+ summary（markdown）
+  - **通知记录**（`notify` 事件）：通知对象列表 + kind（handover/completed/...）
+  - **Handover 详情**（若有 `handover` 事件）：reason / owner / fix 分支 URL / 失败摘要 + attemptCount
+  - **审批记录**（若有 `approval` 事件）：decision / 审批人 / 备注
+
+  **Section 4：多轮历史**（仅当同一 `issue_id` 下有 2+ 轮 report 时显示）
+  - AntD `Collapse`，每轮一个 Panel
+  - Panel header："第 N 轮 · 状态 Tag · 创建时间 · 完成时间"
+  - Panel body：该轮的基础元数据 + 本轮事件时间线（紧凑模式，不再完整展开 Section 2/3，避免嵌套过深）
+  - 当前轮自动展开，其它轮默认收起
+  - 数据来源：后端 `GET /admin/bug-analysis-reports?issueId=X&productLineId=Y` 拉同 Issue 全部 report
+
+  **Section 5：本轮完整事件时间线**
+  - AntD `Timeline`，按 `created_at` 升序
+  - 每条事件：时间 + code 中文名 + project_path（若有）+ status 图标 + duration（若有）+ data 摘要
+
+#### 空态
+
+- 无数据（不带任何筛选）：AntD `Empty`，文案"**暂无 Bug 修复实例**"
+- 有筛选无结果：`Empty`，文案"**当前筛选条件下无结果**，试试调整筛选"
+- 加载中：`Table` 自带 `loading` 状态，不需要单独 Spin
+
+#### 后端 API 改动（本次必改）
+
+> 原 plan Task 15 里只写了前端改动，没说后端要扩展，导致 UI 层被后端约束倒逼走偏。本次 refactor 一并修复：
+
+1. **`GET /admin/bug-analysis-reports` 接口改动**：
+   - `product_line_id` 从**必填 → 可选**（不传时返回所有产品线的 report）。[现状](../../../src/admin/routes/bug-analysis-reports.ts#L41) `if (!productLineId) return { error: ... }` 必须改
+   - 新增 `issueId` query 参数（可选），用于 Drawer 多轮归集
+   - 新增返回字段 `product_line_name`（join `product_lines.name`）——列表直接渲染，不用前端二次请求
+   - 新增返回字段 `completed_at`（从新加字段读）
+
+2. **schema v14 新增 `bug_analysis_reports.completed_at TIMESTAMP`**：
+   - 默认 NULL（非终态时为空）
+   - 状态变为终态（`completed` / `aborted` / `pending_manual`）时，在对应 repository 方法（`updateReportStatus`）里**同步 SET `completed_at = NOW()`**
+   - 幂等：若 `completed_at` 已非空，不覆盖（避免重试场景把已完成时间改掉）
+
+3. **不改**：
+   - 新建专用的 `/rounds` 端点（用 list 接口加 `issueId` 筛选替代）
+   - 其它端点签名
+
+#### 不做（Growth Backlog）
+
+- "只看我的"快捷筛选（按 `initiator_id = 当前登录用户`）
+- 列定义可配置（列显示/隐藏/顺序）
+- 详情 Drawer 内"多轮对比"视图
+- 导出 CSV
+- `completed_at` 字段的历史数据回填（旧数据保持 NULL，展示 "—"）
 
 
 ## 阶段间数据传递：bug_fix_events 表
