@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar } from 'antd'
+import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar, Divider, Input } from 'antd'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, UserOutlined } from '@ant-design/icons'
-import { getTestRuns, getTestRun } from '../api/test-runs'
+import { getTestRuns, getTestRun, resumeTestRun } from '../api/test-runs'
 import type { TestRunWithUser } from '../api/test-runs'
 import { getTestPipelines } from '../api/test-pipelines'
 import { usePagination } from '../hooks/usePagination'
-import type { TestPipeline } from '../types'
+import type { TestPipeline, StageResult } from '../types'
 
 const statusColors: Record<string, string> = { pending: 'default', running: 'processing', success: 'success', failed: 'error', cancelled: 'warning' }
 const statusLabels: Record<string, string> = { pending: '等待中', running: '执行中', success: '成功', failed: '失败', cancelled: '已取消' }
@@ -22,6 +22,8 @@ export default function TestRunsPage() {
   const [loading, setLoading] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [selectedRun, setSelectedRun] = useState<TestRunWithUser | null>(null)
+  const [webhookDataInput, setWebhookDataInput] = useState('')
+  const [resumeBusy, setResumeBusy] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
 
   const { page, limit, setTotal, tableProps } = usePagination(20)
@@ -55,8 +57,82 @@ export default function TestRunsPage() {
     try {
       const run = await getTestRun(id)
       setSelectedRun(run)
+      setWebhookDataInput('')
       setDrawerOpen(true)
     } catch { message.error('加载失败') }
+  }
+
+  async function refreshDetail(id: number) {
+    try {
+      const run = await getTestRun(id)
+      setSelectedRun(run)
+    } catch { /* */ }
+  }
+
+  // Find the stage the graph is currently suspended on, if any. Backend marks
+  // an interrupted stage as status 'waiting' (approval) or leaves the current
+  // stage as 'running' while the webhook-waiter is parked; either way it's
+  // the first non-terminal stage whose type is approval/wait_webhook.
+  function findPendingInterruptStage(run: TestRunWithUser): StageResult | null {
+    if (run.status !== 'running') return null
+    for (const s of run.stageResults) {
+      if ((s.status === 'waiting' || s.status === 'running') &&
+          (s.type === 'approval' || s.type === 'wait_webhook')) {
+        return s
+      }
+    }
+    return null
+  }
+
+  async function handleResumeApproval(runId: number, decision: 'approved' | 'rejected' | 'timeout') {
+    setResumeBusy(true)
+    try {
+      await resumeTestRun(runId, { approval: decision })
+      message.success('续跑已发起')
+      await Promise.all([refreshDetail(runId), load()])
+    } catch (err) {
+      const e = err as { response?: { data?: { error?: string } } }
+      message.error(e.response?.data?.error ?? '续跑失败')
+    } finally {
+      setResumeBusy(false)
+    }
+  }
+
+  async function handleResumeWebhookData(runId: number) {
+    const raw = webhookDataInput.trim()
+    let parsed: unknown
+    try {
+      parsed = raw === '' ? {} : JSON.parse(raw)
+    } catch {
+      message.warning('JSON 解析失败')
+      return
+    }
+    setResumeBusy(true)
+    try {
+      await resumeTestRun(runId, { webhookData: parsed })
+      message.success('续跑已发起')
+      setWebhookDataInput('')
+      await Promise.all([refreshDetail(runId), load()])
+    } catch (err) {
+      const e = err as { response?: { data?: { error?: string } } }
+      message.error(e.response?.data?.error ?? '续跑失败')
+    } finally {
+      setResumeBusy(false)
+    }
+  }
+
+  async function handleResumeWebhookTimeout(runId: number) {
+    setResumeBusy(true)
+    try {
+      await resumeTestRun(runId, { webhookTimeout: true })
+      message.success('续跑已发起')
+      await Promise.all([refreshDetail(runId), load()])
+    } catch (err) {
+      const e = err as { response?: { data?: { error?: string } } }
+      message.error(e.response?.data?.error ?? '续跑失败')
+    } finally {
+      setResumeBusy(false)
+    }
   }
 
   const triggerLabels: Record<string, string> = { manual: '手动', api: 'API', scheduled: '定时' }
@@ -148,6 +224,88 @@ export default function TestRunsPage() {
                 </Button>
               </Space>
             )}
+
+            {selectedRun.status === 'pending' && (
+              <>
+                <Divider style={{ margin: '16px 0' }} />
+                <div style={{ color: '#999', fontSize: 13 }}>运行尚未开始，无可恢复的挂起点</div>
+              </>
+            )}
+
+            {(() => {
+              const pendingStage = findPendingInterruptStage(selectedRun)
+              if (!pendingStage) return null
+              const runId = selectedRun.id
+              if (pendingStage.type === 'approval') {
+                return (
+                  <>
+                    <Divider style={{ margin: '16px 0' }} />
+                    <div style={{ marginBottom: 8, fontWeight: 500 }}>
+                      审批待决：{pendingStage.name}
+                    </div>
+                    <div style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>
+                      钉钉卡片未收到回复时，可在此手动续跑
+                    </div>
+                    <Space>
+                      <Button
+                        type="primary"
+                        loading={resumeBusy}
+                        onClick={() => handleResumeApproval(runId, 'approved')}
+                      >
+                        ✅ 批准
+                      </Button>
+                      <Button
+                        danger
+                        loading={resumeBusy}
+                        onClick={() => handleResumeApproval(runId, 'rejected')}
+                      >
+                        ❌ 拒绝
+                      </Button>
+                      <Button
+                        loading={resumeBusy}
+                        onClick={() => handleResumeApproval(runId, 'timeout')}
+                      >
+                        ⏱ 标记超时
+                      </Button>
+                    </Space>
+                  </>
+                )
+              }
+              // wait_webhook
+              return (
+                <>
+                  <Divider style={{ margin: '16px 0' }} />
+                  <div style={{ marginBottom: 8, fontWeight: 500 }}>
+                    等待 webhook：{pendingStage.name}
+                  </div>
+                  <div style={{ color: '#666', fontSize: 12, marginBottom: 8 }}>
+                    可手动提供数据或标记超时
+                  </div>
+                  <Input.TextArea
+                    rows={4}
+                    value={webhookDataInput}
+                    onChange={(e) => setWebhookDataInput(e.target.value)}
+                    placeholder="输入 webhook 数据（JSON，可为空对象 {}）"
+                    style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}
+                  />
+                  <Space>
+                    <Button
+                      type="primary"
+                      loading={resumeBusy}
+                      onClick={() => handleResumeWebhookData(runId)}
+                    >
+                      提交数据并继续
+                    </Button>
+                    <Button
+                      loading={resumeBusy}
+                      onClick={() => handleResumeWebhookTimeout(runId)}
+                    >
+                      ⏱ 标记超时
+                    </Button>
+                  </Space>
+                </>
+              )
+            })()}
           </>
         )}
       </Drawer>

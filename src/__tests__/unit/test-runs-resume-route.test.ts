@@ -136,6 +136,21 @@ describe('POST /admin/test-runs/:id/resume', () => {
     await app.close()
   })
 
+  it('409 with "not started yet" when run is still pending', async () => {
+    vi.mocked(getTestRunById).mockResolvedValueOnce(makeRun({ status: 'pending' }))
+    const app = await buildApp()
+    const res = await app.inject({
+      method: 'POST',
+      url: '/admin/test-runs/1/resume',
+      payload: { approval: 'approved' },
+    })
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toEqual({ error: 'run not started yet' })
+    expect(vi.mocked(getPendingInterrupt)).not.toHaveBeenCalled()
+    expect(vi.mocked(resumeRun)).not.toHaveBeenCalled()
+    await app.close()
+  })
+
   it('409 when running but no pending interrupt', async () => {
     vi.mocked(getTestRunById).mockResolvedValueOnce(makeRun())
     vi.mocked(getPendingInterrupt).mockResolvedValueOnce(null)

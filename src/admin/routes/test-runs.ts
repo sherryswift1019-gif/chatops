@@ -125,6 +125,11 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     }
     const run = await getTestRunById(runId)
     if (!run) return reply.status(404).send({ error: 'run not found' })
+    // A run that has never started has no graph state yet — separate message
+    // so the UI can show "not started" instead of a generic conflict.
+    if (run.status === 'pending') {
+      return reply.status(409).send({ error: 'run not started yet' })
+    }
     // A finished run cannot be resumed — the graph is at END and state is frozen.
     if (run.status === 'success' || run.status === 'failed' || run.status === 'cancelled') {
       return reply.status(409).send({ error: `run already ${run.status}` })
