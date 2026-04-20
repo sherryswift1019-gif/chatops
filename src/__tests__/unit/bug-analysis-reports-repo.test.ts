@@ -109,3 +109,74 @@ describe('bug-analysis-reports extension', () => {
     expect(updated?.status).toBe('pipeline_success')
   })
 })
+
+describe('bug-analysis-reports repository — completed_at', () => {
+  beforeEach(async () => {
+    await resetTestDb()
+    await getTestPool().query(`INSERT INTO product_lines (name, display_name) VALUES ('pam','PAM')`)
+  })
+
+  it('终态状态 (completed) 触发 completed_at 写入', async () => {
+    const r = await createBugAnalysisReport({
+      issueId: 1, issueUrl: 'x', productLineId: 1, level: 'l2',
+      classification: 'bug', confidence: 'high',
+      solutionsJson: [], status: 'draft',
+    } as any)
+    await updateReportStatus(r.id, 'completed')
+    const fresh = await getBugAnalysisReportById(r.id)
+    expect(fresh!.completedAt).toBeInstanceOf(Date)
+  })
+
+  it('终态状态 (aborted) 也触发写入', async () => {
+    const r = await createBugAnalysisReport({
+      issueId: 2, issueUrl: 'x', productLineId: 1, level: 'l2',
+      classification: 'bug', confidence: 'high',
+      solutionsJson: [], status: 'draft',
+    } as any)
+    await updateReportStatus(r.id, 'aborted')
+    const fresh = await getBugAnalysisReportById(r.id)
+    expect(fresh!.completedAt).toBeInstanceOf(Date)
+  })
+
+  it('终态状态 (pending_manual) 也触发写入', async () => {
+    const r = await createBugAnalysisReport({
+      issueId: 3, issueUrl: 'x', productLineId: 1, level: 'l2',
+      classification: 'bug', confidence: 'high',
+      solutionsJson: [], status: 'draft',
+    } as any)
+    await updateReportStatus(r.id, 'pending_manual')
+    const fresh = await getBugAnalysisReportById(r.id)
+    expect(fresh!.completedAt).toBeInstanceOf(Date)
+  })
+
+  it('非终态 (published / pipeline_success) 不写 completed_at', async () => {
+    const r = await createBugAnalysisReport({
+      issueId: 4, issueUrl: 'x', productLineId: 1, level: 'l2',
+      classification: 'bug', confidence: 'high',
+      solutionsJson: [], status: 'draft',
+    } as any)
+    await updateReportStatus(r.id, 'published')
+    let fresh = await getBugAnalysisReportById(r.id)
+    expect(fresh!.completedAt).toBeNull()
+
+    await updateReportStatus(r.id, 'pipeline_success')
+    fresh = await getBugAnalysisReportById(r.id)
+    expect(fresh!.completedAt).toBeNull()
+  })
+
+  it('幂等：已有 completed_at 不被二次写入覆盖', async () => {
+    const r = await createBugAnalysisReport({
+      issueId: 5, issueUrl: 'x', productLineId: 1, level: 'l2',
+      classification: 'bug', confidence: 'high',
+      solutionsJson: [], status: 'draft',
+    } as any)
+    await updateReportStatus(r.id, 'completed')
+    const firstCompleteAt = (await getBugAnalysisReportById(r.id))!.completedAt!
+
+    await new Promise(res => setTimeout(res, 50))
+    await updateReportStatus(r.id, 'completed')
+    const secondCompleteAt = (await getBugAnalysisReportById(r.id))!.completedAt!
+
+    expect(secondCompleteAt.getTime()).toBe(firstCompleteAt.getTime())
+  })
+})

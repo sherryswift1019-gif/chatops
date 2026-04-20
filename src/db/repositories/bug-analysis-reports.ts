@@ -39,6 +39,8 @@ export interface BugAnalysisReport {
   primaryProjectPath: string | null
   createdAt: Date
   updatedAt: Date
+  completedAt: Date | null
+  productLineName?: string
 }
 
 function mapRow(r: Record<string, unknown>): BugAnalysisReport {
@@ -62,6 +64,8 @@ function mapRow(r: Record<string, unknown>): BugAnalysisReport {
     primaryProjectPath: (r.primary_project_path as string | null) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
+    completedAt: (r.completed_at ?? null) as Date | null,
+    productLineName: r.product_line_name as string | undefined,
   }
 }
 
@@ -109,8 +113,27 @@ export async function getBugAnalysisReportByIssueId(issueId: number): Promise<Bu
   return rows[0] ? mapRow(rows[0]) : null
 }
 
+const TERMINAL_STATUSES: ReadonlySet<ReportStatus> = new Set<ReportStatus>([
+  'completed',
+  'aborted',
+  'pending_manual',
+])
+
 export async function updateReportStatus(id: number, status: ReportStatus): Promise<BugAnalysisReport | null> {
   const pool = getPool()
+  if (TERMINAL_STATUSES.has(status)) {
+    // 终态：幂等写入 completed_at（已非空时保留原值）
+    const { rows } = await pool.query(
+      `UPDATE bug_analysis_reports
+         SET status = $2,
+             updated_at = NOW(),
+             completed_at = COALESCE(completed_at, NOW())
+       WHERE id = $1
+       RETURNING *`,
+      [id, status],
+    )
+    return rows[0] ? mapRow(rows[0]) : null
+  }
   const { rows } = await pool.query(
     'UPDATE bug_analysis_reports SET status = $2, updated_at = NOW() WHERE id = $1 RETURNING *',
     [id, status]
