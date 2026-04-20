@@ -32,27 +32,53 @@ export interface BuildGraphInput {
   triggerParams?: Record<string, unknown>
 }
 
+// Interrupt type / resume value constants. Task 3 (approval-manager /
+// webhook-waiter) routes on the `type` field; keeping these as named constants
+// lets TypeScript catch typos at compile time instead of at runtime.
+export const APPROVAL_INTERRUPT = 'approval' as const
+export const WEBHOOK_INTERRUPT = 'webhook' as const
+export const APPROVAL_APPROVED = 'approved' as const
+export const APPROVAL_REJECTED = 'rejected' as const
+// NOTE: webhook timeout is expressed as `{ timeout: true }` on the resume
+// value (see `WebhookResume`), not as an extra constant here.
+
 // Shape of the value passed to interrupt() for approval stages.
 export interface ApprovalInterruptValue {
-  type: 'approval'
+  type: typeof APPROVAL_INTERRUPT
   stageIndex: number
   approverIds: string[]
   description: string
 }
 // Expected resume value for an approval interrupt.
-export type ApprovalResume = 'approved' | 'rejected' | 'timeout'
+export type ApprovalResume =
+  | typeof APPROVAL_APPROVED
+  | typeof APPROVAL_REJECTED
+  | 'timeout'
 
 // Shape of the value passed to interrupt() for webhook stages.
 export interface WebhookInterruptValue {
-  type: 'webhook'
+  type: typeof WEBHOOK_INTERRUPT
   stageIndex: number
   tag: string
 }
-// Expected resume value for a webhook interrupt.
-// Note: LangGraph's Command treats `resume == null` as "no resume" and throws
-// EmptyInputError, so timeout must be encoded as an explicit sentinel object
-// rather than null. Callers should dispatch `Command({ resume: { timeout: true } })`.
-export type WebhookResume = { data: unknown } | { timeout: true } | null | undefined
+/**
+ * Expected resume value for a webhook interrupt.
+ *
+ * Task 3 **must** dispatch exactly one of:
+ *   - `new Command({ resume: { data: <payload> } })`  — webhook arrived
+ *   - `new Command({ resume: { timeout: true } })`    — wait timed out
+ *
+ * Rationale for not allowing `null` / `undefined`:
+ * LangGraph's Command constructor treats `resume == null` as "no resume
+ * provided" and throws `EmptyInputError`. Timeout must therefore be an
+ * explicit sentinel object, not a nullish value. Narrowing the type here
+ * prevents Task 3 from accidentally falling into that trap.
+ *
+ * Success vs timeout is distinguished by the presence of the `timeout: true`
+ * field (see `buildWaitWebhookNode`). Payloads that happen to contain a
+ * `timeout` key can use `{ data: ... }` to disambiguate.
+ */
+export type WebhookResume = { data: unknown } | { timeout: true }
 
 function nodeName(index: number, stage: StageDefinition): string {
   return `stage_${index}_${stage.stageType}`
@@ -111,6 +137,12 @@ function shouldStopAfter(stage: StageDefinition, result: StageResult): boolean {
 
 // Build the script node. Captures stage/index/hooks/ctx in a closure so the
 // returned async function matches the StateGraph NodeAction signature.
+//
+// Hook errors are caught and materialised as a failed StageExecutionResult so
+// the conditional router still runs: otherwise a thrown hook would crash the
+// superstep, no StageResult gets written, and `onFailure='continue'` would
+// silently stop the graph. Mirrors executor.ts behaviour (executeScriptStage
+// / executeCapabilityStage wrap their work in try/catch).
 function buildScriptNode(
   stage: StageDefinition,
   index: number,
@@ -128,7 +160,16 @@ function buildScriptNode(
     const startedAt = nowIso()
     const startedMs = Date.now()
     const ctx: StageContext = { ...ctxBase, stageIndex: index }
-    const exec = await hooks.runScript(stage, ctx, targetServers)
+    let exec: StageExecutionResult
+    try {
+      exec = await hooks.runScript(stage, ctx, targetServers)
+    } catch (err) {
+      exec = {
+        status: 'failed',
+        output: `script hook error: ${String(err)}`,
+        error: String(err),
+      }
+    }
     return {
       currentStageIndex: index,
       stageResults: finishedResult(stage, startedAt, startedMs, exec),
@@ -147,7 +188,16 @@ function buildCapabilityNode(
     const startedAt = nowIso()
     const startedMs = Date.now()
     const ctx: StageContext = { ...ctxBase, stageIndex: index }
-    const exec = await hooks.runCapability(stage, ctx, triggerParams)
+    let exec: StageExecutionResult
+    try {
+      exec = await hooks.runCapability(stage, ctx, triggerParams)
+    } catch (err) {
+      exec = {
+        status: 'failed',
+        output: `capability hook error: ${String(err)}`,
+        error: String(err),
+      }
+    }
     return {
       currentStageIndex: index,
       stageResults: finishedResult(stage, startedAt, startedMs, exec),
@@ -160,7 +210,7 @@ function buildApprovalNode(stage: StageDefinition, index: number) {
     const startedAt = nowIso()
     const startedMs = Date.now()
     const payload: ApprovalInterruptValue = {
-      type: 'approval',
+      type: APPROVAL_INTERRUPT,
       stageIndex: index,
       approverIds: stage.approverIds ?? [],
       description: stage.approvalDescription ?? stage.name,
@@ -169,9 +219,9 @@ function buildApprovalNode(stage: StageDefinition, index: number) {
     // resume value on subsequent entries once Command({resume}) is applied.
     const decision = interrupt(payload) as ApprovalResume
     const exec: StageExecutionResult =
-      decision === 'approved'
+      decision === APPROVAL_APPROVED
         ? { status: 'success', output: '审批通过' }
-        : decision === 'rejected'
+        : decision === APPROVAL_REJECTED
           ? { status: 'failed', output: '审批被拒绝', error: 'rejected' }
           : { status: 'failed', output: '审批超时', error: 'timeout' }
     return {
@@ -186,15 +236,19 @@ function buildWaitWebhookNode(stage: StageDefinition, index: number) {
     const startedAt = nowIso()
     const startedMs = Date.now()
     const payload: WebhookInterruptValue = {
-      type: 'webhook',
+      type: WEBHOOK_INTERRUPT,
       stageIndex: index,
       tag: stage.webhookTag ?? '',
     }
     const resume = interrupt(payload) as WebhookResume
+    // Task 3 contract: resume is either `{ data: ... }` (success) or
+    // `{ timeout: true }` (timeout). Any other shape is a caller bug —
+    // we treat "no `timeout: true`" as success and read `data` from it.
     const isTimeout =
-      resume === null ||
-      resume === undefined ||
-      (typeof resume === 'object' && 'timeout' in resume && resume.timeout === true)
+      typeof resume === 'object' &&
+      resume !== null &&
+      'timeout' in resume &&
+      (resume as { timeout: unknown }).timeout === true
     if (isTimeout) {
       const exec: StageExecutionResult = {
         status: 'failed',

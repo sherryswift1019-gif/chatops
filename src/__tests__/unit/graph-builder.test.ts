@@ -184,6 +184,48 @@ describe('buildGraphFromStages — onFailure=continue keeps going', () => {
   })
 })
 
+describe('buildGraphFromStages — hook throw is caught', () => {
+  it('script hook throws + onFailure=continue → stage failed, downstream runs', async () => {
+    const stages: StageDefinition[] = [
+      makeStage({ name: 's1', stageType: 'script', targetRoles: ['app'] }),
+      makeStage({
+        name: 's2-throws',
+        stageType: 'script',
+        targetRoles: ['app'],
+        onFailure: 'continue',
+      }),
+      makeStage({ name: 's3', stageType: 'script', targetRoles: ['app'] }),
+    ]
+
+    let call = 0
+    const hooks: StageHooks = {
+      async runScript() {
+        call += 1
+        if (call === 2) throw new Error('hook blew up')
+        return { status: 'success', output: 'ok' }
+      },
+      async runCapability() {
+        return { status: 'success', output: '' }
+      },
+    }
+
+    const graph = compile({ stages, stageContext: baseCtx(), hooks })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await graph.stream({ runId: 42 }, config))
+    const snap = await graph.getState(config)
+    const byName = Object.fromEntries(
+      snap.values.stageResults.map(
+        (r: { name: string; status: string; error?: string }) => [r.name, r],
+      ),
+    )
+    expect((byName.s1 as { status: string }).status).toBe('success')
+    const s2 = byName['s2-throws'] as { status: string; error?: string }
+    expect(s2.status).toBe('failed')
+    expect(s2.error).toContain('hook blew up')
+    expect((byName.s3 as { status: string }).status).toBe('success')
+  })
+})
+
 describe('buildGraphFromStages — approval rejected', () => {
   it('resume("rejected") → status failed + downstream skipped (onFailure=stop)', async () => {
     const stages: StageDefinition[] = [
