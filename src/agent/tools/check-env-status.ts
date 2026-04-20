@@ -15,7 +15,7 @@ import { findDeployedTag } from './env-status/tag-parser.js'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 import type { SSHTarget } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
-import { resolveComposeFile } from './ssh-utils.js'
+import { resolveComposeFile, findProjectByName, findEnvByName } from './ssh-utils.js'
 
 function log(msg: string) {
   try { appendFileSync('/tmp/mcp-server.log', `[${new Date().toISOString()}] [env-status] ${msg}\n`) } catch { /* */ }
@@ -54,9 +54,11 @@ async function scanK8sEnvironment(args: ScanArgs): Promise<ToolResult> {
   const registryHost = registryHostFrom(harborUrl)
 
   const allProjects = await listProjects(ctx.productLineId!)
-  const scoped = projectName
-    ? allProjects.filter(p => p.name === projectName || p.displayName === projectName)
-    : allProjects
+  const scoped = (() => {
+    if (!projectName) return allProjects
+    const matched = findProjectByName(allProjects, projectName)
+    return matched ? [matched] : []
+  })()
 
   if (scoped.length === 0) {
     return { success: false, output: projectName ? `模块 "${projectName}" 不在产线下。` : '当前产线下还没有模块。' }
@@ -193,7 +195,7 @@ export const checkEnvStatusTool: AgentTool = {
     }
 
     const envs = await listEnvironments()
-    const envRow = envs.find(e => e.name === envName || e.displayName === envName)
+    const envRow = findEnvByName(envs, envName)
     if (!envRow) return { success: false, output: `环境 "${envName}" 未定义。` }
 
     const plEnvs = await listProductLineEnvs(ctx.productLineId)
@@ -221,9 +223,11 @@ export const checkEnvStatusTool: AgentTool = {
     const registryHost = registryHostFrom(harborUrl)
 
     const allProjects = await listProjects(ctx.productLineId)
-    const scoped = projectName
-      ? allProjects.filter(p => p.name === projectName || p.displayName === projectName)
-      : allProjects
+    const scoped = (() => {
+      if (!projectName) return allProjects
+      const matched = findProjectByName(allProjects, projectName)
+      return matched ? [matched] : []
+    })()
 
     if (scoped.length === 0) {
       return { success: false, output: projectName ? `模块 "${projectName}" 不在产线下。` : '当前产线下还没有模块。' }

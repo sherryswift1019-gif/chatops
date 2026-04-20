@@ -5,7 +5,7 @@ import { listProjects } from '../../db/repositories/projects-repo.js'
 import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
 import { getConfig } from '../../db/repositories/system-config.js'
-import { resolveSSHConfig, resolveComposeFile } from './ssh-utils.js'
+import { resolveSSHConfig, resolveComposeFile, findProjectByName, findEnvByName } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import axios from 'axios'
 import https from 'https'
@@ -49,11 +49,11 @@ function sshExec(config: { host: string; port?: number; username: string; passwo
 
 async function lookupProjectAndEnv(projectName: string, envName: string) {
   const projects = await listProjects()
-  const project = projects.find(p => p.name === projectName || p.displayName === projectName)
+  const project = findProjectByName(projects, projectName)
   if (!project) throw new Error(`模块 "${projectName}" 未在数据库中注册`)
 
   const envs = await listEnvironments()
-  const env = envs.find(e => e.name === envName || e.displayName === envName)
+  const env = findEnvByName(envs, envName)
   if (!env) throw new Error(`环境 "${envName}" 未定义`)
 
   const plEnvs = await listProductLineEnvs(project.productLineId)

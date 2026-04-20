@@ -3,7 +3,7 @@ import { Client } from 'ssh2'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
-import { resolveSSHConfig, resolveComposeFile } from './ssh-utils.js'
+import { resolveSSHConfig, resolveComposeFile, findProjectByName, findEnvByName } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
@@ -49,12 +49,12 @@ const getLogsTool: AgentTool = {
     try {
       // 查项目
       const projects = await listProjects()
-      const project = projects.find(p => p.name === projectName || p.displayName === projectName)
+      const project = findProjectByName(projects, projectName)
       if (!project) return { success: false, output: `模块 "${projectName}" 未在数据库中注册` }
 
       // 查环境
       const envs = await listEnvironments()
-      const env = envs.find(e => e.name === envName || e.displayName === envName)
+      const env = findEnvByName(envs, envName)
       if (!env) return { success: false, output: `环境 "${envName}" 未定义` }
 
       // 查产线环境配置

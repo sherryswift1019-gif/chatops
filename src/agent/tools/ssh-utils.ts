@@ -37,3 +37,36 @@ export function resolveComposeFile(composePath: string): string {
   }
   return `${composePath.replace(/\/+$/, '')}/docker-compose.yml`
 }
+
+function normalizeName(s: string | null | undefined): string {
+  if (!s) return ''
+  return s.toLowerCase().replace(/[-_\s]+/g, '')
+}
+
+export function findProjectByName<T extends { name: string; displayName: string; harborProject?: string | null }>(
+  projects: T[],
+  input: string,
+): T | undefined {
+  const exact = projects.find(p =>
+    p.name === input || p.displayName === input || p.harborProject === input
+  )
+  if (exact) return exact
+  const key = normalizeName(input)
+  if (!key) return undefined
+  return projects.find(p =>
+    normalizeName(p.name) === key ||
+    normalizeName(p.displayName) === key ||
+    normalizeName(p.harborProject) === key
+  )
+}
+
+export function findEnvByName<T extends { name: string; displayName: string }>(
+  envs: T[],
+  input: string,
+): T | undefined {
+  const exact = envs.find(e => e.name === input || e.displayName === input)
+  if (exact) return exact
+  const key = normalizeName(input)
+  if (!key) return undefined
+  return envs.find(e => normalizeName(e.name) === key || normalizeName(e.displayName) === key)
+}
