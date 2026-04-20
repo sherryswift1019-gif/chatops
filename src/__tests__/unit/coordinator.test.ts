@@ -155,6 +155,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
       {},
       'api',
       'u-trigger',
+      {},  // runtimeVarsInput（artifact-inputs 功能引入的新参数）
       expect.any(Function),
       { reportId: fakeReport.id },
     )
@@ -177,7 +178,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     ;(getBugAnalysisReportById as any).mockResolvedValue(fakeReport)
 
     let captured: ((r: any) => Promise<void>) | null = null
-    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, _rv: unknown, onComplete: any) => {
       captured = onComplete
       return 100
     })
@@ -199,7 +200,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     ;(findByReportCode as any).mockResolvedValue([])
 
     let captured: ((r: any) => Promise<void>) | null = null
-    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, _rv: unknown, onComplete: any) => {
       captured = onComplete
       return 101
     })
@@ -243,7 +244,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     })
 
     let captured: ((r: any) => Promise<void>) | null = null
-    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, _rv: unknown, onComplete: any) => {
       captured = onComplete
       return 103
     })
@@ -303,7 +304,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     })
 
     let captured: ((r: any) => Promise<void>) | null = null
-    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, _rv: unknown, onComplete: any) => {
       captured = onComplete
       return 105
     })
@@ -348,7 +349,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     })
 
     let captured: ((r: any) => Promise<void>) | null = null
-    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, _rv: unknown, onComplete: any) => {
       captured = onComplete
       return 106
     })
@@ -384,7 +385,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     })
 
     let captured: ((r: any) => Promise<void>) | null = null
-    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, _rv: unknown, onComplete: any) => {
       captured = onComplete
       return 104
     })
@@ -425,7 +426,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     })
 
     let captured: ((r: any) => Promise<void>) | null = null
-    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, onComplete: any) => {
+    ;(runPipeline as any).mockImplementation(async (_id: number, _sa: unknown, _tt: string, _tb: string, _rv: unknown, onComplete: any) => {
       captured = onComplete
       return 200
     })
