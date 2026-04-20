@@ -41,6 +41,24 @@ DATABASE_URL=postgres://chatops:chatops@localhost:5432/chatops_test pnpm test:e2
 > ```
 > 或者 CI 里把 DATABASE_URL 固化在 job env 里，本地开发机靠这个前置检查。
 
+## 测试库 bootstrap（仅首次 / 迁移到新机器时一次）
+
+为了防止"DATABASE_URL 被误设到生产库，`resetTestDb()` 把生产库 DROP 了"这类事故，`helpers/db.ts` 有**双重防御**：
+
+1. **`NODE_ENV==='test'`**——vitest 自动设置，正常跑测试零感知；非测试进程调用 `resetTestDb()` 立即拒绝
+2. **marker 表 `chatops_test_db_marker`** 必须存在——生产库绝不会有这张表；测试库需要**一次性手动种进去**
+
+首次使用 `chatops_test` 库（或换机器后）要跑一次：
+
+```bash
+# 确认你创建的是**专用测试库**，不要在生产/开发库上跑
+psql "postgres://chatops:chatops@localhost:5432/chatops_test" -c "CREATE TABLE chatops_test_db_marker (id INT PRIMARY KEY); INSERT INTO chatops_test_db_marker (id) VALUES (1);"
+```
+
+之后 `resetTestDb()` 每次 DROP 重建 schema 后会自动把 marker 种回去，你不用再管。
+
+如果 marker 缺失会收到明确错误（含 bootstrap 命令），**不会**误伤数据。防御测试见 [`src/__tests__/unit/assert-test-db-safe.test.ts`](../unit/assert-test-db-safe.test.ts)。
+
 > npm script 名保留 `test:e2e` 未改，避免破坏现有习惯。Playwright 官方术语也仍用 "e2e"。
 
 ## 约定
