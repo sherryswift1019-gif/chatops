@@ -148,28 +148,38 @@ test.describe('L1 配置类 Bug 全链路', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
-    // 等 BugRunsPage 根 Card 出现（title="Bug 修复实例"） — 避免匹到顶部 header 和 sider 菜单，
-    // 用 Card 自己的 head title locator
+    // Table + Drawer 新 UI：URL 带 productLine 直达；行 = 一个 report；点「详情」开 Drawer 断言 Timeline
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    // 点开 AntD Select（BugRunsPage 里只有一个 Select）
-    await pageCard.locator('.ant-select').first().click()
-    // 弹出下拉后选择 PAM 选项
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    // 等 IssueCard 渲染：标题含 "Issue #" 前缀（由 BugRunsPage.IssueCard 拼接）
-    // 这里 issue 是 mock server 自增的 iid（第一次创建 issue，iid=1）
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
+    // Table 状态列：pipeline_success → 中文 "Pipeline 成功"
+    await expect(
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /Pipeline 成功/ }).first(),
+    ).toBeVisible({ timeout: 10_000 })
 
-    // 关键断言：timeline 中至少能看到这些文案（默认 Collapse defaultActiveKey 已展开 latest round）
-    await expect(page.locator('.ant-timeline').getByText(/分析完成/).first()).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('.ant-timeline').getByText(/MR !\d+/).first()).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('.ant-timeline').getByText('AI Review: ai-approved')).toBeVisible({
-      timeout: 10_000,
-    })
+    // 打开 Drawer（Section 5 为完整事件时间线；新 UI 用 codeLabel 映射：分析/创建 MR/AI Review）
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    // Section 5 的 Timeline 是 Drawer 内最后一个 .ant-timeline
+    const fullTimeline = drawer.locator('.ant-timeline').last()
+    await expect(fullTimeline).toBeVisible({ timeout: 10_000 })
+
+    // Timeline item 里的 Tag: 分析 / 创建 MR / AI Review
+    await expect(fullTimeline.locator('.ant-tag').filter({ hasText: /^分析$/ }).first()).toBeVisible()
+    await expect(fullTimeline.locator('.ant-tag').filter({ hasText: /^创建 MR$/ }).first()).toBeVisible()
+    await expect(fullTimeline.locator('.ant-tag').filter({ hasText: /^AI Review$/ }).first()).toBeVisible()
+
+    // Section 3 执行结果里的 AI Review label="ai-approved"
+    await expect(drawer.locator('.ant-tag').filter({ hasText: /^ai-approved$/ }).first()).toBeVisible()
+
+    // 关 Drawer（后续还要继续操作 page）
+    await page.keyboard.press('Escape')
 
     // ── 5. GitLab webhook: MR merge → status=completed ─────────────────────
     // 查刚创建的 MR iid（由 create_mr 事件 data 记录）

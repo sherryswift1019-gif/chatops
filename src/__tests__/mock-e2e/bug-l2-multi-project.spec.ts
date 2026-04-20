@@ -221,33 +221,33 @@ test.describe('多 project 修复 → 主/从 MR description 差异', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
-
-    await expect(page.locator('.ant-tag').filter({ hasText: /^L2$/ }).first()).toBeVisible({
+    // L2 等级 + 中文「Pipeline 成功」
+    await expect(firstRow.locator('.ant-tag').filter({ hasText: /^L2$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^pipeline_success$/ }).first(),
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /Pipeline 成功/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
 
-    // Timeline 应该有 "MR !<primaryMrIid>" 和 "MR !<secondaryMrIid>"
+    // Drawer Timeline 至少有 2 个「创建 MR」事件（多 project 2 个 MR）
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    const fullTimeline = drawer.locator('.ant-timeline').last()
     await expect(
-      page
-        .locator('.ant-timeline')
-        .getByText(new RegExp(`MR !${primaryMrIid}（PAM/pas-api）`)),
-    ).toBeVisible({ timeout: 10_000 })
-    await expect(
-      page
-        .locator('.ant-timeline')
-        .getByText(new RegExp(`MR !${secondaryMrIid}（PAM/pas-web）`)),
-    ).toBeVisible({ timeout: 10_000 })
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^创建 MR$/ }),
+    ).toHaveCount(2, { timeout: 10_000 })
+
+    // Timeline 内应能看到两个 project path
+    await expect(fullTimeline.getByText('PAM/pas-api').first()).toBeVisible({ timeout: 10_000 })
+    await expect(fullTimeline.getByText('PAM/pas-web').first()).toBeVisible({ timeout: 10_000 })
   })
 })

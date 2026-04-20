@@ -151,24 +151,26 @@ test.describe('MR 关闭 → aborted', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
-
-    // aborted 徽标（RoundHeader 里的 Tag）
+    // aborted → 中文「已终止」
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^aborted$/ }).first(),
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /已终止/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
 
-    // Timeline 里有 "MR close → aborted"（EventContent lifecycle_sync 分支）
+    // 打开 Drawer：Section 5 Timeline 含 lifecycle_sync 事件（codeLabel="生命周期同步"）
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    const fullTimeline = drawer.locator('.ant-timeline').last()
     await expect(
-      page.locator('.ant-timeline').getByText(/MR close → aborted/),
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^生命周期同步$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
   })
 })

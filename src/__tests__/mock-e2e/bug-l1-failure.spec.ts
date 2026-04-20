@@ -143,30 +143,32 @@ test.describe('L1 修复失败 → handover (pending_manual)', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    // Table + Drawer 新 UI
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    // IssueCard 标题：Issue #N
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
+    // 状态 Tag "待人工接手"（T5 后 fix 失败进入 handover 路径，对应 pending_manual）
+    await expect(
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /待人工接手/ }).first(),
+    ).toBeVisible({ timeout: 10_000 })
 
-    // 状态标签 "pending_manual"（T5 后 fix 失败进入 handover 路径）
-    await expect(page.locator('.ant-tag').filter({ hasText: /^pending_manual$/ }).first()).toBeVisible({
+    // 打开 Drawer：Section 5 Timeline 含「修复尝试」codeLabel（对应 fix_attempt 事件）
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    const fullTimeline = drawer.locator('.ant-timeline').last()
+    await expect(fullTimeline.locator('.ant-tag').filter({ hasText: /^分析$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
-
-    // 时间线含 "❌ PAM/pas-api 修复" （EventContent fix_attempt + status=failed）
     await expect(
-      page.locator('.ant-timeline').getByText(/❌ PAM\/pas-api 修复/).first(),
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^修复尝试$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
-
-    // 时间线含 "分析完成"
-    await expect(
-      page.locator('.ant-timeline').getByText(/分析完成/).first(),
-    ).toBeVisible({ timeout: 10_000 })
+    // 失败的 fix_attempt 会带 PAM/pas-api 的 Text code
+    await expect(fullTimeline.getByText('PAM/pas-api').first()).toBeVisible({ timeout: 10_000 })
   })
 })

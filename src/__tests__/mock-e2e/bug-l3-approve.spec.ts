@@ -228,32 +228,32 @@ test.describe('L3 审批通过 → 继续修复', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
-
-    // L3 标签
-    await expect(page.locator('.ant-tag').filter({ hasText: /^L3$/ }).first()).toBeVisible({
+    // L3 等级 + 中文「Pipeline 成功」
+    await expect(firstRow.locator('.ant-tag').filter({ hasText: /^L3$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
-    // pipeline_success 标签
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^pipeline_success$/ }).first(),
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /Pipeline 成功/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
 
-    // 审批事件文本：EventContent 'approval' → "审批: approved"
+    // Drawer Timeline 含「审批」与「AI Review」
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    const fullTimeline = drawer.locator('.ant-timeline').last()
     await expect(
-      page.locator('.ant-timeline').getByText('审批: approved'),
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^审批$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
-    // AI Review 事件
     await expect(
-      page.locator('.ant-timeline').getByText('AI Review: ai-approved').first(),
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^AI Review$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
 
     // ── 8. DM 断言：成功通知 ───────────────────────────────────────────────

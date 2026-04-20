@@ -134,31 +134,36 @@ test.describe('L2 代码缺陷 全链路', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
-
-    // L2 等级 tag（RoundHeader 显示 level.toUpperCase()）
-    await expect(page.locator('.ant-tag').filter({ hasText: /^L2$/ }).first()).toBeVisible({
+    // L2 等级 tag
+    await expect(firstRow.locator('.ant-tag').filter({ hasText: /^L2$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
 
-    // Timeline 关键事件
+    // Drawer Timeline 关键事件
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    const fullTimeline = drawer.locator('.ant-timeline').last()
     await expect(
-      page.locator('.ant-timeline').getByText(/分析完成/).first(),
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^分析$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
     await expect(
-      page.locator('.ant-timeline').getByText(/MR !\d+/).first(),
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^创建 MR$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
     await expect(
-      page.locator('.ant-timeline').getByText('AI Review: ai-approved'),
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^AI Review$/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
+
+    // 关 Drawer 以免影响后续 webhook 断言
+    await page.keyboard.press('Escape')
 
     // ── 5. GitLab webhook merge → status=completed ─────────────────────────
     const mrRows = await dbQuery<{ data: { mrIid: number } }>(

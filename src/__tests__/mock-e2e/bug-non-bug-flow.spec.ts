@@ -155,20 +155,16 @@ test.describe('非 bug 分类（config_issue / usage_issue）→ 直接 complete
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
-
-    // 非 bug 依然会生成 report 行，只是 status=completed；其 issueId=0 / issueUrl=''（未建 Issue）
-    // BugRunsPage 以 issueId 分组，issueId=0 也会作为一组展示
-    // 等 Collapse 渲染出至少一行
-    await expect(page.locator('.ant-collapse-item').first()).toBeVisible({ timeout: 10_000 })
-    // completed status Tag 可见（color=success，DOM class ant-tag-success）
+    // Table + Drawer 新 UI：非 bug 仍然生成 report 行，status=completed
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
+    // 中文「已完成」tag 可见
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^completed$/ }).first(),
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /已完成/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
   })
 })

@@ -181,28 +181,29 @@ test.describe('L4 架构级 Bug → handover 路径（不再走 L4 Pipeline）',
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
-
-    // L4 等级 tag
-    await expect(page.locator('.ant-tag').filter({ hasText: /^L4$/ }).first()).toBeVisible({
+    // L4 等级 tag + 中文「待人工接手」tag
+    await expect(firstRow.locator('.ant-tag').filter({ hasText: /^L4$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
-    // pending_manual 状态 tag（不再是 pipeline_success）
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^pending_manual$/ }).first(),
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /待人工接手/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
 
-    // Timeline 应该有"通知"事件（handover kind 也走 notify event）
-    await expect(page.locator('.ant-timeline').getByText(/通知|notify/).first()).toBeVisible({
-      timeout: 10_000,
-    })
+    // Drawer Timeline 含「通知」事件
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    const fullTimeline = drawer.locator('.ant-timeline').last()
+    await expect(
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^通知$/ }).first(),
+    ).toBeVisible({ timeout: 10_000 })
   })
 })

@@ -229,25 +229,28 @@ test.describe('群内 reanalyze 命令 → 触发重新分析（真实 IM 入口
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    // Table + Drawer 新 UI：两轮 report = Table 2 行
+    const rows = pageCard.locator('.ant-table-tbody tr.ant-table-row')
+    await expect(rows).toHaveCount(2, { timeout: 10_000 })
 
-    // IssueCard 可见（同一 issueIid，两轮 report 合并到一张卡）
-    await expect(page.locator(`text=/Issue #${issueIid}/`).first()).toBeVisible({ timeout: 10_000 })
-    // 2 轮 Tag
+    // 其中至少一行是「已终止」（第 1 轮被 reject 了）
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^2 轮$/ }).first(),
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /已终止/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
-    // 两个 Collapse 面板（RoundHeader 包含"第 1 轮"、"第 2 轮"）
-    await expect(page.locator('text=/第 1 轮/').first()).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('text=/第 2 轮/').first()).toBeVisible({ timeout: 10_000 })
-    // 旧 round 应该是 aborted 状态标签
-    await expect(
-      page.locator('.ant-tag').filter({ hasText: /^aborted$/ }).first(),
-    ).toBeVisible({ timeout: 10_000 })
+
+    // 点开第 1 行（最新的 report）Drawer → Section 4「多轮历史」显示两个 Collapse Panel
+    await rows.first().getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    // Section 4 标题
+    await expect(drawer.getByText(/多轮历史（2 轮）/)).toBeVisible({ timeout: 10_000 })
+    // 两个 Panel 头部「第 1 轮」「第 2 轮」
+    await expect(drawer.getByText(/第 1 轮/).first()).toBeVisible({ timeout: 10_000 })
+    await expect(drawer.getByText(/第 2 轮/).first()).toBeVisible({ timeout: 10_000 })
   })
 })

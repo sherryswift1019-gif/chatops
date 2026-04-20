@@ -197,25 +197,32 @@ test.describe('L3 审批超时 → aborted', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    await page.goto(`/bug-runs?productLine=${productLineId}`)
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const firstRow = pageCard.locator('.ant-table-tbody tr.ant-table-row').first()
+    await expect(firstRow).toBeVisible({ timeout: 10_000 })
 
-    const issueCardTitle = page.locator('text=/Issue #\\d+/').first()
-    await expect(issueCardTitle).toBeVisible({ timeout: 10_000 })
-
-    await expect(page.locator('.ant-tag').filter({ hasText: /^L3$/ }).first()).toBeVisible({
+    // L3 等级 tag + 中文「已终止」tag
+    await expect(firstRow.locator('.ant-tag').filter({ hasText: /^L3$/ }).first()).toBeVisible({
       timeout: 10_000,
     })
     await expect(
-      page.locator('.ant-tag').filter({ hasText: /^aborted$/ }).first(),
+      pageCard.locator('.ant-table-tbody .ant-tag').filter({ hasText: /已终止/ }).first(),
     ).toBeVisible({ timeout: 10_000 })
 
-    // Timeline 里不应该出现 MR / AI Review 文案
-    expect(await page.locator('.ant-timeline').getByText(/MR !\d+/).count()).toBe(0)
-    expect(await page.locator('.ant-timeline').getByText(/AI Review:/).count()).toBe(0)
+    // Drawer Timeline 不含「创建 MR」「AI Review」
+    await firstRow.getByRole('button', { name: '详情' }).click()
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
+
+    const fullTimeline = drawer.locator('.ant-timeline').last()
+    await expect(
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^创建 MR$/ }),
+    ).toHaveCount(0)
+    await expect(
+      fullTimeline.locator('.ant-tag').filter({ hasText: /^AI Review$/ }),
+    ).toHaveCount(0)
   })
 })
