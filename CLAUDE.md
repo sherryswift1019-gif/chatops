@@ -88,6 +88,17 @@ PostgreSQL，pg 驱动直连。Schema 通过 `src/db/schema.sql` 至 `schema-v7.
 2. 在 `src/server.ts` 和 `src/agent/mcp-server.ts` 中添加 `import './tools/<name>.js'`
 3. 如需 RBAC 默认角色配置，在 `src/agent/tools/types.ts` 的 `DEFAULT_TOOL_ROLES` 中添加
 
+### GitLab 配置读取约定（2026-04-20）
+
+所有访问 GitLab 的代码必须调 `resolveGitlabConfig()`（[src/config/gitlab.ts](src/config/gitlab.ts)），**不要直接 `process.env.GITLAB_URL/TOKEN` 或裸调 `getConfig('gitlab')`**。
+
+读取顺序：
+1. DB `system_config.gitlab` 中的 `{url, token, skipTlsVerify}`
+2. 任一为空时回退读 `process.env.GITLAB_URL` / `GITLAB_TOKEN` / `GITLAB_SKIP_TLS_VERIFY`（后者 `"true"` 或 `"1"` 算 true）
+3. 都空则返回空值，调用方自行判断并报错
+
+**例外**：严益昌原创 `src/pipeline/executor.ts:29` 保持 `process.env.GITLAB_URL` 不动（6 文件零改动硬约束）。
+
 ### DB Repository 约定
 
 - 直接写参数化 SQL（`$1, $2...`），无 ORM
