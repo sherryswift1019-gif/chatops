@@ -295,8 +295,8 @@ stateDiagram-v2
     draft --> completed: analyzer 判非 bug（usage_issue 等）
     published --> pipeline_success: Pipeline onComplete(success)
     published --> aborted: Pipeline onComplete(failed)
-    pipeline_success --> completed: GitLab webhook MR merged
-    pipeline_success --> aborted: GitLab webhook MR closed（未合并）
+    pipeline_success --> completed: GitLab webhook MR merged 或 reconciler 兜底
+    pipeline_success --> aborted: GitLab webhook MR closed（未合并）或 reconciler 兜底
     aborted --> newDraft: 用户点 retry（reuseIssueId 起新 report）
     newDraft --> [*]: 新 report 独立走完整生命周期
     completed --> [*]
@@ -312,8 +312,10 @@ stateDiagram-v2
 | `draft` | 分析中 | analyzer 开始时 |
 | `published` | 分析完成，Pipeline 已启动 | analyzer 分析完成且 classification=bug 时 |
 | `pipeline_success` | Pipeline 全部 stage 成功（MR 已创建，通知已发），等人工合并 MR | coordinator onComplete 回调（Pipeline.status=success 时）|
-| `completed` | 终态：MR 已合并 Issue 已关闭（bug 类）；或非 bug 分析直接结束（非 bug 类）| issue-handler 收到 MR merged webhook 时 / analyzer 分析结果非 bug 时 |
-| `aborted` | 终态：Pipeline 失败、审批拒绝、审批超时、MR 被人工关闭未合并 | coordinator onComplete 回调（Pipeline.status=failed 时）/ issue-handler 收到 MR closed 事件时 |
+| `completed` | 终态：MR 已合并 Issue 已关闭（bug 类）；或非 bug 分析直接结束（非 bug 类）| issue-handler 收到 MR merged webhook 时 / **mr-state-reconciler 定时兜底**（webhook 漏发时）/ analyzer 分析结果非 bug 时 |
+| `aborted` | 终态：Pipeline 失败、审批拒绝、审批超时、MR 被人工关闭未合并 | coordinator onComplete 回调（Pipeline.status=failed 时）/ issue-handler 收到 MR closed 事件时 / **mr-state-reconciler 定时兜底**（webhook 漏发时）|
+
+> **MR 状态同步双轨制**（V1 webhook 主 + 2026-04 加 reconciler 兜底）：详见 [2026-04-20-mr-state-reconciliation.md](../plans/2026-04-20-mr-state-reconciliation.md)。两条路径幂等 key `(mrIid, mrAction)` 互不冲突。
 
 ### 状态转换代码位置对照
 

@@ -53,6 +53,7 @@ import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
 import { registerNotifyHandler } from './agent/notify/notify-handler.js'
 import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
+import { startMrReconciler, stopMrReconciler } from './agent/reconcile/mr-state-reconciler.js'
 import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
 
 async function resolveProductLineId(userId: string): Promise<{ productLineId: number; role: string } | null> {
@@ -193,6 +194,9 @@ async function main(): Promise<void> {
 
   // 启动 worktree 清理调度器
   startCleanupScheduler()
+
+  // 启动 MR 状态对账调度器（webhook 漏发兜底，默认 5min）
+  startMrReconciler()
 
   // Session manager — processes each message
   const sessionManager = new SessionManager(
@@ -340,6 +344,7 @@ async function main(): Promise<void> {
 
   // Graceful shutdown
   const shutdown = async () => {
+    stopMrReconciler()
     for (const adapter of adapters) {
       await adapter.stop?.()
     }

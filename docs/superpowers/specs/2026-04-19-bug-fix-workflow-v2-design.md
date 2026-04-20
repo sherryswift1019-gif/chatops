@@ -181,6 +181,11 @@ stateDiagram-v2
 | `pipeline_success` → `published` (revise) | `coordinator.handleMrClosed`（新 webhook handler）启动 revise-pipeline 前回写 status | 新 |
 | `pending_manual` → `completed` | `issue-handler.handleMrMerged`（V1 已有）+ 校验 status in (pipeline_success, pending_manual) | 扩展 |
 | `*` → `aborted` (超时) | 新 cron 任务 `src/agent/handover/timeout-scheduler.ts` 每小时扫一次 | 新 |
+| `pipeline_success` → `completed` / `aborted` (webhook 漏发兜底) | 新 cron 任务 `src/agent/reconcile/mr-state-reconciler.ts` 每 15 分钟主动查 GitLab MR API；详见 [2026-04-20-mr-state-reconciliation.md](../plans/2026-04-20-mr-state-reconciliation.md) | 新 |
+
+> **双轨制说明**：MR 状态同步有两条路径，两者都写 `lifecycle_sync` 事件、幂等 key `(mrIid, mrAction)` 互不冲突：
+> 1. **Webhook（主）**：GitLab 实时推 `merge_request` 事件 → `issue-handler` 同步；`data.source='webhook'`
+> 2. **Reconciler（兜底）**：每 15 分钟扫 `pipeline_success` 态报告主动查 MR state；`data.source='reconciler'`
 
 ---
 
@@ -339,7 +344,7 @@ sequenceDiagram
 | `ai_review` | V1 | 每个 MR AI Review | reviewer | label, comment |
 | `approval` | V1 | 审批决策 | approve-l3 | decision (approved/rejected/timeout/retry_analysis) |
 | `notify` | V1 | 每个 DM 写一条 | notify-handler | kind, userId |
-| `lifecycle_sync` | V1 | MR merge/close webhook 同步状态 | issue-handler | mrIid, action |
+| `lifecycle_sync` | V1（V2 扩展） | MR merge/close 状态同步（webhook 主路径 + reconciler 兜底，见 [2026-04-20-mr-state-reconciliation.md](../plans/2026-04-20-mr-state-reconciliation.md)） | `issue-handler`（webhook） / `mr-state-reconciler`（定时） | mrIid, action, **source: 'webhook' \| 'reconciler'**（V2+ 新增） |
 | **`pipeline_started`** | **V2** | 每条 Pipeline run 启动时写一条 | coordinator | runId, kind (initial/revise/handover), round |
 | **`revise_requested`** | **V2** | MR close / CI fail 触发的打回事件 | webhook-handler | mrUrl, comment, triggerReason (owner_close/ci_failed) |
 | **`revise_attempt`** | **V2** | 每个 project 每轮 revise（区别于 fix_attempt 方便统计） | revise-fix handler | branch, testPassed, round, sourceMrUrl |
@@ -1207,6 +1212,39 @@ const statusColors: Record<string, string> = {
 ### 16.3 工具自注册
 
 按 CLAUDE.md 的"Tool 自注册"约定，新建工具文件 + 在 `server.ts` / `mcp-server.ts` 追加 import + `DEFAULT_TOOL_ROLES` 追加角色配置。
+
+### 16.4 `fix_bug` 的 Issue 上下文传递（预取文件模式，并列方案）
+
+**定位**：与 §16.1 的 MCP 工具路径**并列**——`fix_bug` capability 修复阶段只需要**单一 Issue body**，不需要动态查多种 GitLab 资源，因此采用更轻量的"预取到本地文件"方案。
+
+**机制**：
+
+- `fix-runner` 在调 Claude 之前，通过 `gitlabGetIssue(projectPath, issueIid)` 拉 Issue body
+- 写入 worktree 根目录 `.issue.md`（原始 markdown 全文）
+- 拼接 prompt 时只告诉 Claude「Issue 详情在 `.issue.md`」，不在 prompt 里重复 root_cause / solutions / affected_modules
+- Claude 用 Read 工具自行读取
+
+**实现**：[src/agent/fix/fix-logic.ts](src/agent/fix/fix-logic.ts) 的 `preloadIssueToWorktree(worktreePath, projectPath, issueIid)`，在 `createFixBranch` 之后、调 `runClaudeCli` 之前调用。失败向上抛，由 runner 降级为 `fix_attempt.status=failed`。
+
+**对比两种方案**：
+
+| 维度 | MCP 工具（§16.1，revise_fix / analyzer 走这路） | 预取文件（本节，fix_bug 走这路） |
+|------|----------------------------------------------|-------------------------------|
+| 适用场景 | 需要查多种 GitLab 资源（Issue + MR + CI logs + comments） | 只需 Issue body |
+| Claude 权限 | 持有 MCP 工具（工具内部封装 token） | 只用 Read 工具，零 GitLab 权限 |
+| Token 暴露面 | 工具内，不透传 | 不涉及 |
+| 数据新鲜度 | 实时查 | snapshot（预取瞬间） |
+| 新增代码 | 一组 MCP 工具文件 + 注册 | 一个预取函数（~10 行） |
+
+**snapshot 模式的可接受性**：fix 通常是一次性任务（~5 分钟），运行期间 Issue 被修改的概率极低；即便被改，下一轮 revise_fix 会走 §16.1 MCP 工具路径实时查 comments，覆盖 Issue 增量变化。
+
+**废弃的替代做法**（V1 做法）：
+- ❌ 把 `root_cause` / `solutions` / `affected_modules` 从 DB 读出来序列化拼到 prompt 里
+  - 缺点：Issue 是 source of truth，拼接是**二手转述**，Claude 拿到的是中间态；prompt 膨胀；DB schema 演进后 prompt 模板要同步改，耦合重
+- ❌ 让 Claude 用 Bash + curl + `GITLAB_TOKEN` 直连 GitLab
+  - 缺点：token 暴露给 Claude Bash 环境，有打到日志/误用的风险
+
+**system_prompt 约定**：`fix_bug_l1 / l2 / l3` 的 system_prompt 要求 Claude 第一步 Read `.issue.md` 拿根因 + 方案。规范源码见 [src/agent/fix/prompts.ts](src/agent/fix/prompts.ts)。
 
 ---
 

@@ -2357,6 +2357,8 @@ git commit -m "feat(reviewer): 多 MR Review + GitLab Note 写入 + 幂等"
 
 **关联 AC:** AC1（MR merged → completed）、AC7（MR closed → aborted）
 
+> **后续补丁（2026-04-20）**：本 Task 的 webhook 路径是 MR 状态同步的**主路径**。为应对 webhook 漏发风险，新增**定时对账兜底路径**，详见 [2026-04-20-mr-state-reconciliation.md](./2026-04-20-mr-state-reconciliation.md)。两条路径幂等 key `(mrIid, mrAction)` 互不冲突，`lifecycle_sync.data.source` 区分来源。
+
 - [ ] **Step 1: 读现有 issue-handler.ts 记录要删的函数**
 
 ```bash

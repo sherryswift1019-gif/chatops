@@ -59,7 +59,7 @@ IM 消息 → Adapter(DingTalk/Feishu) → SessionManager → ClaudeRunner → M
 ### 后端 (`src/`)
 
 - **server.ts** — Fastify 入口，注册适配器、审批网关、管理 API、静态文件服务
-- **config.ts** — Zod 校验环境变量，必需：`DATABASE_URL`。可选：`CLAUDE_CODE_OAUTH_TOKEN`（未设置时从系统配置页面 Claude 标签读取）、`ANALYSIS_CONCURRENCY`（多 project Bug 分析并发上限，默认 3；fix-runner 固定串行即并发=1，不通过环境变量配置）
+- **config.ts** — Zod 校验环境变量，必需：`DATABASE_URL`。可选：`CLAUDE_CODE_OAUTH_TOKEN`（未设置时从系统配置页面 Claude 标签读取）、`ANALYSIS_CONCURRENCY`（多 project Bug 分析并发上限，默认 3；fix-runner 固定串行即并发=1，不通过环境变量配置）、`MR_RECONCILE_INTERVAL_MS`（MR 状态对账调度间隔，默认 300000 = 5min，最小 60000）、`MR_RECONCILE_WINDOW_DAYS`（对账扫描窗口，默认 7 天）、`MR_RECONCILE_CONCURRENCY`（对账并发上限，默认 1 = 串行）
 - **adapters/im/** — IM 平台适配层（`IMAdapter` 接口），钉钉用 Stream 模式、飞书用 Webhook 模式
 - **agent/** — AI Agent 核心
   - `claude-runner.ts` — 通过 Porygon (`@snack-kit/porygon`) 调用 Claude CLI

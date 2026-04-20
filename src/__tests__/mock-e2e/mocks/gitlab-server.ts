@@ -179,6 +179,29 @@ export function buildMockApp(state: MockState): Express {
     return res.json({ iid, labels })
   })
 
+  // GET /api/v4/projects/:path/merge_requests/:iid — 查单个 MR 状态（mr-state-reconciler 对账用）
+  app.get('/api/v4/projects/:projectPath/merge_requests/:iid', (req: Request, res: Response) => {
+    const iid = Number(req.params.iid)
+    const key = buildOverrideKey(
+      'GET',
+      `/api/v4/projects/${req.params.projectPath}/merge_requests`,
+      iid,
+    )
+    const override = state.responseOverrides.get(key)
+    if (override !== undefined) return res.json(override)
+    // 默认返回 opened；测试通过 /_control/override 注入 merged / closed
+    const projectPath = decodeURIComponent(String(req.params.projectPath))
+    return res.json({
+      iid,
+      state: 'opened',
+      merged_at: null,
+      merged_by: null,
+      closed_at: null,
+      closed_by: null,
+      web_url: `http://mock-gitlab/${projectPath}/merge_requests/${iid}`,
+    })
+  })
+
   // GET /api/v4/projects/:path/merge_requests/:iid/changes — 读 MR diff
   app.get('/api/v4/projects/:projectPath/merge_requests/:iid/changes', (req: Request, res: Response) => {
     const iid = Number(req.params.iid)
