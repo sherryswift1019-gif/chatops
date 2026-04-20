@@ -203,6 +203,30 @@ describe('request_handover handler', () => {
         new Set(['PAM/pas-6.0', 'PAM/pas-api']),
       )
     })
+
+    it('零 scope_identified 边界 → data.projectPaths 是 []（非 undefined），handover 仍 success + status=pending_manual', async () => {
+      // F14 回补：生产路径上 analyzer 总会 seed scope，但测试需防御代码路径退化。
+      // 如果 handler 写成 projectPaths=scopes.map(...) 未做 Array.from(new Set()) 包装，
+      // 空 scope 场景下 data.projectPaths 可能是 undefined/null，此测试捕获该退化。
+      const reportId = await seedReport({ scopes: [] })
+
+      const result = await handleRequestHandover(makeOpts(reportId, 'fix_exhausted'))
+
+      expect(result.success).toBe(true)
+      const events = await findByReportCode(reportId, 'handover')
+      expect(events).toHaveLength(1)
+      const data = events[0].data as Record<string, unknown>
+      // 关键断言：projectPaths 必须是数组（不是 undefined / null），长度为 0
+      expect(Array.isArray(data.projectPaths)).toBe(true)
+      expect((data.projectPaths as string[]).length).toBe(0)
+
+      // handover 主动作不因空 scope 退化
+      const report = await getBugAnalysisReportById(reportId)
+      expect(report?.status).toBe('pending_manual')
+      expect(data.reason).toBe('fix_exhausted')
+      expect(data.fixBranch).toBe('fix/issue-777')
+      expect(data.nextAction).toBe('await_owner')
+    })
   })
 
   describe('context 可选字段', () => {
