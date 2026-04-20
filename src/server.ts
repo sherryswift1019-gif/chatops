@@ -18,6 +18,7 @@ import type { IMAdapter } from './adapters/im/types.js'
 import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
+import { initGraphRunnerDispatchers } from './pipeline/graph-runner.js'
 
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
@@ -190,6 +191,10 @@ async function main(): Promise<void> {
 
   // Initialize pipeline approval manager
   PipelineApprovalManager.initialize(adapters)
+
+  // Wire Task 3 adapter resume handlers → graph-runner.resumeRun. Must run
+  // after PipelineApprovalManager.initialize() so getInstance() succeeds.
+  initGraphRunnerDispatchers()
 
   // Card action (approval responses)
   for (const adapter of adapters) {
