@@ -8,7 +8,7 @@
 import { runClaudeCli } from '../claude-cli.js'
 import type { Worktree } from '../worktree/manager.js'
 import type { BugClassification, BugLevel, ConfidenceLevel, Solution } from '../../db/repositories/bug-analysis-reports.js'
-import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
+import { isClaudeMock, popMockResponse, popMockResponseValidated } from '../mocks/e2e-store.js'
 
 export interface FilterProjectCandidate {
   projectPath: string
@@ -86,6 +86,46 @@ export function extractJsonFromOutput(text: string): string | null {
   }
   if (end === -1) return null
   return text.substring(idx, end)
+}
+
+/**
+ * "信息不足"软失败的结构化描述。
+ * markdown 为尾部 JSON（含代码围栏）之前的内容，已 trim。
+ */
+export interface InsufficientEvidence {
+  markdown: string
+  verifyCommand?: string
+  verifyCriteria?: string
+  recommendedOption?: number
+}
+
+/**
+ * 识别 Claude 返回的 `needs_user_decision: true` schema。
+ * 命中：返回 { markdown, verifyCommand?, verifyCriteria?, recommendedOption? }，markdown 已剥离尾部 JSON 块及围栏。
+ * 不命中（无 JSON / schema 不匹配 / needs_user_decision!==true）：返回 null。
+ */
+export function parseInsufficientEvidence(rawOutput: string): InsufficientEvidence | null {
+  const jsonStr = extractJsonFromOutput(rawOutput)
+  if (!jsonStr) return null
+  let data: Record<string, unknown>
+  try { data = JSON.parse(jsonStr) as Record<string, unknown> } catch { return null }
+  if (data.needs_user_decision !== true) return null
+
+  // 剥离尾部 JSON 块（含可能的 ```json 围栏）
+  const jsonStart = rawOutput.indexOf(jsonStr)
+  let markdownEnd = jsonStart >= 0 ? jsonStart : rawOutput.length
+  // 向前回溯，吃掉 ```json 或 ``` 围栏起始行
+  const before = rawOutput.substring(0, markdownEnd)
+  const fenceMatch = before.match(/```(?:json)?\s*$/)
+  if (fenceMatch) markdownEnd -= fenceMatch[0].length
+  const markdown = rawOutput.substring(0, markdownEnd).trim()
+
+  return {
+    markdown,
+    verifyCommand: typeof data.verify_command === 'string' ? data.verify_command : undefined,
+    verifyCriteria: typeof data.verify_criteria === 'string' ? data.verify_criteria : undefined,
+    recommendedOption: typeof data.recommended_option === 'number' ? data.recommended_option : undefined,
+  }
 }
 
 /**
@@ -192,13 +232,37 @@ ${input.userMessage}
   }
 }
 
+/**
+ * runDetailStage 的返回结果：判别联合。
+ * - kind='detail'       → 正常分析完成，detail 含 classification 等结构化结论
+ * - kind='insufficient' → Claude 认为信息不足，返回 needs_user_decision schema
+ */
+export type DetailStageOutcome =
+  | { kind: 'detail'; detail: DetailStageResult }
+  | ({ kind: 'insufficient' } & InsufficientEvidence)
+
 /** 阶段 B：单个 project 的详细根因分析。 */
-export async function runDetailStage(input: DetailStageInput): Promise<DetailStageResult> {
+export async function runDetailStage(input: DetailStageInput): Promise<DetailStageOutcome> {
   if (isClaudeMock()) {
-    return popMockResponseValidated<DetailStageResult>('analyze_bug-detail', [
-      'classification',
-      'markdown',
-    ])
+    const raw = popMockResponse('analyze_bug-detail')
+    if (raw === undefined) {
+      throw new Error(`E2E: no mock response queued for analyze_bug-detail`)
+    }
+    if (typeof raw !== 'object' || raw === null) {
+      throw new Error(`E2E: mock response for analyze_bug-detail must be object, got ${typeof raw}`)
+    }
+    const obj = raw as Record<string, unknown>
+    // 新形态：显式 insufficient
+    if (obj.kind === 'insufficient') {
+      return obj as unknown as DetailStageOutcome
+    }
+    // 老形态：平铺的 DetailStageResult（必带 classification/markdown）
+    for (const field of ['classification', 'markdown'] as const) {
+      if (obj[field] === undefined) {
+        throw new Error(`E2E: mock response for analyze_bug-detail missing required field "${field}"`)
+      }
+    }
+    return { kind: 'detail', detail: raw as DetailStageResult }
   }
 
   const prompt = `${input.systemPrompt}
@@ -218,6 +282,12 @@ export async function runDetailStage(input: DetailStageInput): Promise<DetailSta
     onEvent: (e) => console.log(`[AnalysisDetail:${input.projectPath}] ${e.type}: ${e.message}`),
     signal: input.signal,
   })
+
+  // 优先识别 Claude 返回的 needs_user_decision schema（信息不足软失败）
+  const insufficient = parseInsufficientEvidence(rawOutput)
+  if (insufficient) {
+    return { kind: 'insufficient', ...insufficient }
+  }
 
   // 先找 {"classification" 开头的 JSON（不同格式：紧凑或带空格）
   const patterns = [/\{"classification"/g, /\{\s*"classification"/g]
@@ -269,20 +339,23 @@ export async function runDetailStage(input: DetailStageInput): Promise<DetailSta
   const markdown = rawOutput.substring(0, idx).trim()
 
   return {
-    classification: data.classification,
-    level: data.level,
-    confidence: data.confidence,
-    confidenceScore: data.confidence_score,
-    rootCause: {
-      type: data.root_cause.type,
-      summary: data.root_cause.summary,
-      file: data.root_cause.file,
-      lineRange: data.root_cause.line_range ?? [],
+    kind: 'detail',
+    detail: {
+      classification: data.classification,
+      level: data.level,
+      confidence: data.confidence,
+      confidenceScore: data.confidence_score,
+      rootCause: {
+        type: data.root_cause.type,
+        summary: data.root_cause.summary,
+        file: data.root_cause.file,
+        lineRange: data.root_cause.line_range ?? [],
+      },
+      solutions: data.solutions ?? [],
+      affectedModules: data.affected_modules ?? [],
+      analysisSteps: data.analysis_steps ?? [],
+      markdown,
     },
-    solutions: data.solutions ?? [],
-    affectedModules: data.affected_modules ?? [],
-    analysisSteps: data.analysis_steps ?? [],
-    markdown,
   }
 }
 

@@ -10,7 +10,7 @@ import { getByProductLineId as getKnowledgeRepoByProductLineId } from '../../db/
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import { createEvent } from '../../db/repositories/bug-fix-events.js'
-import { runFilterStage, runDetailStage, mergeDetailResults } from './claude-runs.js'
+import { runFilterStage, runDetailStage, mergeDetailResults, type DetailStageOutcome } from './claude-runs.js'
 import {
   gitlabCreateIssue,
   gitlabPostIssueNote,
@@ -272,7 +272,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
   const analysisConcurrency = Number(process.env.ANALYSIS_CONCURRENCY ?? 3)
   const analysisLimit = pLimit(analysisConcurrency > 0 ? analysisConcurrency : 3)
 
-  const detailRuns = await Promise.all(
+  const detailOutcomes = await Promise.all(
     filterResult.involvedProjects.map((p) =>
       analysisLimit(async () => {
       const pj = projectByPath.get(p.projectPath)
@@ -293,7 +293,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
         projectPath: p.projectPath,
       })
       try {
-        const detail = await runDetailStage({
+        const outcome = await runDetailStage({
           userMessage,
           projectPath: p.projectPath,
           worktreePath: wt.path,
@@ -301,13 +301,27 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
           systemPrompt: capabilityRow.systemPrompt!,
           signal: opts.signal,
         })
-        return { projectPath: p.projectPath, detail }
+        return { projectPath: p.projectPath, outcome }
       } finally {
         release(wt)
       }
       }),
     ),
   )
+
+  // 软失败：任一 project 返回 insufficient → 不入库，把 Claude 分析 markdown + 尾句回给用户
+  const insufficient = detailOutcomes.find(o => o.outcome.kind === 'insufficient')
+  if (insufficient && insufficient.outcome.kind === 'insufficient') {
+    const tail = '\n\n──────\n⚠ 材料不够判断，请按上述分析补充信息后重新 @ 我。可以引用原消息补充，或把原问题和输出一起重发。'
+    const body = insufficient.outcome.markdown || 'Claude 认为代码层线索不足以确认根因。'
+    return { success: true, output: `${body}${tail}` }
+  }
+
+  // 全部命中 detail：拆出 detail 字段供后续 merge
+  const detailRuns = detailOutcomes.map(o => ({
+    projectPath: o.projectPath,
+    detail: (o.outcome as Extract<DetailStageOutcome, { kind: 'detail' }>).detail,
+  }))
 
   const merged = mergeDetailResults(detailRuns)
   const durationMs = Date.now() - startMs
@@ -434,7 +448,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
 
   return {
     success: true,
-    output: `Bug 分析完成: ${merged.classification} / ${merged.level}，涉及 ${filterResult.involvedProjects.length} 个 project`,
+    output: `Bug 分析完成: ${merged.classification === 'bug' ? 'Bug' : merged.classification} / ${merged.level.toUpperCase()}，涉及 ${filterResult.involvedProjects.length} 个 project`,
     data: { reportId: report.id, classification: merged.classification, level: merged.level },
   }
 }

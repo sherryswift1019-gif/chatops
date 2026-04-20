@@ -70,7 +70,7 @@ import {
   createEvent as createEventMock,
 } from '../../db/repositories/bug-fix-events.js'
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
-import { runFilterStage, runDetailStage } from '../../agent/analysis/claude-runs.js'
+import { runFilterStage, runDetailStage, type DetailStageResult, type DetailStageOutcome } from '../../agent/analysis/claude-runs.js'
 import { extractJson } from '../../agent/analysis/claude-runs.js'
 import {
   gitlabCreateIssue,
@@ -120,6 +120,8 @@ describe('parseAnalysisOutput', () => {
     expect(parseAnalysisOutput('{ "classification": bug }')).toBeNull()
   })
 })
+const asDetail = (r: DetailStageResult): DetailStageOutcome => ({ kind: 'detail', detail: r })
+
 
 describe('buildMarkdownReport', () => {
   it('generates readable markdown', () => {
@@ -232,7 +234,7 @@ describe('analyzer multi-project support', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'high',
@@ -242,7 +244,7 @@ describe('analyzer multi-project support', () => {
       affectedModules: ['auth'],
       analysisSteps: ['P1', 'P2'],
       markdown: '## 根因\n\n登录时未校验空 token',
-    })
+    }))
     vi.mocked(gitlabCreateIssue).mockResolvedValue({
       iid: 123,
       url: 'http://git.example.com/PAM/pas-api/-/issues/123',
@@ -279,7 +281,7 @@ describe('analyzer multi-project support', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'usage_issue',
       level: 'l1',
       confidence: 'high',
@@ -289,7 +291,7 @@ describe('analyzer multi-project support', () => {
       affectedModules: [],
       analysisSteps: [],
       markdown: '## 使用方式不对',
-    })
+    }))
 
     const result = await handleAnalyzeBug(buildOpts(productLineId, { message: '怎么用' }))
     expect(result.success).toBe(true)
@@ -304,6 +306,35 @@ describe('analyzer multi-project support', () => {
     const scopeEvents = await findByReportCode(reportId, 'scope_identified')
     expect(scopeEvents).toHaveLength(0)
 
+    expect(gitlabCreateIssue).not.toHaveBeenCalled()
+  })
+
+  it('runDetailStage 返回 insufficient → success:true + output，不落库、不创 Issue', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api', ownerId: 'u-a' }],
+    })
+
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue({
+      kind: 'insufficient',
+      markdown: '## 初步分析\n\n发现 3 个候选根因：\n1. PS1 ANSI 污染\n2. SSH 超时\n3. 日志格式',
+      verifyCommand: "ssh root@host 'echo $PS1'",
+      verifyCriteria: '输出包含 ^[[ 即确认',
+      recommendedOption: 1,
+    })
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId, { message: '连接超时' }))
+
+    expect(result.success).toBe(true)
+    expect(result.output).toContain('## 初步分析')
+    expect(result.output).toContain('PS1 ANSI 污染')
+    expect(result.output).toContain('材料不够判断')
+    expect(result.output).toContain('请按上述分析补充信息后重新 @ 我')
+    // insufficient 分支不进数据库、不建 Issue
+    expect(result.data).toBeUndefined()
     expect(gitlabCreateIssue).not.toHaveBeenCalled()
   })
 
@@ -322,7 +353,7 @@ describe('analyzer multi-project support', () => {
       ],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockImplementation(async (input) => ({
+    vi.mocked(runDetailStage).mockImplementation(async (input) => asDetail({
       classification: 'bug',
       level: input.projectPath === 'PAM/pas-api' ? 'l2' : 'l1',
       confidence: 'medium',
@@ -367,7 +398,7 @@ describe('analyzer multi-project support', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'high',
@@ -377,7 +408,7 @@ describe('analyzer multi-project support', () => {
       affectedModules: ['auth'],
       analysisSteps: ['P1'],
       markdown: '## 再次分析',
-    })
+    }))
     vi.mocked(gitlabPostIssueNote).mockResolvedValue({
       noteId: 9999,
       issueUrl: 'http://git.example.com/PAM/pas-api/-/issues/789',
@@ -415,7 +446,7 @@ describe('analyzer reuseIssueId Issue body banner (C2)', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'high',
@@ -425,7 +456,7 @@ describe('analyzer reuseIssueId Issue body banner (C2)', () => {
       affectedModules: ['auth'],
       analysisSteps: ['P1'],
       markdown: '## 新分析',
-    })
+    }))
     vi.mocked(gitlabPostIssueNote).mockResolvedValue({
       noteId: 4242,
       issueUrl: 'http://git.example.com/PAM/pas-api/-/issues/789',
@@ -549,7 +580,7 @@ describe('analyzer createEvent failure propagation (C1)', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'high',
@@ -559,7 +590,7 @@ describe('analyzer createEvent failure propagation (C1)', () => {
       affectedModules: ['auth'],
       analysisSteps: ['P1'],
       markdown: '## x',
-    })
+    }))
     vi.mocked(gitlabCreateIssue).mockResolvedValue({
       iid: 1,
       url: 'http://git.example.com/PAM/pas-api/-/issues/1',
@@ -619,7 +650,7 @@ describe('analyzer multi-project concurrency (C4)', () => {
       // 用 timer 让多个并发 run 真正重叠
       await new Promise(res => setTimeout(res, 30))
       active--
-      return {
+      return asDetail({
         classification: 'bug',
         level: 'l2',
         confidence: 'medium',
@@ -634,7 +665,7 @@ describe('analyzer multi-project concurrency (C4)', () => {
         affectedModules: ['x'],
         analysisSteps: ['p1'],
         markdown: '## x',
-      }
+      })
     })
     vi.mocked(gitlabCreateIssue).mockResolvedValue({
       iid: 1,
@@ -899,7 +930,7 @@ describe('handleAnalyzeBug 错误分类 classifyError', () => {
 
   it('Issue 创建失败（GitLab 错误）→ issue_create_failed', async () => {
     const productLineId = await setupBug()
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'high',
@@ -909,7 +940,7 @@ describe('handleAnalyzeBug 错误分类 classifyError', () => {
       affectedModules: [],
       analysisSteps: [],
       markdown: '## x',
-    })
+    }))
     vi.mocked(gitlabCreateIssue).mockRejectedValue(new Error('create issue on gitlab 403'))
     const res = await handleAnalyzeBug(buildOpts(productLineId))
     expect(res.error).toBe('issue_create_failed')
@@ -1009,7 +1040,7 @@ describe('handleAnalyzeBug ANALYSIS_CONCURRENCY 环境变量', () => {
       ],
       primaryProjectPath: 'PAM/a',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'medium',
@@ -1019,7 +1050,7 @@ describe('handleAnalyzeBug ANALYSIS_CONCURRENCY 环境变量', () => {
       affectedModules: [],
       analysisSteps: [],
       markdown: '## x',
-    })
+    }))
     vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 1, url: 'http://x' })
 
     const res = await handleAnalyzeBug(buildOpts(productLineId))
@@ -1036,7 +1067,7 @@ describe('handleAnalyzeBug ANALYSIS_CONCURRENCY 环境变量', () => {
       involvedProjects: [{ projectPath: 'PAM/a', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/a',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'medium',
@@ -1046,7 +1077,7 @@ describe('handleAnalyzeBug ANALYSIS_CONCURRENCY 环境变量', () => {
       affectedModules: [],
       analysisSteps: [],
       markdown: '## x',
-    })
+    }))
     vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 1, url: 'http://x' })
 
     const res = await handleAnalyzeBug(buildOpts(productLineId))
@@ -1077,7 +1108,7 @@ describe('handleAnalyzeBug affectedModulesByProject 边界', () => {
       primaryProjectPath: 'PAM/a',
     })
     // PAM/a 有 affected_modules=['m1']，PAM/b 的 affected_modules=[]（空数组）
-    vi.mocked(runDetailStage).mockImplementation(async (input) => ({
+    vi.mocked(runDetailStage).mockImplementation(async (input) => asDetail({
       classification: 'bug',
       level: 'l2',
       confidence: 'medium',
@@ -1118,7 +1149,7 @@ describe('handleAnalyzeBug L4 分类', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'bug',
       level: 'l4',
       confidence: 'low',
@@ -1128,7 +1159,7 @@ describe('handleAnalyzeBug L4 分类', () => {
       affectedModules: [],
       analysisSteps: [],
       markdown: '## L4',
-    })
+    }))
     vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 4, url: 'http://x/4' })
 
     const res = await handleAnalyzeBug(buildOpts(productLineId))
@@ -1158,7 +1189,7 @@ describe('handleAnalyzeBug config_issue 分类', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    vi.mocked(runDetailStage).mockResolvedValue({
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
       classification: 'config_issue',
       level: 'l1',
       confidence: 'high',
@@ -1168,7 +1199,7 @@ describe('handleAnalyzeBug config_issue 分类', () => {
       affectedModules: [],
       analysisSteps: [],
       markdown: '## config',
-    })
+    }))
 
     const res = await handleAnalyzeBug(buildOpts(productLineId))
     expect(res.success).toBe(true)

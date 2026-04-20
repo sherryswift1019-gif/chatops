@@ -136,7 +136,7 @@ describe('AC1: L2 单 project 端到端', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'test' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    ;(runDetailStage as any).mockResolvedValue({
+    ;(runDetailStage as any).mockResolvedValue({ kind: 'detail', detail: {
       classification: 'bug',
       level: 'l2',
       confidence: 'high',
@@ -146,7 +146,7 @@ describe('AC1: L2 单 project 端到端', () => {
       affectedModules: ['auth'],
       analysisSteps: ['读代码'],
       markdown: '# 分析\n...\n',
-    })
+    }})
     ;(gitlabCreateIssue as any).mockResolvedValue({
       iid: 42,
       url: 'http://git.example.com/PAM/pas-api/-/issues/42',

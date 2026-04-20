@@ -132,7 +132,7 @@ describe('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'test' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    ;(runDetailStage as any).mockResolvedValue({
+    ;(runDetailStage as any).mockResolvedValue({ kind: 'detail', detail: {
       classification: 'bug',
       level: 'l3',
       confidence: 'medium',
@@ -142,7 +142,7 @@ describe('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
       affectedModules: ['auth'],
       analysisSteps: ['读代码'],
       markdown: '# L3 分析',
-    })
+    }})
     ;(gitlabCreateIssue as any).mockResolvedValue({
       iid: 77,
       url: 'http://git.example.com/PAM/pas-api/-/issues/77',

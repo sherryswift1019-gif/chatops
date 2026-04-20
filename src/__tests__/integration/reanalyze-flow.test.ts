@@ -127,7 +127,7 @@ describe('AC6: reanalyze 决策 → 新一轮分析', () => {
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'test' }],
       primaryProjectPath: 'PAM/pas-api',
     })
-    ;(runDetailStage as any).mockResolvedValue({
+    ;(runDetailStage as any).mockResolvedValue({ kind: 'detail', detail: {
       classification: 'bug',
       level: 'l3',
       confidence: 'medium',
@@ -137,7 +137,7 @@ describe('AC6: reanalyze 决策 → 新一轮分析', () => {
       affectedModules: ['auth'],
       analysisSteps: ['读代码'],
       markdown: '# L3 分析',
-    })
+    }})
     ;(gitlabCreateIssue as any).mockResolvedValue({
       iid: 66,
       url: 'http://git.example.com/PAM/pas-api/-/issues/66',

@@ -66,7 +66,7 @@ describe('AC5: 非 bug 分类 → 不创建 Issue / 不触发 Pipeline', () => {
       primaryProjectPath: 'PAM/pas-api',
     })
     // 关键：mock 为 usage_issue 分类
-    ;(runDetailStage as any).mockResolvedValue({
+    ;(runDetailStage as any).mockResolvedValue({ kind: 'detail', detail: {
       classification: 'usage_issue',
       level: 'l1',
       confidence: 'high',
@@ -76,7 +76,7 @@ describe('AC5: 非 bug 分类 → 不创建 Issue / 不触发 Pipeline', () => {
       affectedModules: [],
       analysisSteps: ['理解用户问题'],
       markdown: '# 非 bug',
-    })
+    }})
   })
 
   it('classification=usage_issue → no Issue, no Pipeline, status=completed', async () => {

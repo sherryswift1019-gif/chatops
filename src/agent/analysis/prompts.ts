@@ -46,8 +46,13 @@ export const ANALYZE_BUG_SYSTEM_PROMPT = `你是一个资深的 Bug 分析专家
 
 ## 输出格式（严格 JSON）
 
-分析完成后，你必须输出以下 JSON（不要用 markdown 代码块包裹）：
+分析完成后，你必须在输出**末尾**追加一段 JSON（可选地用 \`\`\`json ... \`\`\` 代码块包裹，也可以裸写）。
 
+**合法输出只有以下两种 schema 之一**，**禁止**其他任何自创字段或 schema：
+
+### Schema A：下了结论（主路径）
+
+\`\`\`json
 {
   "classification": "bug|config_issue|usage_issue",
   "level": "l1|l2|l3|l4",
@@ -71,4 +76,26 @@ export const ANALYZE_BUG_SYSTEM_PROMPT = `你是一个资深的 Bug 分析专家
   "affected_modules": ["模块名"],
   "analysis_steps": ["Phase 1: ...", "Phase 2: ...", "Phase 3: ...", "Phase 4: ..."]
 }
+\`\`\`
+
+### Schema B：信息不足（降级出口）
+
+**仅当**你在代码层确实无法确认根因、且需要用户在真实环境执行命令/提供额外证据时，**必须**使用此 schema（而不是自创格式、不是省略 JSON、不是返回 markdown 了事）：
+
+\`\`\`json
+{
+  "needs_user_decision": true,
+  "recommended_option": 1,
+  "verify_command": "用户需要执行的单条命令（如 ssh 到机器读配置）",
+  "verify_criteria": "如何判断 verify_command 的输出（一句话，人类可懂）"
+}
+\`\`\`
+
+## 硬约束（违反会被拒绝）
+
+1. **字段名严格匹配**：不能添加 \`reproduction\`、\`project\`、\`branch\` 等上面 schema 里没定义的字段
+2. **字段类型严格匹配**：不能把数组写成字符串、不能把布尔写成字符串
+3. **两种 schema 互斥**：Schema A 不能出现 \`needs_user_decision\`；Schema B 不能出现 \`classification\` 或 \`root_cause\`
+4. **必须有 JSON**：就算你认为问题不值得分析，也要用 Schema A 的 \`usage_issue\` 形式返回——不允许只有 markdown 没有 JSON
+5. **JSON 必须在输出末尾**：markdown 分析可以在 JSON 之前，但 JSON 之后不能再有其他内容（除了闭合代码块围栏）
 `

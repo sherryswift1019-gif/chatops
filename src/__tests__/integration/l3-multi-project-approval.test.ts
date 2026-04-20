@@ -140,7 +140,7 @@ describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
       ],
       primaryProjectPath: 'PAM/pas-api',
     })
-    ;(runDetailStage as any).mockResolvedValue({
+    ;(runDetailStage as any).mockResolvedValue({ kind: 'detail', detail: {
       classification: 'bug',
       level: 'l3',
       confidence: 'medium',
@@ -150,7 +150,7 @@ describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
       affectedModules: ['auth'],
       analysisSteps: ['读代码'],
       markdown: '# L3 分析',
-    })
+    }})
     ;(gitlabCreateIssue as any).mockResolvedValue({
       iid: 99,
       url: 'http://git.example.com/PAM/pas-api/-/issues/99',
