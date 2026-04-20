@@ -42,6 +42,7 @@ interface RobotMessage {
         richText?: RichTextItem[]
         downloadCode?: string
         photoURL?: string
+        text?: string  // 纯文本引用时的字段
       } | string
     }
   }
@@ -265,8 +266,10 @@ export class DingTalkAdapter implements IMAdapter {
       text = (msg.text?.content ?? '').trim()
     }
 
-    // 钉钉图文混排消息（文字+图片+文字）会被包装成 msgtype=text + repliedMsg.richText 结构
-    // 当 text.content 为空但有 repliedMsg 时，从 repliedMsg.richText 提取用户的完整消息
+    // 钉钉引用回复消息场景：
+    // - 图文混排（文字+图片）：msgtype=text + repliedMsg.content.richText 数组
+    // - 纯文本引用回复：msgtype=text + repliedMsg.content.text 字符串（新增覆盖）
+    // 当 text.content 为空但有 repliedMsg 时，从引用内容提取用户的完整消息
     const repliedMsg = msg.text?.repliedMsg
     if (!text && repliedMsg) {
       const repliedContent = typeof repliedMsg.content === 'string'
@@ -279,6 +282,9 @@ export class DingTalkAdapter implements IMAdapter {
           .map((item: RichTextItem) => item.content || '')
           .join('\n')
           .trim()
+      } else if (typeof repliedContent?.text === 'string') {
+        // 纯文本引用（钉钉 msgType='text' 时 content.text 是字符串）
+        text = repliedContent.text.trim()
       }
     }
 
