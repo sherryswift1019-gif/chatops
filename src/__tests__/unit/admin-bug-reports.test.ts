@@ -382,52 +382,104 @@ describe('GET /bug-analysis-reports (list)', () => {
     vi.clearAllMocks()
   })
 
-  it('缺 product_line_id 时返回 MISSING_PARAM error（body 里带 error，非 4xx）', async () => {
+  it('不传 product_line_id 时走分页接口返回全部（不再 MISSING_PARAM）', async () => {
+    ;(listReportsByProductLinePaged as any).mockResolvedValue({ data: [], total: 0 })
     const app = await buildApp()
     const res = await app.inject({ method: 'GET', url: '/bug-analysis-reports' })
-    // 当前实现是 return { error }，Fastify 视作正常 200 响应
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toMatchObject({ error: { code: 'MISSING_PARAM' } })
+    const body = res.json()
+    expect(body.error).toBeUndefined()
+    expect(Array.isArray(body.data)).toBe(true)
+    expect(listReportsByProductLinePaged).toHaveBeenCalledWith({
+      productLineId: undefined,
+      issueId: undefined,
+      statuses: undefined,
+      levels: undefined,
+      page: 1,
+      limit: 20,
+    })
     expect(listReportsByProductLine).not.toHaveBeenCalled()
-    expect(listReportsByProductLinePaged).not.toHaveBeenCalled()
     await app.close()
   })
 
-  it('product_line_id=0 也视为缺参（Number(0) 为 falsy）', async () => {
+  it('product_line_id=0 视为未传（Number(0) 为 falsy），不过滤产品线', async () => {
+    ;(listReportsByProductLinePaged as any).mockResolvedValue({ data: [], total: 0 })
     const app = await buildApp()
     const res = await app.inject({ method: 'GET', url: '/bug-analysis-reports?product_line_id=0' })
-    expect(res.json()).toMatchObject({ error: { code: 'MISSING_PARAM' } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().error).toBeUndefined()
+    expect(listReportsByProductLinePaged).toHaveBeenCalledWith(
+      expect.objectContaining({ productLineId: undefined }),
+    )
     await app.close()
   })
 
-  it('无筛选无分页（老接口）：走 listReportsByProductLine，默认 limit=50', async () => {
-    ;(listReportsByProductLine as any).mockResolvedValue([{ id: 1 }, { id: 2 }])
+  it('传 product_line_id 时按产品线过滤，走分页接口默认 pageSize=20', async () => {
+    ;(listReportsByProductLinePaged as any).mockResolvedValue({
+      data: [{ id: 1 }, { id: 2 }],
+      total: 2,
+    })
     const app = await buildApp()
     const res = await app.inject({ method: 'GET', url: '/bug-analysis-reports?product_line_id=7' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ data: [{ id: 1 }, { id: 2 }], total: 2 })
-    expect(listReportsByProductLine).toHaveBeenCalledWith(7, 50)
-    expect(listReportsByProductLinePaged).not.toHaveBeenCalled()
+    expect(res.json()).toEqual({ data: [{ id: 1 }, { id: 2 }], total: 2, page: 1, pageSize: 20 })
+    expect(listReportsByProductLinePaged).toHaveBeenCalledWith({
+      productLineId: 7,
+      issueId: undefined,
+      statuses: undefined,
+      levels: undefined,
+      page: 1,
+      limit: 20,
+    })
+    expect(listReportsByProductLine).not.toHaveBeenCalled()
     await app.close()
   })
 
-  it('带 limit 参数（老接口）时使用自定义 limit', async () => {
-    ;(listReportsByProductLine as any).mockResolvedValue([])
+  it('传 issueId 时转发给 repo 作为 issueId 过滤条件', async () => {
+    ;(listReportsByProductLinePaged as any).mockResolvedValue({
+      data: [{ id: 10, issue_id: 42 }, { id: 11, issue_id: 42 }],
+      total: 2,
+    })
     const app = await buildApp()
-    await app.inject({ method: 'GET', url: '/bug-analysis-reports?product_line_id=7&limit=200' })
-    expect(listReportsByProductLine).toHaveBeenCalledWith(7, 200)
+    const res = await app.inject({ method: 'GET', url: '/bug-analysis-reports?issueId=42' })
+    expect(res.statusCode).toBe(200)
+    expect(listReportsByProductLinePaged).toHaveBeenCalledWith(
+      expect.objectContaining({ issueId: 42 }),
+    )
+    const body = res.json()
+    expect(body.data.every((r: any) => r.issue_id === 42)).toBe(true)
     await app.close()
   })
 
-  it('limit 非数值时退回默认 50', async () => {
-    ;(listReportsByProductLine as any).mockResolvedValue([])
+  it('返回字段含 product_line_name', async () => {
+    ;(listReportsByProductLinePaged as any).mockResolvedValue({
+      data: [{ id: 1, product_line_name: 'PAM' }],
+      total: 1,
+    })
     const app = await buildApp()
-    await app.inject({ method: 'GET', url: '/bug-analysis-reports?product_line_id=7&limit=abc' })
-    expect(listReportsByProductLine).toHaveBeenCalledWith(7, 50)
+    const res = await app.inject({ method: 'GET', url: '/bug-analysis-reports' })
+    const body = res.json()
+    expect(body.data).toHaveLength(1)
+    expect(body.data[0]).toHaveProperty('product_line_name')
+    expect(body.data[0].product_line_name).toBe('PAM')
     await app.close()
   })
 
-  it('传 page 参数时走分页分支（listReportsByProductLinePaged），pageSize 默认 20', async () => {
+  it('返回字段含 completed_at（未完成时为 null）', async () => {
+    ;(listReportsByProductLinePaged as any).mockResolvedValue({
+      data: [{ id: 1, completed_at: null }],
+      total: 1,
+    })
+    const app = await buildApp()
+    const res = await app.inject({ method: 'GET', url: '/bug-analysis-reports' })
+    const body = res.json()
+    expect(body.data).toHaveLength(1)
+    expect(body.data[0]).toHaveProperty('completed_at')
+    expect(body.data[0].completed_at).toBeNull()
+    await app.close()
+  })
+
+  it('传 page 参数时正确透传，pageSize 默认 20', async () => {
     ;(listReportsByProductLinePaged as any).mockResolvedValue({
       data: [{ id: 9 }],
       total: 123,
@@ -442,6 +494,7 @@ describe('GET /bug-analysis-reports (list)', () => {
     expect(body).toMatchObject({ data: [{ id: 9 }], total: 123, page: 2, pageSize: 20 })
     expect(listReportsByProductLinePaged).toHaveBeenCalledWith({
       productLineId: 7,
+      issueId: undefined,
       statuses: undefined,
       levels: undefined,
       page: 2,
@@ -529,35 +582,42 @@ describe('GET /bug-analysis-reports (list)', () => {
     await app.close()
   })
 
-  it('status/level 全部非法 → 视为 undefined（未过滤）', async () => {
+  it('status/level 全部非法 → 视为 undefined（未过滤），依然走分页接口', async () => {
     ;(listReportsByProductLinePaged as any).mockResolvedValue({ data: [], total: 0 })
     const app = await buildApp()
-    // 只有 status/level 全部非法 → parseCsvEnum 返回 undefined
-    // 若同时无 paging 参数，hasPaging=false，statuses=undefined，levels=undefined
-    // 分支回退到老接口 listReportsByProductLine
-    ;(listReportsByProductLine as any).mockResolvedValue([])
     await app.inject({
       method: 'GET',
       url: '/bug-analysis-reports?product_line_id=7&status=bogus&level=xxx',
     })
-    expect(listReportsByProductLine).toHaveBeenCalledWith(7, 50)
-    expect(listReportsByProductLinePaged).not.toHaveBeenCalled()
+    expect(listReportsByProductLinePaged).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productLineId: 7,
+        statuses: undefined,
+        levels: undefined,
+      }),
+    )
+    expect(listReportsByProductLine).not.toHaveBeenCalled()
     await app.close()
   })
 
-  it('空字符串 status/level → undefined', async () => {
-    ;(listReportsByProductLine as any).mockResolvedValue([])
+  it('空字符串 status/level → undefined，依然走分页接口', async () => {
+    ;(listReportsByProductLinePaged as any).mockResolvedValue({ data: [], total: 0 })
     const app = await buildApp()
     await app.inject({
       method: 'GET',
       url: '/bug-analysis-reports?product_line_id=7&status=&level=',
     })
-    expect(listReportsByProductLine).toHaveBeenCalled()
-    expect(listReportsByProductLinePaged).not.toHaveBeenCalled()
+    expect(listReportsByProductLinePaged).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statuses: undefined,
+        levels: undefined,
+      }),
+    )
+    expect(listReportsByProductLine).not.toHaveBeenCalled()
     await app.close()
   })
 
-  it('只传 level 不传 page：仍走分页分支（statuses/levels 任意一个非空就进）', async () => {
+  it('只传 level 不传 page：仍走分页接口（statuses/levels 任意非空）', async () => {
     ;(listReportsByProductLinePaged as any).mockResolvedValue({ data: [], total: 0 })
     const app = await buildApp()
     await app.inject({

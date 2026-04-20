@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import {
   getBugAnalysisReportById,
-  listReportsByProductLine,
   listReportsByProductLinePaged,
   type BugLevel,
   type ReportStatus,
@@ -37,31 +36,31 @@ function parseCsvEnum<T extends string>(
 export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Promise<void> {
   app.get('/bug-analysis-reports', async (req) => {
     const query = req.query as Record<string, unknown>
-    const productLineId = Number(query.product_line_id)
-    if (!productLineId) return { error: { code: 'MISSING_PARAM', message: 'product_line_id required' } }
+    const rawProductLineId = query.product_line_id != null && query.product_line_id !== ''
+      ? Number(query.product_line_id)
+      : NaN
+    const productLineId = Number.isFinite(rawProductLineId) && rawProductLineId > 0
+      ? rawProductLineId
+      : undefined
+    const rawIssueId = query.issueId != null && query.issueId !== ''
+      ? Number(query.issueId)
+      : NaN
+    const issueId = Number.isFinite(rawIssueId) && rawIssueId > 0 ? rawIssueId : undefined
 
     const statuses = parseCsvEnum(query.status, VALID_STATUSES)
     const levels = parseCsvEnum(query.level, VALID_LEVELS)
+    const page = Math.max(1, Number(query.page) || 1)
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
 
-    // 分页参数：page/pageSize 任一存在就走分页分支，否则走老 limit 行为（向后兼容）
-    const hasPaging = query.page !== undefined || query.pageSize !== undefined
-
-    if (hasPaging || statuses || levels) {
-      const page = Math.max(1, Number(query.page) || 1)
-      const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20))
-      const result = await listReportsByProductLinePaged({
-        productLineId,
-        statuses,
-        levels,
-        page,
-        limit: pageSize,
-      })
-      return { data: result.data, total: result.total, page, pageSize }
-    }
-
-    const limit = Number(query.limit) || 50
-    const reports = await listReportsByProductLine(productLineId, limit)
-    return { data: reports, total: reports.length }
+    const result = await listReportsByProductLinePaged({
+      productLineId,
+      issueId,
+      statuses,
+      levels,
+      page,
+      limit: pageSize,
+    })
+    return { data: result.data, total: result.total, page, pageSize }
   })
 
   app.get('/bug-analysis-reports/:id', async (req) => {

@@ -151,39 +151,51 @@ export async function listReportsByProductLine(productLineId: number, limit = 50
 }
 
 /**
- * 支持 status/level 筛选 + 服务端分页的版本。
+ * 支持 productLineId/issueId/status/level 筛选 + 服务端分页的版本。
  *
+ * - productLineId 未传 → 不按产品线过滤（跨产品线列出）
+ * - issueId 未传 → 不按 Issue 过滤
  * - statuses/levels 为空/undefined 表示不过滤
  * - page 从 1 起
+ * - SELECT 左联 product_lines 附带 product_line_name
  */
 export async function listReportsByProductLinePaged(params: {
-  productLineId: number
+  productLineId?: number
+  issueId?: number
   statuses?: ReportStatus[]
   levels?: BugLevel[]
   page: number
   limit: number
 }): Promise<{ data: BugAnalysisReport[]; total: number }> {
   const pool = getPool()
-  const { productLineId, statuses, levels, page, limit } = params
+  const { productLineId, issueId, statuses, levels, page, limit } = params
 
-  const where: string[] = ['product_line_id = $1']
-  const values: unknown[] = [productLineId]
+  const where: string[] = []
+  const values: unknown[] = []
 
+  if (productLineId != null) {
+    values.push(productLineId)
+    where.push(`b.product_line_id = $${values.length}`)
+  }
+  if (issueId != null) {
+    values.push(issueId)
+    where.push(`b.issue_id = $${values.length}`)
+  }
   if (statuses && statuses.length > 0) {
     values.push(statuses)
-    where.push(`status = ANY($${values.length}::text[])`)
+    where.push(`b.status = ANY($${values.length}::text[])`)
   }
   if (levels && levels.length > 0) {
     values.push(levels)
-    where.push(`level = ANY($${values.length}::text[])`)
+    where.push(`b.level = ANY($${values.length}::text[])`)
   }
 
-  const whereSql = where.join(' AND ')
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
   const offset = Math.max(0, (page - 1) * limit)
 
   const countValues = [...values]
   const countRes = await pool.query(
-    `SELECT COUNT(*)::int AS cnt FROM bug_analysis_reports WHERE ${whereSql}`,
+    `SELECT COUNT(*)::int AS cnt FROM bug_analysis_reports b ${whereSql}`,
     countValues,
   )
   const total = (countRes.rows[0]?.cnt as number) ?? 0
@@ -191,10 +203,12 @@ export async function listReportsByProductLinePaged(params: {
   values.push(limit)
   values.push(offset)
   const listRes = await pool.query(
-    `SELECT * FROM bug_analysis_reports
-     WHERE ${whereSql}
-     ORDER BY created_at DESC, id DESC
-     LIMIT $${values.length - 1} OFFSET $${values.length}`,
+    `SELECT b.*, p.name AS product_line_name
+       FROM bug_analysis_reports b
+       LEFT JOIN product_lines p ON p.id = b.product_line_id
+       ${whereSql}
+       ORDER BY b.created_at DESC, b.id DESC
+       LIMIT $${values.length - 1} OFFSET $${values.length}`,
     values,
   )
 
