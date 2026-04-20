@@ -1,12 +1,21 @@
 import type { FastifyInstance } from 'fastify'
+import { Command } from '@langchain/langgraph'
 import { listTestRuns, getTestRunById } from '../../db/repositories/test-runs.js'
 import { getDingTalkUserById, getDingTalkUsersByIds } from '../../db/repositories/dingtalk-users.js'
 import { runPipeline } from '../../pipeline/executor.js'
+import { getPendingInterrupt, resumeRun } from '../../pipeline/graph-runner.js'
+import { APPROVAL_INTERRUPT, WEBHOOK_INTERRUPT } from '../../pipeline/graph-builder.js'
 import { readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { createReadStream } from 'fs'
 
 const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
+
+interface ResumeBody {
+  approval?: 'approved' | 'rejected' | 'timeout'
+  webhookData?: unknown
+  webhookTimeout?: boolean
+}
 
 export async function registerTestRunRoutes(app: FastifyInstance): Promise<void> {
   // List runs
@@ -102,5 +111,80 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     } catch {
       return reply.status(404).send({ error: 'ZIP archive not yet generated' })
     }
+  })
+
+  // Manually resume a run paused on an interrupt. Typical use: DingTalk card
+  // never got a reply / webhook never arrived, operator decides from UI.
+  //
+  // Scope: only runs currently suspended on an interrupt. "Failed retrigger"
+  // (graph already at END) is a separate concern — handle via POST /test-runs.
+  app.post<{ Params: { id: string }; Body: ResumeBody }>('/test-runs/:id/resume', async (req, reply) => {
+    const runId = Number(req.params.id)
+    if (!Number.isFinite(runId) || runId <= 0) {
+      return reply.status(400).send({ error: 'invalid run id' })
+    }
+    const run = await getTestRunById(runId)
+    if (!run) return reply.status(404).send({ error: 'run not found' })
+    // A finished run cannot be resumed — the graph is at END and state is frozen.
+    if (run.status === 'success' || run.status === 'failed' || run.status === 'cancelled') {
+      return reply.status(409).send({ error: `run already ${run.status}` })
+    }
+
+    const pending = await getPendingInterrupt(runId)
+    if (!pending) {
+      return reply.status(409).send({ error: 'no pending interrupt to resume' })
+    }
+
+    const body = (req.body ?? {}) as ResumeBody
+    const actor = req.session.get('username') ?? 'admin'
+
+    if (pending.type === APPROVAL_INTERRUPT) {
+      const decision = body.approval
+      if (!decision || !['approved', 'rejected', 'timeout'].includes(decision)) {
+        return reply.status(400).send({
+          error: 'approval field required: approved | rejected | timeout',
+        })
+      }
+      req.log.info(
+        { runId, action: 'resume', interruptType: 'approval', decision, actor },
+        'resume endpoint invoked',
+      )
+      // Fire-and-forget: resume drives the graph until the next interrupt or
+      // END, which is unbounded. Returning 200 after dispatch only guarantees
+      // the Command was accepted — operator must watch the run status page
+      // for the actual outcome. Errors are logged; they cannot surface in
+      // this HTTP response.
+      void resumeRun(runId, new Command({ resume: decision })).catch((err) => {
+        req.log.error({ err, runId }, 'resumeRun failed after admin resume')
+      })
+      return reply.send({ ok: true, resumed: true, interruptType: 'approval' })
+    }
+
+    if (pending.type === WEBHOOK_INTERRUPT) {
+      const hasData = Object.prototype.hasOwnProperty.call(body, 'webhookData')
+      const hasTimeout = body.webhookTimeout === true
+      if (hasData === hasTimeout) {
+        // Either both present or both missing — caller bug either way.
+        return reply.status(400).send({
+          error: 'exactly one of webhookData or webhookTimeout=true required',
+        })
+      }
+      const payload: { timeout: true } | { data: unknown } = hasTimeout
+        ? { timeout: true }
+        : { data: body.webhookData }
+      req.log.info(
+        { runId, action: 'resume', interruptType: 'webhook', payload, actor },
+        'resume endpoint invoked',
+      )
+      void resumeRun(runId, new Command({ resume: payload })).catch((err) => {
+        req.log.error({ err, runId }, 'resumeRun failed after admin resume')
+      })
+      return reply.send({ ok: true, resumed: true, interruptType: 'webhook' })
+    }
+
+    // Shouldn't happen — getPendingInterrupt filters unknown types to null.
+    return reply
+      .status(500)
+      .send({ error: `unknown interrupt type: ${String((pending as { type?: unknown }).type)}` })
   })
 }

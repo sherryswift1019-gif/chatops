@@ -443,6 +443,61 @@ async function finalize(
   }
 }
 
+// --- Read-only inspector (for admin /resume endpoint) ----------------------
+
+/**
+ * Read the pending interrupt value for a run without advancing the graph.
+ *
+ * Used by the admin resume endpoint to validate the caller's body against
+ * whatever the graph is actually waiting on (approval vs webhook). Builds
+ * the StateGraph via the same path as resumeRun but only calls
+ * `compiled.getState(config)` — no stream, no side effects.
+ *
+ * Returns `null` when:
+ *   - the run / pipeline is not found
+ *   - the graph has no pending tasks (END, never started, or failed)
+ *   - the pending task exists but has no interrupt attached
+ *   - the interrupt value isn't one of our known shapes (belt-and-suspenders)
+ */
+export async function getPendingInterrupt(
+  runId: number,
+): Promise<ApprovalInterruptValue | WebhookInterruptValue | null> {
+  const ctx = await reloadContext(runId)
+  if (!ctx) return null
+  const saver = await getCheckpointer()
+  const graphBuilder = buildGraphFromStages({
+    stages: ctx.stages,
+    stageContext: ctx.stageContext,
+    hooks: ctx.hooks,
+    triggerParams: ctx.triggerParams,
+  })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const compiled = (graphBuilder as any).compile({ checkpointer: saver })
+  const config = { configurable: { thread_id: String(runId) } }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const snapshot: any = await compiled.getState(config).catch(() => null)
+  if (!snapshot) return null
+  // No pending step → graph is at END (or never started).
+  const next = snapshot.next as string[] | undefined
+  if (!Array.isArray(next) || next.length === 0) return null
+  // Walk tasks → first task's first interrupt value. Our graph only ever
+  // emits one pending interrupt at a time (single linear stage chain).
+  const tasks = snapshot.tasks as Array<{ interrupts?: Array<{ value?: unknown }> }> | undefined
+  if (!Array.isArray(tasks) || tasks.length === 0) return null
+  for (const task of tasks) {
+    const interrupts = task.interrupts
+    if (!Array.isArray(interrupts) || interrupts.length === 0) continue
+    const value = interrupts[0]?.value
+    if (!value || typeof value !== 'object') continue
+    const type = (value as { type?: unknown }).type
+    if (type === APPROVAL_INTERRUPT) return value as ApprovalInterruptValue
+    if (type === WEBHOOK_INTERRUPT) return value as WebhookInterruptValue
+    // Unknown interrupt type — ignore defensively rather than leak it.
+    return null
+  }
+  return null
+}
+
 // --- Context reload (for resume) -------------------------------------------
 
 async function reloadContext(runId: number): Promise<RunContext | null> {
