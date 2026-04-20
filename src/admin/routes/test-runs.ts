@@ -50,14 +50,27 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     pipelineId: number
     servers: Record<string, string[]>
     triggeredBy?: string
+    triggerType?: 'manual' | 'api'
+    runtimeVars?: Record<string, string>
   } }>('/test-runs', async (req, reply) => {
-    const { pipelineId, servers, triggeredBy } = req.body
+    const { pipelineId, servers, triggeredBy, triggerType, runtimeVars } = req.body
     if (!pipelineId || !servers) {
       return reply.status(400).send({ error: 'pipelineId and servers required' })
     }
-    // Run pipeline in background — don't await
-    const runId = await runPipeline(pipelineId, servers, 'api', triggeredBy ?? 'api')
-    return reply.status(201).send({ runId, message: 'Pipeline started' })
+    const effectiveType: 'manual' | 'api' = triggerType === 'manual' ? 'manual' : 'api'
+    const sessionUser = req.session.get('username')
+    // Manual triggers must be attributed to the logged-in user — never trust body.triggeredBy.
+    // API triggers may override triggeredBy (e.g. CI systems identifying themselves);
+    // fall back to session, then a generic 'api' marker.
+    const effectiveUser = effectiveType === 'manual'
+      ? (sessionUser ?? 'admin')
+      : (triggeredBy ?? sessionUser ?? 'api')
+    try {
+      const runId = await runPipeline(pipelineId, servers, effectiveType, effectiveUser, runtimeVars ?? {})
+      return reply.status(201).send({ runId, message: 'Pipeline started' })
+    } catch (e) {
+      return reply.status(400).send({ error: (e as Error).message })
+    }
   })
 
   // View HTML report in browser

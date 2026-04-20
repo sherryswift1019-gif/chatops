@@ -34,13 +34,19 @@ await pool.query(schemaV8)
 const schemaV9 = readFileSync(join(__dirname, 'schema-v9.sql'), 'utf8')
 await pool.query(schemaV9)
 
+const schemaV10 = readFileSync(join(__dirname, 'schema-v10.sql'), 'utf8')
+await pool.query(schemaV10)
+
 const schemaV11 = readFileSync(join(__dirname, 'schema-v11.sql'), 'utf8')
 await pool.query(schemaV11)
-console.log('[migrate] schema-v11 applied')
 
 const schemaV12 = readFileSync(join(__dirname, 'schema-v12.sql'), 'utf8')
 await pool.query(schemaV12)
 console.log('[migrate] schema-v12 applied')
 
+const schemaV13 = readFileSync(join(__dirname, 'schema-v13.sql'), 'utf8')
+await pool.query(schemaV13)
+console.log('[migrate] schema-v13 applied')
+
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v12, 含 bug_fix_events + handover MVP)')
+console.log('✅ Database schema applied (v1 ~ v13, 含 env-status + artifact-inputs + bug_fix_events + handover MVP)')

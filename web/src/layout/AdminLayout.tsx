@@ -101,7 +101,7 @@ export default function AdminLayout() {
         collapsed={collapsed}
         onCollapse={setCollapsed}
         width={200}
-        style={{ borderRight: '1px solid rgba(255,255,255,0.06)' }}
+        style={{ boxShadow: '1px 0 0 rgba(0,0,0,0.04)' }}
       >
         {/* Logo */}
         <div className="chatops-logo">
@@ -137,7 +137,7 @@ export default function AdminLayout() {
               icon={<LogoutOutlined />}
               onClick={onLogout}
               size="small"
-              style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13 }}
+              style={{ color: '#7A8296', fontSize: 13 }}
             >
               登出
             </Button>

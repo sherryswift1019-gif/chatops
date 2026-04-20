@@ -64,6 +64,10 @@ build-base:
       docker push "${FULL_BASE_LATEST}"
       docker push "${FULL_BASE_DEPS}"
       echo "==> [$(( $(date +%s) - T1 ))s] docker push done"
+
+      echo "==> Cleaning up local images on runner"
+      docker rmi "${FULL_BASE_LATEST}" "${FULL_BASE_DEPS}" 2>/dev/null || true
+      docker image prune -f
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
@@ -170,6 +174,10 @@ build-app:
       docker push "${FULL_APP}"
       docker push "${FULL_APP_LATEST}"
       echo "==> [$(( $(date +%s) - T1 ))s] docker push done"
+
+      echo "==> Cleaning up local images on runner"
+      docker rmi "${FULL_APP}" "${FULL_APP_LATEST}" 2>/dev/null || true
+      docker image prune -f
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
       when: always

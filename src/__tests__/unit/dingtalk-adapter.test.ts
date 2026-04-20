@@ -1,20 +1,29 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // Mock MUST be declared before importing the adapter
 vi.mock('dingtalk-stream-sdk-nodejs', () => {
   const listeners = new Map<string, Function>()
+  let allListener: Function | null = null
   const mockClient = {
+    // SDK public fields the adapter now reads directly to determine real connection state
+    connected: false,
+    registered: false,
     registerCallbackListener: vi.fn((topic: string, cb: Function) => {
       listeners.set(topic, cb)
       return mockClient
     }),
-    registerAllEventListener: vi.fn(() => mockClient),
+    registerAllEventListener: vi.fn((cb: Function) => {
+      allListener = cb
+      return mockClient
+    }),
     connect: vi.fn(async () => {}),
     disconnect: vi.fn(),
     send: vi.fn(),
     // Test helpers
     _trigger: (topic: string, data: unknown) => listeners.get(topic)?.(data),
+    _triggerAll: (data: unknown) => allListener?.(data),
     _listeners: listeners,
+    _resetAllListener: () => { allListener = null },
   }
 
   // Use a proper function (not arrow function) so it can be called as a constructor
@@ -128,6 +137,10 @@ describe('DingTalkAdapter (Stream mode)', () => {
     vi.clearAllMocks()
     // Also clear the captured listeners so each test gets a fresh adapter
     mockClient._listeners.clear()
+    mockClient._resetAllListener()
+    // Reset SDK connection flags — tests opt-in by flipping these to true
+    mockClient.connected = false
+    mockClient.registered = false
     adapter = new DingTalkAdapter({ clientId: 'app1', clientSecret: 'secret1' })
   })
 
@@ -279,5 +292,186 @@ describe('DingTalkAdapter (Stream mode)', () => {
   it('registers listeners for TOPIC_ROBOT and TOPIC_CARD in constructor', () => {
     expect(mockClient.registerCallbackListener).toHaveBeenCalledWith(TOPIC_ROBOT, expect.any(Function))
     expect(mockClient.registerCallbackListener).toHaveBeenCalledWith(TOPIC_CARD, expect.any(Function))
+  })
+
+  // ── credentialsMatch() ─────────────────────────────────────────────────────
+
+  describe('credentialsMatch()', () => {
+    it('returns true when both clientId and clientSecret match', () => {
+      expect(adapter.credentialsMatch('app1', 'secret1')).toBe(true)
+    })
+
+    it('returns false when clientId differs', () => {
+      expect(adapter.credentialsMatch('app2', 'secret1')).toBe(false)
+    })
+
+    it('returns false when clientSecret differs', () => {
+      expect(adapter.credentialsMatch('app1', 'secret-other')).toBe(false)
+    })
+  })
+
+  // ── getConnectionStatus() ──────────────────────────────────────────────────
+
+  describe('getConnectionStatus()', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it('reports not-started before start() is called', () => {
+      const s = adapter.getConnectionStatus()
+      expect(s).toEqual({
+        configured: true,
+        started: false,
+        startedAt: null,
+        lastEventAt: null,
+        startError: null,
+        connected: false,
+      })
+    })
+
+    it('reports connected when SDK socket is open', async () => {
+      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
+      vi.useFakeTimers()
+      vi.setSystemTime(t0)
+
+      // Simulate SDK finishing WebSocket open handshake
+      mockClient.connected = true
+      await adapter.start()
+
+      const s = adapter.getConnectionStatus()
+      expect(s.started).toBe(true)
+      expect(s.startedAt).toBe(t0)
+      expect(s.lastEventAt).toBeNull()
+      expect(s.connected).toBe(true)
+      expect(s.startError).toBeNull()
+    })
+
+    it('ignores the SDK registered field (current DingTalk servers do not send SYSTEM.REGISTERED)', async () => {
+      // Even if the SDK never flips `registered` to true, a live socket must read as connected.
+      mockClient.connected = true
+      mockClient.registered = false
+      await adapter.start()
+
+      const s = adapter.getConnectionStatus()
+      expect(s.started).toBe(true)
+      expect(s.connected).toBe(true)
+    })
+
+    it('flips to disconnected when SDK marks the socket closed (WS drop)', async () => {
+      mockClient.connected = true
+      await adapter.start()
+      expect(adapter.getConnectionStatus().connected).toBe(true)
+
+      // Simulate WebSocket close — SDK flips the public `connected` flag
+      mockClient.connected = false
+      expect(adapter.getConnectionStatus().connected).toBe(false)
+    })
+
+    it('updates lastEventAt when a business event is received, independent of connected', async () => {
+      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
+      vi.useFakeTimers()
+      vi.setSystemTime(t0)
+      mockClient.connected = true
+      await adapter.start()
+      expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
+
+      vi.setSystemTime(t0 + 30_000)
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
+
+      const s = adapter.getConnectionStatus()
+      expect(s.lastEventAt).toBe(t0 + 30_000)
+      // lastEventAt age no longer affects `connected`
+      expect(s.connected).toBe(true)
+    })
+
+    it('preserves lastEventAt over time without affecting the connected flag', async () => {
+      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
+      vi.useFakeTimers()
+      vi.setSystemTime(t0)
+      mockClient.connected = true
+      await adapter.start()
+
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
+      // Advance well past the old 120s heuristic window
+      vi.setSystemTime(t0 + 10 * 60_000)
+
+      const s = adapter.getConnectionStatus()
+      expect(s.lastEventAt).toBe(t0)
+      // Still connected because the SDK says so — event age is irrelevant
+      expect(s.connected).toBe(true)
+    })
+
+    it('records startError and stays not-started when connect() throws', async () => {
+      mockClient.connect.mockImplementationOnce(async () => { throw new Error('bad creds') })
+
+      await expect(adapter.start()).rejects.toThrow('bad creds')
+
+      const s = adapter.getConnectionStatus()
+      expect(s.started).toBe(false)
+      expect(s.startedAt).toBeNull()
+      expect(s.connected).toBe(false)
+      expect(s.startError).toBe('bad creds')
+    })
+
+    it('stop() clears startedAt and reports disconnected', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(Date.UTC(2026, 0, 1, 0, 0, 0))
+      mockClient.connected = true
+      await adapter.start()
+      expect(adapter.getConnectionStatus().started).toBe(true)
+
+      await adapter.stop()
+      const s = adapter.getConnectionStatus()
+      expect(s.started).toBe(false)
+      expect(s.startedAt).toBeNull()
+      expect(s.connected).toBe(false)
+    })
+
+    it('stop() clears lastEventAt so a restart does not inherit old event timestamps', async () => {
+      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
+      vi.useFakeTimers()
+      vi.setSystemTime(t0)
+      mockClient.connected = true
+      await adapter.start()
+
+      vi.setSystemTime(t0 + 10_000)
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
+      expect(adapter.getConnectionStatus().lastEventAt).toBe(t0 + 10_000)
+
+      await adapter.stop()
+      expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
+    })
+
+    it('restart starts with a fresh lastEventAt regardless of prior-session events', async () => {
+      const t0 = Date.UTC(2026, 0, 1, 0, 0, 0)
+      vi.useFakeTimers()
+      vi.setSystemTime(t0)
+      mockClient.connected = true
+      await adapter.start()
+
+      vi.setSystemTime(t0 + 10_000)
+      mockClient._triggerAll({ type: 'EVENT', headers: { topic: 'some/event', messageId: 'e1' } })
+
+      vi.setSystemTime(t0 + 20_000)
+      await adapter.stop()
+
+      vi.setSystemTime(t0 + 30_000)
+      mockClient.connected = true
+      await adapter.start()
+      expect(adapter.getConnectionStatus().lastEventAt).toBeNull()
+    })
+
+    it('start() clears startError from a previous failed attempt', async () => {
+      mockClient.connect.mockImplementationOnce(async () => { throw new Error('first try failed') })
+      await expect(adapter.start()).rejects.toThrow('first try failed')
+      expect(adapter.getConnectionStatus().startError).toBe('first try failed')
+
+      // Next start succeeds
+      mockClient.connected = true
+      await adapter.start()
+      const s = adapter.getConnectionStatus()
+      expect(s.startError).toBeNull()
+      expect(s.started).toBe(true)
+    })
   })
 })

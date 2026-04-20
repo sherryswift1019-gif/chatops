@@ -21,7 +21,7 @@ import { getAllTools, getTool } from './tools/index.js'
 import type { TaskContext } from './tools/types.js'
 
 // Register all tools
-import './tools/query-deployments.js'
+import './tools/check-env-status.js'
 import './tools/list-images.js'
 import './tools/get-gitlab-commits.js'
 import './tools/get-logs.js'
@@ -30,6 +30,8 @@ import './tools/approval.js'
 import './tools/role.js'
 import './tools/autotest.js'
 import './tools/list-projects.js'
+import './tools/list-artifacts.js'
+import './tools/get-pipeline-artifact-inputs.js'
 
 // 研发 AI 助手工具
 import './tools/read-code.js'

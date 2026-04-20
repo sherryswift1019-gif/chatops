@@ -77,11 +77,23 @@ export class DingTalkAdapter implements IMAdapter {
   // Access token cache for OpenAPI (DMs)
   private accessTokenCache: AccessTokenCache | null = null
 
+  // Connection status tracking
+  private startedAt: number | null = null
+  private lastEventAt: number | null = null
+  private startError: string | null = null
+
   constructor(private readonly cfg: DingTalkStreamConfig) {
     this.client = new DWClient({
       clientId: cfg.clientId,
       clientSecret: cfg.clientSecret,
       keepAlive: true,
+    })
+
+    // Log ALL events for debugging
+    this.client.registerAllEventListener((res: DWClientDownStream) => {
+      this.lastEventAt = Date.now()
+      console.log('[DingTalk] Event received:', res.type, res.headers?.topic, res.headers?.messageId)
+      return { status: EventAck.SUCCESS }
     })
 
     this.client
@@ -99,11 +111,55 @@ export class DingTalkAdapter implements IMAdapter {
   onCardAction(handler: CardActionHandler): void { this.cardActionHandler = handler }
 
   async start(): Promise<void> {
-    await this.client.connect()
+    // Reset per-session state so a restart never inherits heartbeats or errors
+    // from a previous run.
+    this.lastEventAt = null
+    this.startError = null
+    try {
+      await this.client.connect()
+      this.startedAt = Date.now()
+    } catch (err) {
+      this.startError = err instanceof Error ? err.message : String(err)
+      this.startedAt = null
+      throw err
+    }
   }
 
   async stop(): Promise<void> {
     this.client.disconnect()
+    this.startedAt = null
+    this.lastEventAt = null
+  }
+
+  getConnectionStatus(): {
+    configured: boolean
+    started: boolean
+    startedAt: number | null
+    lastEventAt: number | null
+    startError: string | null
+    connected: boolean
+  } {
+    const started = this.startedAt !== null
+    // SDK 的 keepAlive 是 WebSocket 原生 ping/pong，不经过 registerAllEventListener，
+    // 因此不能用 lastEventAt 推断连接健康。改用 SDK 在 socket open/close 上维护的
+    // this.client.connected 作为真相。
+    // 注：SDK 还有一个 this.client.registered 字段，期望通过 SYSTEM.REGISTERED 握手置 true，
+    // 但钉钉当前服务端协议已不再主动下发该消息（实测 socket open 后 15+ 分钟内无任何
+    // SYSTEM 消息到达，而 CALLBACK 业务消息正常），registered 实际永远保持 false，
+    // 因此不能依赖它。
+    const connected = started && this.client.connected
+    return {
+      configured: true,
+      started,
+      startedAt: this.startedAt,
+      lastEventAt: this.lastEventAt,
+      startError: this.startError,
+      connected,
+    }
+  }
+
+  credentialsMatch(clientId: string, clientSecret: string): boolean {
+    return this.cfg.clientId === clientId && this.cfg.clientSecret === clientSecret
   }
 
   // Stream mode does not use HTTP webhooks

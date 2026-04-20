@@ -29,6 +29,7 @@ export interface AgentTool {
 
 export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   query_deployments: ['developer', 'tester', 'ops', 'admin'],
+  check_environment_status: ['developer', 'tester', 'ops', 'admin'],
   list_images: ['developer', 'tester', 'ops', 'admin'],
   get_gitlab_commits: ['developer', 'tester', 'ops', 'admin'],
   get_logs: ['developer', 'tester', 'ops', 'admin'],
@@ -38,6 +39,8 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   request_approval: ['developer', 'tester', 'ops', 'admin'],
   manage_role: ['admin'],
   list_product_line_projects: ['developer', 'tester', 'ops', 'admin'],
+  list_artifacts: ['developer', 'tester', 'ops', 'admin'],
+  get_pipeline_artifact_inputs: ['developer', 'tester', 'ops', 'admin'],
 
   // 研发 AI 助手工具
   read_code: ['developer', 'tester', 'ops', 'admin'],

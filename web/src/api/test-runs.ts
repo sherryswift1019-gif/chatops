@@ -20,5 +20,11 @@ export const getTestRuns = (params: { pipelineId?: number; page: number; limit: 
 export const getTestRun = (id: number) =>
   client.get<TestRunWithUser>(`/test-runs/${id}`).then(r => r.data)
 
-export const triggerTestRun = (body: { pipelineId: number; servers: Record<string, string[]>; triggeredBy?: string }) =>
+export const triggerTestRun = (body: {
+  pipelineId: number
+  servers: Record<string, string[]>
+  triggeredBy?: string
+  triggerType?: 'manual' | 'api'
+  runtimeVars?: Record<string, string>
+}) =>
   client.post<{ runId: number; message: string }>('/test-runs', body).then(r => r.data)

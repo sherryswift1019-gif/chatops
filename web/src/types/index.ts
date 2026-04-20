@@ -11,6 +11,7 @@ export interface ProductLineEnv {
   id: number; productLineId: number; envId: number
   runtime: 'kubernetes' | 'docker'; namespace: string; enabled: boolean
   connectionConfig: Record<string, unknown>
+  defaultBranch: string
 }
 
 export interface Project {
@@ -40,6 +41,22 @@ export interface SystemConfigEntry {
   key: string; value: Record<string, unknown>; updatedAt: string
 }
 
+export interface DingTalkStatus {
+  configured: boolean
+  started: boolean
+  startedAt: number | null
+  lastEventAt: number | null
+  startError: string | null
+  connected: boolean
+  needsRestart: boolean
+}
+
+export interface ConnectionTestResult {
+  ok: boolean
+  user?: { username: string; name: string; email: string | null }
+  error?: string
+}
+
 export interface TestServer {
   id: number; productLineId: number; name: string; host: string; port: number
   username: string; authType: 'password' | 'key'; credential: string; role: string
@@ -51,7 +68,19 @@ export interface TestPipeline {
   id: number; productLineId: number; name: string; description: string
   stages: StageDefinition[]; serverRoles: Record<string, { count: number }>
   variables?: Record<string, string>
+  artifactInputs?: ArtifactInput[]
   schedule: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
+}
+
+export interface ArtifactInput {
+  name: string
+  listUrl: string
+  glob: string
+  outputVar: string
+  valueFrom: 'url' | 'name' | 'path'
+  default?: string
+  defaultStrategy?: 'latest-by-mtime' | 'first-match'
+  authHeaders?: Record<string, string>
 }
 
 export interface StageDefinition {

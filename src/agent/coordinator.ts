@@ -94,6 +94,7 @@ async function findPipelineByLevel(productLineId: number, level: string): Promis
     description: (r.description ?? '') as string,
     stages: (r.stages ?? []) as unknown[],
     serverRoles: (r.server_roles ?? {}) as Record<string, { count: number }>,
+    artifactInputs: (r.artifact_inputs ?? []) as unknown[],
     schedule: (r.schedule ?? '') as string,
     enabled: r.enabled as boolean,
     triggerParams: (r.trigger_params ?? {}) as Record<string, unknown>,
@@ -269,6 +270,7 @@ export async function handleAnalysisComplete(
     {},  // capability-only pipeline，无需服务器
     'api',
     triggeredBy,
+    {},  // runtimeVarsInput（合并 main 新签名：artifact-inputs 功能引入）
     onComplete,
     { reportId },
   )

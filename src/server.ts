@@ -20,7 +20,7 @@ import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
 
 // Register all tools by importing them
-import './agent/tools/query-deployments.js'
+import './agent/tools/check-env-status.js'
 import './agent/tools/list-images.js'
 import './agent/tools/get-gitlab-commits.js'
 import './agent/tools/get-logs.js'
@@ -29,6 +29,8 @@ import './agent/tools/approval.js'
 import './agent/tools/role.js'
 import './agent/tools/autotest.js'
 import './agent/tools/list-projects.js'
+import './agent/tools/list-artifacts.js'
+import './agent/tools/get-pipeline-artifact-inputs.js'
 
 // 研发 AI 助手工具
 import './agent/tools/read-code.js'
@@ -242,7 +244,7 @@ async function main(): Promise<void> {
   }
 
   // Admin API routes (under /admin prefix)
-  await app.register(adminPlugin, { prefix: '/admin' })
+  await app.register(adminPlugin, { prefix: '/admin', adapters })
 
   // Start pipeline scheduler
   const { startScheduler } = await import('./pipeline/scheduler.js')

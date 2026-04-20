@@ -712,7 +712,7 @@ ${intentRules}
       maxTurns: 200,
     })) {
       if ('sessionId' in msg && msg.sessionId && sessionKey) {
-        this.saveSession(sessionKey, msg.sessionId as string, [])
+        this.saveSession(sessionKey, msg.sessionId as string, tools)
       }
       if (msg.type === 'tool_use') {
         const toolName = 'name' in msg ? msg.name : 'unknown'

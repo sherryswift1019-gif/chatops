@@ -1,41 +1,173 @@
--- schema-v12.sql: handover MVP（对齐 V2 spec §27）
---
--- MVP 范围：
--- 1. bug_fix_events code 白名单注释追加 'handover'（实际约束在业务层）
--- 2. bug_analysis_reports.status 新增 'pending_manual' 取值（字段是 VARCHAR(20)，无需 DDL 变更）
--- 3. capabilities 新增 request_handover
---
--- MVP 不做（V2 才做）：
--- - bug_report_pipeline_runs 关联表
--- - handover-pipeline 模板（MVP 由 coordinator 直接 triggerCapability 调用 handler，不走 Pipeline）
--- - revise_fix / notify_tester
--- - 前端多轮分组视图所需的数据模型扩展
+-- schema-v12.sql: Pipeline 全链路动态编排（原 v11，合并 main 时让号改为 v12）
+-- 1. 新建 bug_fix_events 表 + 索引
+-- 2. bug_analysis_reports 扩展字段
+-- 3. capabilities 表新增 3 条记录（approve_l3 / create_mr / notify_bug）
+-- 4. test_pipelines 更新 L1/L2/L3 stages + 新建 L4
 
 -- ============================================================
--- 1. 事件码白名单注释更新（仅注释，业务层校验）
+-- 1. bug_fix_events 表
 -- ============================================================
--- 允许值（V1 9 种 + handover）：
---   analysis / scope_identified / create_issue / fix_attempt /
---   create_mr / ai_review / approval / notify / lifecycle_sync / handover
-COMMENT ON COLUMN bug_fix_events.code IS
-  'V1: analysis/scope_identified/create_issue/fix_attempt/create_mr/ai_review/approval/notify/lifecycle_sync; MVP: +handover';
+CREATE TABLE IF NOT EXISTS bug_fix_events (
+  id            SERIAL PRIMARY KEY,
+  report_id     INTEGER NOT NULL REFERENCES bug_analysis_reports(id),
+  project_path  TEXT,
+  code          VARCHAR(50) NOT NULL,  -- 允许值：analysis / scope_identified / create_issue / fix_attempt / create_mr / ai_review / approval / notify / lifecycle_sync
+  status        VARCHAR(20) NOT NULL DEFAULT 'success',
+  duration_ms   INTEGER,
+  data          JSONB NOT NULL DEFAULT '{}',
+  created_at    TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bug_fix_events_report
+  ON bug_fix_events(report_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_bug_fix_events_project
+  ON bug_fix_events(report_id, project_path, code);
 
 -- ============================================================
--- 2. bug_analysis_reports.status 取值扩展
---    'draft' | 'published' | 'pipeline_success' | 'pending_manual' (MVP 新增) | 'completed' | 'aborted'
---    字段是 VARCHAR(20)，无需 DDL 变更，业务层保证合法值。
+-- 2. bug_analysis_reports 扩展字段
 -- ============================================================
-COMMENT ON COLUMN bug_analysis_reports.status IS
-  'draft | published | pipeline_success | pending_manual (MVP) | completed | aborted';
+ALTER TABLE bug_analysis_reports
+  ADD COLUMN IF NOT EXISTS pipeline_run_id INTEGER REFERENCES test_runs(id),
+  ADD COLUMN IF NOT EXISTS primary_project_path TEXT;
+
+-- status 字段是 VARCHAR，无需改 enum；业务层使用以下取值：
+-- 'draft' | 'published' | 'pipeline_success' | 'completed' | 'aborted'
 
 -- ============================================================
--- 3. capabilities 新增 request_handover（V2 完整接口，MVP 实现 3 个 reason）
+-- 3. capabilities 表新增 3 条记录
 -- ============================================================
-INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
+INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system)
 VALUES
-  ('request_handover', '转人工接手',
-   'AI 自动化失败后转交 owner 人工处理：Issue 打 needs-manual label、保留 fix 分支、DM owner（附分支 URL 和失败摘要）。V2 完整接口预留；MVP 实现 fix_exhausted / l4_manual / user_requested 三个 reason',
-   'action', '[]'::jsonb, false, true, '')
-ON CONFLICT (key) DO UPDATE
-  SET display_name = EXCLUDED.display_name,
-      description  = EXCLUDED.description;
+  ('approve_l3', 'L3 方案审批',
+   'L3 Bug 修复方案审批：给主仓库 owner 发审批 DM，给从仓库 owner 发知情 DM',
+   'action', '[]'::jsonb, true, true),
+  ('create_mr', '创建 MR',
+   '对每个涉及的 project 创建 GitLab Merge Request，description 引用主 Issue',
+   'action', '[]'::jsonb, false, true),
+  ('notify_bug', '修复完成通知',
+   'Pipeline 终态通知：L4 创建 / AI Review 需关注时 DM 给各涉及 project 负责人（owner）。本版不发触发人 DM（触发人通过 Bug 修复实例页面查看进度）',
+   'action', '[]'::jsonb, false, true)
+ON CONFLICT (key) DO NOTHING;
+
+-- ============================================================
+-- 4. test_pipelines 更新 L1/L2/L3 stages + 新建 L4
+-- ============================================================
+
+-- L1 Pipeline
+UPDATE test_pipelines
+SET stages = '[
+  {
+    "name": "L1 修复", "stageType": "capability", "capabilityKey": "fix_bug_l1",
+    "timeoutSeconds": 1800, "retryCount": 0, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "创建 MR", "stageType": "capability", "capabilityKey": "create_mr",
+    "timeoutSeconds": 300, "retryCount": 1, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "AI Review", "stageType": "capability", "capabilityKey": "ai_review_mr",
+    "timeoutSeconds": 600, "retryCount": 0, "onFailure": "continue",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "通知", "stageType": "capability", "capabilityKey": "notify_bug",
+    "timeoutSeconds": 120, "retryCount": 2, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  }
+]'::jsonb
+WHERE name = 'L1-配置类';
+
+-- L2 Pipeline
+UPDATE test_pipelines
+SET stages = '[
+  {
+    "name": "L2 修复", "stageType": "capability", "capabilityKey": "fix_bug_l2",
+    "timeoutSeconds": 2400, "retryCount": 2, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "创建 MR", "stageType": "capability", "capabilityKey": "create_mr",
+    "timeoutSeconds": 300, "retryCount": 1, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "AI Review", "stageType": "capability", "capabilityKey": "ai_review_mr",
+    "timeoutSeconds": 600, "retryCount": 0, "onFailure": "continue",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "通知", "stageType": "capability", "capabilityKey": "notify_bug",
+    "timeoutSeconds": 120, "retryCount": 2, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  }
+]'::jsonb
+WHERE name = 'L2-代码缺陷';
+
+-- L3 Pipeline: approve_l3 是 stageType=capability（不是 approval）
+-- 注意：capabilityParams.approvalTimeoutMs 必须与 stage.timeoutSeconds 保持同步
+--       （handler 内部 fail-fast：未配置或非法会直接 return invalid_timeout）
+UPDATE test_pipelines
+SET stages = '[
+  {
+    "name": "方案审批", "stageType": "capability", "capabilityKey": "approve_l3",
+    "timeoutSeconds": 3600, "retryCount": 0, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}", "approvalTimeoutMs": 3600000}
+  },
+  {
+    "name": "L3 修复", "stageType": "capability", "capabilityKey": "fix_bug_l3",
+    "timeoutSeconds": 2400, "retryCount": 2, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "创建 MR", "stageType": "capability", "capabilityKey": "create_mr",
+    "timeoutSeconds": 300, "retryCount": 1, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "AI Review", "stageType": "capability", "capabilityKey": "ai_review_mr",
+    "timeoutSeconds": 600, "retryCount": 0, "onFailure": "continue",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  },
+  {
+    "name": "通知", "stageType": "capability", "capabilityKey": "notify_bug",
+    "timeoutSeconds": 120, "retryCount": 2, "onFailure": "stop",
+    "targetRoles": [], "parallel": false,
+    "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+  }
+]'::jsonb
+WHERE name = 'L3-业务逻辑';
+
+-- L4 Pipeline（新建，单 stage）
+INSERT INTO test_pipelines (product_line_id, name, description, stages, enabled, trigger_params, variables)
+SELECT
+  id AS product_line_id,
+  'L4-复杂问题' AS name,
+  '无自动修复能力的 Bug 分析结果，仅创建 Issue 并通知各涉及 project 负责人（owner）人工接手' AS description,
+  '[
+    {
+      "name": "通知", "stageType": "capability", "capabilityKey": "notify_bug",
+      "timeoutSeconds": 120, "retryCount": 2, "onFailure": "stop",
+      "targetRoles": [], "parallel": false,
+      "capabilityParams": {"reportId": "{{triggerParams.reportId}}"}
+    }
+  ]'::jsonb AS stages,
+  true AS enabled,
+  '{}'::jsonb AS trigger_params,
+  '{}'::jsonb AS variables
+FROM product_lines
+WHERE name = 'pam'
+  AND NOT EXISTS (SELECT 1 FROM test_pipelines WHERE name = 'L4-复杂问题');

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { IMAdapter } from '../adapters/im/types.js'
 import { sessionPlugin, requireAuth } from './auth/session-plugin.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerSystemConfigRoutes } from './routes/system-config.js'
@@ -16,6 +17,7 @@ import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
 import { registerTestRunRoutes } from './routes/test-runs.js'
 import { registerStageOperationRoutes } from './routes/stage-operations.js'
 import { registerPipelineVariableRoutes } from './routes/pipeline-variables.js'
+import { registerArtifactRoutes } from './routes/artifacts.js'
 // 研发 AI 助手 Admin 路由
 import { registerModuleOwnerRoutes } from './routes/module-owners.js'
 import { registerProductKnowledgeRoutes } from './routes/product-knowledge.js'
@@ -24,7 +26,7 @@ import { registerMetricsRoutes } from './routes/metrics.js'
 import { registerAuditLogRoutes } from './routes/audit-log.js'
 import { registerOnboardingRoutes } from './routes/onboarding.js'
 
-export async function adminPlugin(app: FastifyInstance): Promise<void> {
+export async function adminPlugin(app: FastifyInstance, opts: { adapters?: IMAdapter[] } = {}): Promise<void> {
   // Session middleware — must be registered before any route definition
   await app.register(sessionPlugin)
 
@@ -41,7 +43,7 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerAuthRoutes(app)
 
   // All other routes — require valid session
-  await registerSystemConfigRoutes(app)
+  await registerSystemConfigRoutes(app, { adapters: opts.adapters ?? [] })
   await registerProductLineRoutes(app)
   await registerProjectRoutes(app)
   await registerEnvironmentRoutes(app)
@@ -55,6 +57,7 @@ export async function adminPlugin(app: FastifyInstance): Promise<void> {
   await registerTestRunRoutes(app)
   await registerStageOperationRoutes(app)
   await registerPipelineVariableRoutes(app)
+  await registerArtifactRoutes(app)
   await registerAiRoutes(app)
   // 研发 AI 助手
   await registerModuleOwnerRoutes(app)

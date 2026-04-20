@@ -11,7 +11,8 @@ import { PipelineApprovalManager } from './approval-manager.js'
 import { WebhookWaiter } from './webhook-waiter.js'
 import { triggerCapability } from '../agent/coordinator.js'
 import { getStageType } from './types.js'
-import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult } from './types.js'
+import type { StageDefinition, ServerInfo, StageContext, StageExecutionResult, ArtifactInput } from './types.js'
+import { resolveArtifact } from './artifact-resolver.js'
 import { sshExec } from './ssh.js'
 import { writeFile } from 'fs/promises'
 import { getDingTalkUserById } from '../db/repositories/dingtalk-users.js'
@@ -214,6 +215,7 @@ export async function runPipeline(
   serverAssignment: Record<string, string[]>,
   triggerType: 'manual' | 'api' | 'scheduled',
   triggeredBy: string,
+  runtimeVarsInput: Record<string, string> = {},
   onComplete?: (result: PipelineRunResult) => void,
   triggerParams?: Record<string, unknown>
 ): Promise<number> {
@@ -223,8 +225,40 @@ export async function runPipeline(
 
   const productLine = await getProductLineById(pipeline.productLineId)
 
-  // Create run record
-  const run = await createTestRun({ pipelineId, triggerType, triggeredBy, servers: serverAssignment })
+  // Resolve artifact inputs.
+  // - manual / api triggers: fail fast — caller can see 400 and correct the input.
+  // - scheduled: no interactive caller; record a failed run for audit instead of throwing.
+  const artifactInputs = (pipeline.artifactInputs ?? []) as ArtifactInput[]
+  const runtimeVars: Record<string, string> = { ...runtimeVarsInput }
+  let resolveError: Error | null = null
+  try {
+    for (const input of artifactInputs) {
+      const provided = runtimeVars[input.outputVar]
+      const value = await resolveArtifact(input, provided)
+      runtimeVars[input.outputVar] = value
+    }
+  } catch (e) {
+    resolveError = e as Error
+  }
+
+  if (resolveError && triggerType !== 'scheduled') {
+    // Propagate to the caller so they get an explicit error
+    throw new Error(`制品输入解析失败: ${resolveError.message}`)
+  }
+
+  // Create run record (persist caller's original input on failure,
+  // full resolved vars on success — both are useful for audit)
+  const run = await createTestRun({
+    pipelineId, triggerType, triggeredBy,
+    servers: serverAssignment,
+    runtimeVars: resolveError ? runtimeVarsInput : runtimeVars,
+  })
+
+  if (resolveError) {
+    await finishTestRun(run.id, 'failed', '', `制品输入解析失败: ${resolveError.message}`)
+    return run.id
+  }
+
   const logDir = join(DATA_DIR, String(run.id))
   await mkdir(logDir, { recursive: true })
 
@@ -368,7 +402,7 @@ export async function runPipeline(
           productLine: productLine ? { name: productLine.name, displayName: productLine.displayName } : undefined,
           pipeline: { id: pipeline.id, name: pipeline.name },
           run: { id: run.id, triggeredBy, triggerType },
-          variables: pipeline.variables ?? {},
+          variables: { ...(pipeline.variables ?? {}), ...runtimeVars },
         }
 
         if (stage.parallel && targetServers.length > 1) {

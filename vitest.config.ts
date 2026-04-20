@@ -5,9 +5,8 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     setupFiles: ['src/__tests__/helpers/db.ts'],
-    // Tests share a single Postgres schema; running files concurrently
-    // causes DROP SCHEMA races. Run files serially.
+    // integration/ 下仍有 PG 依赖测试共享单 schema，并发跑会 DROP SCHEMA 竞态。串行保险。
     fileParallelism: false,
-    exclude: ['**/node_modules/**', '**/.git/**', '**/.claude/**', '**/e2e/**'],
+    exclude: ['**/node_modules/**', '**/.git/**', '**/.claude/**', '**/mock-e2e/**'],
   },
 })
