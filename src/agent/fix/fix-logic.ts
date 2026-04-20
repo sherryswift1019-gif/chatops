@@ -4,10 +4,13 @@
  * 只负责：clone worktree → 创建 fix 分支 → Claude 修复 → 运行测试 → commit + push。
  * 不写 bug_fix_events、不创建 MR、不发通知（由 fix-runner handler / 独立 capability 负责）。
  */
+import { promises as fs } from 'fs'
+import { join } from 'path'
 import { acquire, release, makeWorktreeKey } from '../worktree/manager.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { createFixBranch, commitChanges, pushBranch, rebaseOnTarget } from './branch-manager.js'
 import { runClaudeCli } from '../claude-cli.js'
+import { gitlabGetIssue } from '../analysis/gitlab-issue.js'
 import { mask } from '../masking/sensitive-info.js'
 import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
 
@@ -32,6 +35,19 @@ export function isFixSuccessful(output: string): boolean {
 export function projectPathToGitUrl(projectPath: string): string {
   const base = (process.env.GITLAB_URL ?? '').replace(/\/$/, '')
   return `${base}/${projectPath}.git`
+}
+
+/**
+ * 预取 GitLab Issue 描述写入 worktree 根目录的 `.issue.md`，供 Claude 通过 Read 读取。
+ * 失败向上抛出（不静默），由调用方决定降级策略。
+ */
+export async function preloadIssueToWorktree(
+  worktreePath: string,
+  projectPath: string,
+  issueIid: number,
+): Promise<void> {
+  const issue = await gitlabGetIssue(projectPath, issueIid)
+  await fs.writeFile(join(worktreePath, '.issue.md'), issue.description, 'utf-8')
 }
 
 export interface RunFixForProjectInput {
@@ -94,34 +110,23 @@ export async function runFixForProject(input: RunFixForProjectInput): Promise<Ru
       return { branch, testPassed: false, error: `fix_bug_${input.level} 未配置 systemPrompt` }
     }
 
-    const solutionsSummary = Array.isArray(input.solutionsJson)
-      ? (input.solutionsJson as Array<Record<string, unknown>>)
-          .map(
-            s =>
-              `- [${s.recommended ? '推荐' : '备选'}] ${s.summary}（风险:${s.risk}, 工作量:${s.effort}）`,
-          )
-          .join('\n')
-      : '无方案'
+    // 预取 Issue 描述到 worktree/.issue.md，供 Claude Read 读取（替代 prompt 里硬拼根因/方案/影响模块）
+    try {
+      await preloadIssueToWorktree(worktree.path, input.projectPath, input.issueId)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return { branch, testPassed: false, error: `预取 Issue #${input.issueId} 失败: ${msg}` }
+    }
 
     const prompt = `${capabilityRow.systemPrompt}
 
 代码仓库路径: ${worktree.path}
 项目: ${input.projectPath}
 源分支: ${input.sourceBranch}
+Issue 详情: \`.issue.md\`（位于代码仓库根目录；含根因分析、推荐方案、影响模块）
 
 修复 Bug（report=${input.reportId}, issue=#${input.issueId}, attempt=${input.attempt}, 等级 ${input.level}）
-
-## 根因分析
-${input.rootCauseSummary ?? '(未提供)'}
-
-## 修复方案
-${solutionsSummary}
-
-## 影响模块
-${input.affectedModules.join(', ') || '未知'}
-
-请按照推荐方案修复代码。修复后用 Bash 工具运行测试验证。
-修复成功请回复"所有测试通过"，失败请说明原因。`
+`
 
     const rawOutput = await runClaudeCli({
       prompt,
