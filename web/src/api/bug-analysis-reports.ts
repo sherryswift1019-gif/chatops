@@ -54,6 +54,47 @@ export async function getBugReports(p: GetBugReportsParams): Promise<GetBugRepor
   return data
 }
 
+/**
+ * 新版签名：productLineId 可选、支持按 issueId 过滤。
+ * 与 getBugReports() 共享后端接口，返回结构相同。
+ *
+ * 与 getBugReports 的区别：
+ * - productLineId 改为可选（用于跨产品线 / 按 issue 直查场景）
+ * - 新增 issueId 参数，可精确拉取某 Issue 下的所有报告
+ * - status / level 为单值字符串（保留后端多值 CSV 协议的单项用法）
+ */
+export interface ListReportsParams {
+  productLineId?: number
+  issueId?: number
+  status?: string
+  level?: string
+  page?: number
+  pageSize?: number
+  signal?: AbortSignal
+}
+
+export async function listBugReports(params: ListReportsParams = {}): Promise<{
+  data: BugAnalysisReport[]
+  total: number
+  page: number
+  pageSize: number
+}> {
+  const qs = new URLSearchParams()
+  if (params.productLineId != null) qs.set('product_line_id', String(params.productLineId))
+  if (params.issueId != null) qs.set('issueId', String(params.issueId))
+  if (params.status) qs.set('status', params.status)
+  if (params.level) qs.set('level', params.level)
+  if (params.page != null) qs.set('page', String(params.page))
+  if (params.pageSize != null) qs.set('pageSize', String(params.pageSize))
+  const { data } = await client.get<{
+    data: BugAnalysisReport[]
+    total: number
+    page: number
+    pageSize: number
+  }>(`/bug-analysis-reports?${qs.toString()}`, { signal: params.signal })
+  return data
+}
+
 export const getBugAnalysisReport = (id: number) =>
   client.get<{ data: BugAnalysisReport }>(`/bug-analysis-reports/${id}`).then(r => r.data.data)
 

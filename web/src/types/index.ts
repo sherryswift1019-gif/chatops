@@ -122,6 +122,8 @@ export interface BugAnalysisReport {
   metadata: Record<string, unknown> | null; status: string
   pipelineRunId: number | null; primaryProjectPath: string | null
   createdAt: string; updatedAt: string
+  productLineName?: string
+  completedAt: string | null
 }
 
 export interface Solution {
