@@ -2,12 +2,56 @@ import { Pool } from 'pg'
 import { readFileSync } from 'fs'
 import { join } from 'path'
 
+/**
+ * 断言 DATABASE_URL 在测试环境下指向测试库（含 _test 或在白名单里）。
+ * 不抛的场景：NODE_ENV 非 test（跳过，不干扰生产/开发环境的调用）。
+ * 抛的场景：NODE_ENV=test 且 DATABASE_URL 未设 / 指向非测试库。
+ *
+ * 这是 DROP/INSERT/UPDATE 级别的"总门"——B2+B3 只防 resetTestDb 的 DROP，
+ * 防不住 integration 测试 seedReport 通过 getPool/getTestPool 的 INSERT 污染。
+ * 本函数在 setupFiles 顶部统一断言，测试任何路径都无法触达非测试库。
+ */
+export function assertDatabaseUrlForTests(
+  databaseUrl: string | undefined,
+  nodeEnv: string | undefined,
+  allowedDbNames?: string,
+): void {
+  if (nodeEnv !== 'test') return
+  if (!databaseUrl) {
+    throw new Error(
+      `[test setup] DATABASE_URL 未设置。` +
+      ` 测试运行时必须显式传 DATABASE_URL=postgres://.../chatops_test（或设 NODE_ENV!=test 跳过校验）。`,
+    )
+  }
+  const whitelist = new Set(
+    (allowedDbNames ?? '').split(',').map(n => n.trim()).filter(Boolean),
+  )
+  const dbName = databaseUrl.split('/').pop() ?? ''
+  const dbNameBeforeQuery = dbName.split('?')[0]
+  const okByConvention = dbNameBeforeQuery.includes('_test')
+  const okByWhitelist = whitelist.has(dbNameBeforeQuery)
+  if (!okByConvention && !okByWhitelist) {
+    throw new Error(
+      `[test setup] DATABASE_URL 指向非测试库 (${databaseUrl})。` +
+      ` 测试库名需含 "_test" 或在 ALLOWED_TEST_DB_NAMES 白名单里，避免 seedReport / resetTestDb 等污染开发/生产库。`,
+    )
+  }
+}
+
 // Vitest setup file: ensures tool modules that transitively load src/config.ts
 // can be imported in unit tests without a real DATABASE_URL in the environment.
 // Integration tests that actually talk to Postgres must set their own URL.
 if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = 'postgres://test:test@localhost:5432/chatops_test'
 }
+
+// 总门：测试环境下 DATABASE_URL 必须指向测试库，不通过立即中止 vitest 启动
+// 必须在任何业务代码 import（如 config.ts 的 `import 'dotenv/config'`）之后再次校验
+assertDatabaseUrlForTests(
+  process.env.DATABASE_URL,
+  process.env.NODE_ENV,
+  process.env.ALLOWED_TEST_DB_NAMES,
+)
 
 let testPool: Pool | null = null
 
