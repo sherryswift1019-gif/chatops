@@ -7,5 +7,6 @@ web/dist/
 .agent/
 .claude/
 _bmad/
+_bmad-output/
 test-results/
 playwright-report/
