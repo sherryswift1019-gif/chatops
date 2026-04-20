@@ -99,6 +99,8 @@ describe('PipelineApprovalManager (Task 3 adapter shape)', () => {
     })
 
     await mgr.handleCallback(approvalId, APPROVAL_APPROVED, 'alice')
+    // fire-and-forget — wait a tick for the scheduled handler
+    await new Promise((r) => setTimeout(r, 10))
 
     expect(handler).toHaveBeenCalledTimes(1)
     expect(handler.mock.calls[0][0]).toEqual({
@@ -108,6 +110,58 @@ describe('PipelineApprovalManager (Task 3 adapter shape)', () => {
       decision: APPROVAL_APPROVED,
       approverId: 'alice',
     })
+  })
+
+  it('isPipelineApproval: true for a registered approvalId, false otherwise', async () => {
+    const adapter = makeStubAdapter()
+    const mgr = PipelineApprovalManager.initialize([adapter])
+    const approvalId = await mgr.requestCard({
+      runId: 1,
+      stageIndex: 0,
+      approverIds: ['alice'],
+      description: 'deploy',
+    })
+    expect(mgr.isPipelineApproval(approvalId)).toBe(true)
+    expect(mgr.isPipelineApproval('some-other-id')).toBe(false)
+  })
+
+  it('isPipelineApproval: false after handleCallback consumes the id', async () => {
+    const adapter = makeStubAdapter()
+    const mgr = PipelineApprovalManager.initialize([adapter])
+    mgr.setResumeHandler(() => {})
+    const approvalId = await mgr.requestCard({
+      runId: 1,
+      stageIndex: 0,
+      approverIds: ['alice'],
+      description: 'deploy',
+    })
+    expect(mgr.isPipelineApproval(approvalId)).toBe(true)
+    await mgr.handleCallback(approvalId, APPROVAL_APPROVED, 'alice')
+    expect(mgr.isPipelineApproval(approvalId)).toBe(false)
+  })
+
+  it('handleCallback: resumeHandler errors are logged, not propagated to caller', async () => {
+    const adapter = makeStubAdapter()
+    const mgr = PipelineApprovalManager.initialize([adapter])
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    mgr.setResumeHandler(async () => {
+      throw new Error('boom')
+    })
+
+    const approvalId = await mgr.requestCard({
+      runId: 1,
+      stageIndex: 0,
+      approverIds: ['alice'],
+      description: 'deploy',
+    })
+
+    // Must resolve, not reject, even though handler throws.
+    await expect(
+      mgr.handleCallback(approvalId, APPROVAL_APPROVED, 'alice'),
+    ).resolves.toBeUndefined()
+    await new Promise((r) => setTimeout(r, 10))
+    expect(errSpy).toHaveBeenCalled()
+    errSpy.mockRestore()
   })
 
   it('handleCallback: unknown approvalId does not throw and does not call handler', async () => {
@@ -137,6 +191,7 @@ describe('PipelineApprovalManager (Task 3 adapter shape)', () => {
 
     await mgr.handleCallback(approvalId, APPROVAL_REJECTED, 'alice')
     await mgr.handleCallback(approvalId, APPROVAL_APPROVED, 'alice')
+    await new Promise((r) => setTimeout(r, 10))
 
     expect(handler).toHaveBeenCalledTimes(1)
     expect(handler.mock.calls[0][0].decision).toBe(APPROVAL_REJECTED)

@@ -120,11 +120,25 @@ export class PipelineApprovalManager {
   }
 
   /**
+   * Returns true iff this approvalId belongs to a pipeline approval currently
+   * tracked in memory. server.ts uses this to route card actions: it only
+   * forwards to `handleCallback` when we own the id, so the generic approval
+   * gate keeps exclusive handling of its own taskIds (no "unknown approvalId"
+   * log noise for every tool-approval card).
+   */
+  isPipelineApproval(approvalId: string): boolean {
+    return this.approvals.has(approvalId)
+  }
+
+  /**
    * Translate an inbound IM card action into a resume call.
    *
-   * - Unknown approvalId → log + drop (no throw, to keep IM routing stable)
-   * - No handler registered → log warn + drop (graph-runner not wired yet)
-   * - Otherwise: call handler, then clear the mapping
+   * Caller contract:
+   *   - handler errors are logged, NOT propagated to the caller (fire-and-
+   *     forget pattern, matching `WebhookWaiter.resume`). The returned promise
+   *     resolves once the handler has been scheduled — not when it finishes.
+   *   - Unknown approvalId → log at debug + drop (no throw)
+   *   - No handler registered → log warn + drop (graph-runner not wired yet)
    */
   async handleCallback(
     approvalId: string,
@@ -133,9 +147,8 @@ export class PipelineApprovalManager {
   ): Promise<void> {
     const entry = this.approvals.get(approvalId)
     if (!entry) {
-      console.log(
-        `[PipelineApprovalManager] callback for unknown approvalId=${approvalId} — ignoring`,
-      )
+      // Not one of ours — server.ts normally pre-filters via
+      // isPipelineApproval(), but keep this safe in case of a race.
       return
     }
 
@@ -148,12 +161,21 @@ export class PipelineApprovalManager {
       return
     }
 
-    await this.resumeHandler({
-      approvalId,
-      runId: entry.runId,
-      stageIndex: entry.stageIndex,
-      decision,
-      approverId,
+    // Fire-and-forget; match WebhookWaiter.resume semantics so callers never
+    // see a rejected promise from a misbehaving handler.
+    void Promise.resolve(
+      this.resumeHandler({
+        approvalId,
+        runId: entry.runId,
+        stageIndex: entry.stageIndex,
+        decision,
+        approverId,
+      }),
+    ).catch((err) => {
+      console.error(
+        `[PipelineApprovalManager] resumeHandler threw for approvalId=${approvalId}:`,
+        err,
+      )
     })
   }
 
@@ -168,7 +190,7 @@ export class PipelineApprovalManager {
     _timeoutMs: number,
   ): Promise<'approved' | 'rejected' | 'timeout'> {
     throw new Error(
-      'PipelineApprovalManager.requestApproval: legacy API removed in Task 3; use requestCard + resumeHandler instead',
+      'PipelineApprovalManager.requestApproval: legacy API removed in Task 3; use requestCard + setResumeHandler instead',
     )
   }
 }

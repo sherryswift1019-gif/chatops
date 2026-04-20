@@ -194,11 +194,20 @@ async function main(): Promise<void> {
   // Card action (approval responses)
   for (const adapter of adapters) {
     adapter.onCardAction(async (taskId, action, approverId) => {
-      // Route pipeline approval callbacks
-      try {
-        const mgr = PipelineApprovalManager.getInstance()
-        mgr.handleCallback(taskId, action as 'approved' | 'rejected', approverId)
-      } catch { /* not a pipeline approval */ }
+      // Route pipeline approval callbacks first: only forward when the id is
+      // owned by PipelineApprovalManager, so tool-approval / generic-gate
+      // cards don't produce log noise here. handleCallback is fire-and-forget
+      // internally (errors are logged, not propagated) — we still guard with
+      // .catch() to cover unexpected synchronous/scheduling failures.
+      const mgr = PipelineApprovalManager.getInstance()
+      if (mgr.isPipelineApproval(taskId)) {
+        await mgr
+          .handleCallback(taskId, action as 'approved' | 'rejected', approverId)
+          .catch((err) => {
+            app.log.error({ err, taskId }, 'pipeline handleCallback failed')
+          })
+        return
+      }
 
       if (action === 'approved' || action === 'rejected') {
         await gate.respond(taskId, approverId, action)

@@ -142,7 +142,8 @@ export class WebhookWaiter {
   /**
    * @deprecated Legacy cancel-on-timeout API. Superseded by the resumeHandler
    *   clearing its own entry on success and by graph-runner owning the
-   *   timeout path. Retained as a no-op for any stray call sites.
+   *   timeout path. Retained as a defensive best-effort `waiters.delete(tag)`
+   *   for stray call sites — safe to call with an unregistered tag.
    */
   cancel(tag: string): void {
     this.waiters.delete(tag)
