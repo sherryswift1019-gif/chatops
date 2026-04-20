@@ -3,6 +3,7 @@ import {
   triggerCapability,
   registerCapabilityHandler,
   handleAnalysisComplete,
+  maybeCompleteAnalyze,
   checkAndTriggerHandover,
 } from '../../agent/coordinator.js'
 
@@ -170,6 +171,50 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
 
     expect(runPipeline).not.toHaveBeenCalled()
     expect(setPipelineRunId).not.toHaveBeenCalled()
+  })
+
+  describe('maybeCompleteAnalyze', () => {
+    it('success + bug + 完整 data → 触发 pipeline', async () => {
+      const { getBugAnalysisReportById } = await import('../../db/repositories/bug-analysis-reports.js')
+      const { runPipeline } = await import('../../pipeline/executor.js')
+      ;(getBugAnalysisReportById as any).mockResolvedValue(fakeReport)
+      ;(runPipeline as any).mockResolvedValue(99)
+      await mockPipelineRow(11, 'L2-代码缺陷')
+
+      await maybeCompleteAnalyze(
+        { success: true, data: { reportId: fakeReport.id, level: 'l2', classification: 'bug' } },
+        'u-runner',
+      )
+
+      expect(runPipeline).toHaveBeenCalled()
+    })
+
+    it('success + usage_issue → 不触发 pipeline（handleAnalysisComplete 内部自行判断）', async () => {
+      const { runPipeline } = await import('../../pipeline/executor.js')
+      await maybeCompleteAnalyze(
+        { success: true, data: { reportId: 1, level: 'l1', classification: 'usage_issue' } },
+        'u-runner',
+      )
+      expect(runPipeline).not.toHaveBeenCalled()
+    })
+
+    it('success:false → 不调 handleAnalysisComplete', async () => {
+      const { runPipeline } = await import('../../pipeline/executor.js')
+      await maybeCompleteAnalyze(
+        { success: false, error: 'claude_invalid_json' },
+        'u-runner',
+      )
+      expect(runPipeline).not.toHaveBeenCalled()
+    })
+
+    it('success + data 缺字段（insufficient 软失败场景）→ 不调', async () => {
+      const { runPipeline } = await import('../../pipeline/executor.js')
+      await maybeCompleteAnalyze(
+        { success: true, output: '材料不够判断...' },  // data 缺失
+        'u-runner',
+      )
+      expect(runPipeline).not.toHaveBeenCalled()
+    })
   })
 
   it('onComplete(success) → updates status to pipeline_success', async () => {

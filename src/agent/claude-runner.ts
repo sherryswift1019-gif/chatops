@@ -12,7 +12,7 @@ import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../db/repositories/environments-repo.js'
 import { buildClaudeEnv } from './claude-config.js'
 import { getConfig } from '../db/repositories/system-config.js'
-import { triggerCapability } from './coordinator.js'
+import { triggerCapability, maybeCompleteAnalyze } from './coordinator.js'
 import { ApprovalRouter } from '../approval/router.js'
 import { getApprovalRules } from '../db/repositories/approval-rules.js'
 import { acquireLock, releaseLock } from './deploy-lock.js'
@@ -343,6 +343,13 @@ export class ClaudeRunner {
           ? (result.output ?? '处理完成')
           : `处理失败：${result.error ?? '未知错误'}`
         await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: replyText, atDingtalkIds: atIds } as any)
+
+        // analyze_bug 完成后：若 result 含 (reportId, level, classification)，触发 Pipeline（后台跑，不阻塞 IM 响应）
+        if (intent.capability === 'analyze_bug') {
+          void maybeCompleteAnalyze(result, userId).catch(err => {
+            console.error('[Runner] maybeCompleteAnalyze error:', err)
+          })
+        }
         return
       }
 

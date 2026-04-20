@@ -105,6 +105,21 @@ async function findPipelineByLevel(productLineId: number, level: string): Promis
 }
 
 /**
+ * runner 触发 analyze_bug 完成后的后置钩子：若 result 含 (reportId, level, classification)，
+ * 转调 handleAnalysisComplete 把 Pipeline 拉起来。
+ * 调用方应 fire-and-forget（`void maybeCompleteAnalyze(...).catch(...)`）。
+ */
+export async function maybeCompleteAnalyze(
+  result: TriggerResult,
+  initiatorId: string,
+): Promise<void> {
+  if (!result.success || !result.data) return
+  const d = result.data as { reportId?: unknown; level?: unknown; classification?: unknown }
+  if (typeof d.reportId !== 'number' || typeof d.level !== 'string' || typeof d.classification !== 'string') return
+  await handleAnalysisComplete(d.reportId, d.level, d.classification, initiatorId)
+}
+
+/**
  * 分析完成后协调入口。
  * - 非 bug 分类：不触发 Pipeline（analyzer 内部已设 status='completed'）
  * - L4 分类（MVP）：走 handover 路径，不启动 L4-复杂问题 Pipeline（V2 handover-pipeline 的前身）
