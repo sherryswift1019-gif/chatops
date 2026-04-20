@@ -174,6 +174,8 @@ import {
   startRun,
   resumeRun,
   registerRunMeta,
+  purgeRunMeta,
+  getRegistrySize,
   initGraphRunnerDispatchers,
 } from '../../pipeline/graph-runner.js'
 import { Command } from '@langchain/langgraph'
@@ -282,6 +284,7 @@ describe('graph-runner — linear script stages', () => {
       makeStage({ name: 'step2', stageType: 'script', targetRoles: ['app'] }),
     ]
     registerMinimalMeta(runId)
+    const sizeBefore = getRegistrySize()
 
     await startRun({
       runId,
@@ -300,6 +303,25 @@ describe('graph-runner — linear script stages', () => {
     expect(finishTestRunCalls[0].status).toBe('success')
     // Server lock released.
     expect(bulkSetCalls.some((c) => c.status === 'idle')).toBe(true)
+    // Registry cleaned up — finalize() must drop the meta.
+    expect(getRegistrySize()).toBe(sizeBefore - 1)
+  })
+})
+
+describe('graph-runner — registry lifecycle', () => {
+  it('purgeRunMeta removes the run and does not run finalize', async () => {
+    const runId = 150
+    registerMinimalMeta(runId)
+    const sizeBefore = getRegistrySize()
+    expect(sizeBefore).toBeGreaterThanOrEqual(1)
+
+    purgeRunMeta(runId)
+
+    expect(getRegistrySize()).toBe(sizeBefore - 1)
+    // purgeRunMeta must NOT run the finalize pipeline — it's a caller-side
+    // escape hatch for the case where the graph never even started.
+    expect(finishTestRunCalls).toHaveLength(0)
+    expect(bulkSetCalls).toHaveLength(0)
   })
 })
 

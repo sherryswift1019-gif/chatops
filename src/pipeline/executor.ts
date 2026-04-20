@@ -28,6 +28,7 @@ import { buildDefaultHooks } from './executor-hooks.js'
 import {
   startRun,
   registerRunMeta,
+  purgeRunMeta,
   type FinalizeMeta,
   type PipelineRunResult,
 } from './graph-runner.js'
@@ -174,6 +175,11 @@ export async function runPipeline(
     triggerParams,
   }).catch(async (err) => {
     console.error(`[executor] startRun failed for run ${run.id}:`, err)
+    // streamGraph's main try/catch routes fatal errors through finalize() which
+    // clears runRegistry itself. But if it throws *before* entering that try
+    // (e.g. getCheckpointer() or compile() throws synchronously), finalize is
+    // never called and the registry entry would leak — so purge it here.
+    purgeRunMeta(run.id)
     await finishTestRun(run.id, 'failed', logDir, String(err)).catch(() => {})
     if (serverIds.length > 0) {
       await bulkSetServerStatus(serverIds, 'idle').catch(() => {})

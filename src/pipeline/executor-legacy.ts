@@ -192,6 +192,16 @@ export async function runPipeline(
   const pipeline = await getTestPipelineById(pipelineId)
   if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)
 
+  // [Task 4 code-review add-on — not part of the original legacy body]
+  // Fail fast if legacy engine is paired with interrupt-driven stages.
+  // The original legacy flow has stub throws inside executeStage, but reaching
+  // them means we've already created a test_runs row and locked servers
+  // in_use — bad UX. This pre-flight bails before any side effects.
+  const stagesPreflight = pipeline.stages as StageDefinition[]
+  if (stagesPreflight.some((s) => s.stageType === 'approval' || s.stageType === 'wait_webhook')) {
+    throw new Error('PIPELINE_ENGINE=legacy 不支持 approval / wait_webhook 阶段，请去掉 PIPELINE_ENGINE 环境变量或移除这些阶段')
+  }
+
   const productLine = await getProductLineById(pipeline.productLineId)
 
   // Resolve artifact inputs.

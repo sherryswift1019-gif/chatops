@@ -109,6 +109,29 @@ export function registerRunMeta(meta: FinalizeMeta): void {
 }
 
 /**
+ * Drop a run's FinalizeMeta without running the finalize pipeline. Intended
+ * for the executor's error-recovery path: if startRun throws before the graph
+ * enters its main try/catch (e.g. getCheckpointer() or graph.compile() throws
+ * synchronously), finalize() never runs and the registry entry would leak.
+ * The executor is responsible for finishTestRun + releasing server locks in
+ * that case; this helper only cleans the in-memory meta + timers.
+ */
+export function purgeRunMeta(runId: number): void {
+  runRegistry.delete(runId)
+  for (const key of Array.from(resolvedInterrupts)) {
+    if (key.startsWith(`${runId}:`)) resolvedInterrupts.delete(key)
+  }
+  for (const key of Array.from(interruptTimers.keys())) {
+    if (key.startsWith(`${runId}:`)) clearInterruptTimer(key)
+  }
+}
+
+/** Test-only helper: number of runs currently tracked in the meta registry. */
+export function getRegistrySize(): number {
+  return runRegistry.size
+}
+
+/**
  * Start a pipeline run. Returns after the graph ENDs or hits its first
  * interrupt — in the latter case finalize is deferred until resumeRun drains
  * the rest.
@@ -281,6 +304,15 @@ function scheduleTimeout(
 ): void {
   const key = interruptKey(runId, stageIndex)
   const timer = setTimeout(() => {
+    // Guard against late-firing timers: if the run has already finalized (not
+    // in the registry), or this interrupt was resolved by a race-winner (IM
+    // callback / webhook), or finalize purged the timers under us — drop the
+    // fire. Without this the callback would call resumeRun → reloadContext,
+    // which may return null or run against stale DB state and emit noise.
+    if (!runRegistry.has(runId)) {
+      interruptTimers.delete(key)
+      return
+    }
     if (resolvedInterrupts.has(key)) return
     resolvedInterrupts.add(key)
     interruptTimers.delete(key)
