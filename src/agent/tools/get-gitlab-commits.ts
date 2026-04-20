@@ -1,20 +1,9 @@
 import { registerTool } from './index.js'
-import { getConfig } from '../../db/repositories/system-config.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import axios from 'axios'
 import https from 'https'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
-
-async function getGitLabConfig(): Promise<{ url: string; token: string; skipTlsVerify: boolean }> {
-  const cfg = await getConfig('gitlab')
-  if (!cfg) return { url: '', token: '', skipTlsVerify: false }
-  const v = cfg.value as Record<string, string>
-  return {
-    url: v.url ?? '',
-    token: v.token ?? '',
-    skipTlsVerify: v.skipTlsVerify === 'true' || v.skipTlsVerify === true as unknown as string,
-  }
-}
 
 const getGitLabCommitsTool: AgentTool = {
   name: 'get_gitlab_commits',
@@ -36,7 +25,7 @@ const getGitLabCommitsTool: AgentTool = {
       const projectRecord = projects.find(p => p.name === projectName || p.displayName === projectName)
       const gitlabPath = projectRecord?.gitlabPath || projectName
 
-      const gitlab = await getGitLabConfig()
+      const gitlab = await resolveGitlabConfig()
       if (!gitlab.url) return { success: false, output: 'GitLab URL 未配置。请在系统配置中设置。' }
 
       const httpsAgent = new https.Agent({

@@ -5,6 +5,7 @@ import { listProjects } from '../../db/repositories/projects-repo.js'
 import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
 import { getConfig } from '../../db/repositories/system-config.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { resolveSSHConfig, resolveComposeFile } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import axios from 'axios'
@@ -74,19 +75,8 @@ function buildImageFullPath(harborUrl: string, harborProject: string, imageTag: 
 
 // ── GitLab branch → commit 解析 ─────────────────────────────────────────
 
-async function getGitLabConfig(): Promise<{ url: string; token: string; skipTlsVerify: boolean }> {
-  const cfg = await getConfig('gitlab')
-  if (!cfg) return { url: '', token: '', skipTlsVerify: false }
-  const v = cfg.value as Record<string, string>
-  return {
-    url: v.url ?? '',
-    token: v.token ?? '',
-    skipTlsVerify: v.skipTlsVerify === 'true' || v.skipTlsVerify === true as unknown as string,
-  }
-}
-
 async function listGitLabBranches(gitlabPath: string): Promise<string[]> {
-  const gitlab = await getGitLabConfig()
+  const gitlab = await resolveGitlabConfig()
   if (!gitlab.url || !gitlab.token) return []
   const encodedProject = encodeURIComponent(gitlabPath)
   const agent = gitlab.skipTlsVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined
@@ -102,7 +92,7 @@ async function listGitLabBranches(gitlabPath: string): Promise<string[]> {
 }
 
 async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ tag: string; commitId: string; shortId: string }> {
-  const gitlab = await getGitLabConfig()
+  const gitlab = await resolveGitlabConfig()
   if (!gitlab.url || !gitlab.token) throw new Error('GitLab 未配置（url/token）。请在系统配置中设置。')
 
   const encodedProject = encodeURIComponent(gitlabPath)
