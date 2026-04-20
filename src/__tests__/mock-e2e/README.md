@@ -97,4 +97,28 @@ DATABASE_URL=postgres://chatops:chatops@localhost:5432/chatops_test pnpm test:e2
 - **bug-handover / bug-fix-exhausted-handover / bug-non-bug-flow**：V2 handover 相关
 - **bug-retry / bug-pipeline-retry-idempotency**：重试路径
 - **bugpage-***：BugRunsPage UI 交互
+
+## 已知盲区（Growth Backlog）
+
+### Claude 输出解析层未被 mock-e2e 覆盖
+
+**现状**：`runFilterStage` / `runDetailStage` 等调 Claude 的函数都有 `isClaudeMock()` short-circuit 分支，**直接返回已解析好的 JS 对象**（`popMockResponseValidated` 返回 spec seed 的原始 object）。这样设计是为了 e2e 稳定性和速度——但代价是：
+
+```typescript
+// 生产路径（e2e 永远跳过）：
+const rawOutput = await runClaudeCli(prompt)        // ← 未测
+const jsonStr = extractJsonFromOutput(rawOutput)    // ← 未测
+const parsed = JSON.parse(extractJson(jsonStr))      // ← 未测
+// 字段校验...                                        // ← 未测
+```
+
+**踩坑案例**：2026-04-20 发现 `extractJsonFromOutput` 用 `lastIndexOf('{')` 定位 JSON 起点——在嵌套 JSON 时会抓到内层对象，外层 `involvedProjects` / `primaryProjectPath` 结构全丢。**本地真实钉钉 @机器人才暴露**，commit `2b587b5` 修复，单测补齐（`src/__tests__/unit/extract-json-from-output.test.ts` 6 case）。
+
+**改进选项**（未来做）：
+1. 新增 integration 测试，`vi.mock` 掉 `runClaudeCli` 使其返回**原始文本字符串**，让 `runFilterStage` 走真实的 `extractJsonFromOutput` + `JSON.parse` + 字段校验链路
+2. `popMockResponseValidated` 框架扩展：支持 seed "文本模式"（返回 string，调用方仍走解析）和 "对象模式"（现状，short-circuit）
+3. 选项 1 成本低（一个测试文件），选项 2 最彻底但改动大
+
+**当前兜底**：单测层 `extract-json-from-output.test.ts` 覆盖纯函数行为。够回归保护，不够端到端真实性验证。
+
 - **health**：基础连通性
