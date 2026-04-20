@@ -65,7 +65,8 @@ export interface DetailStageResult {
 
 /** 从 Claude 原始输出里把最后一段 JSON 提取出来。 */
 export function extractJsonFromOutput(text: string): string | null {
-  const idx = text.lastIndexOf('{')
+  // 找最外层 JSON 对象：从第一个 `{` 开始配对（不是 lastIndexOf，避免嵌套时抓到内层对象）。
+  const idx = text.indexOf('{')
   if (idx === -1) return null
   let depth = 0
   let end = -1
