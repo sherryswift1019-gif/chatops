@@ -266,6 +266,70 @@ describe('buildGraphFromStages — wait_webhook timeout', () => {
   })
 })
 
+describe('buildGraphFromStages — checkpoint resume does not replay completed stages', () => {
+  it('4-stage pipeline: s3=approval interrupt → resume only runs s4; s1/s2 hooks are not re-called', async () => {
+    // Motivation: the LangGraph checkpointer must persist the stage results of
+    // s1/s2 so that when the approval interrupt at s3 is resumed, the runtime
+    // continues from s3 forward instead of re-executing everything from scratch.
+    // We assert this by spying on the script hook: s1 and s2 must be invoked
+    // exactly once across both stream() calls.
+    const stages: StageDefinition[] = [
+      makeStage({ name: 's1', stageType: 'script', targetRoles: ['app'] }),
+      makeStage({ name: 's2', stageType: 'script', targetRoles: ['app'] }),
+      makeStage({
+        name: 's3-approval',
+        stageType: 'approval',
+        approverIds: ['u1'],
+        approvalDescription: '审批卡点',
+      }),
+      makeStage({ name: 's4', stageType: 'script', targetRoles: ['app'] }),
+    ]
+
+    const scriptCalls: string[] = []
+    const hooks: StageHooks = {
+      async runScript(stage) {
+        scriptCalls.push(stage.name)
+        return { status: 'success', output: `ok:${stage.name}` }
+      },
+      async runCapability() {
+        return { status: 'success', output: 'cap' }
+      },
+    }
+
+    const graph = compile({ stages, stageContext: baseCtx(), hooks })
+    const config = { configurable: { thread_id: randomUUID() } }
+
+    // First stream: executes s1 and s2, then pauses at s3's approval interrupt.
+    await drain(await graph.stream({ runId: 42 }, config))
+    expect(scriptCalls).toEqual(['s1', 's2'])
+    let snap = await graph.getState(config)
+    // Only two StageResults have been written so far; s3 threw interrupt.
+    const statusesAfterPause = snap.values.stageResults.map(
+      (r: { status: string }) => r.status,
+    )
+    expect(statusesAfterPause).toEqual(['success', 'success'])
+
+    // Resume with approved — runtime re-enters s3 (picking up interrupt()),
+    // then runs s4. Crucially, s1/s2 nodes are NOT re-executed because the
+    // checkpointer already has their results persisted.
+    await drain(await graph.stream(new Command({ resume: 'approved' }), config))
+    // s1 + s2 still exactly 1 call each; s4 now added. No replay.
+    expect(scriptCalls).toEqual(['s1', 's2', 's4'])
+
+    snap = await graph.getState(config)
+    const byName = Object.fromEntries(
+      snap.values.stageResults.map((r: { name: string; status: string }) => [
+        r.name,
+        r.status,
+      ]),
+    )
+    expect(byName.s1).toBe('success')
+    expect(byName.s2).toBe('success')
+    expect(byName['s3-approval']).toBe('success')
+    expect(byName.s4).toBe('success')
+  })
+})
+
 describe('buildGraphFromStages — script with no target servers', () => {
   it('targetRoles empty + serverMap empty → status=skipped', async () => {
     const stages: StageDefinition[] = [
