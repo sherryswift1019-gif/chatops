@@ -1,16 +1,13 @@
 /**
- * Task 18 Phase 3B — BugRunsPage 场景 B5：数据为空时的占位
+ * BugRunsPage 空态占位 — 适配 Table + Drawer UI
  *
- * 目的：验证 BugRunsPage 在无数据时显示 AntD Empty 占位，且不崩溃。
+ * 新版 UI：Card(Title="Bug 修复实例") + Table，空态由 Table locale 控制：
+ *   - 无筛选：<Empty description="暂无 Bug 修复实例" />
+ *   - 有筛选但 0 行：<Empty description="当前筛选条件下无结果，试试调整筛选" />
  *
- * 流程：
- *   1. resetPerTest 保证 bug_analysis_reports 为空
- *   2. 打开 /bug-runs，断言默认文案 "请先选择产品线"
- *   3. 选产品线 PAM（库内无该产品线下的报告）→ 断言 "暂无分析报告"
- *
- * 注：BugRunsPage 当前的空态由 `<Empty description={...}>` 驱动，
- * 未选产品线 description="请先选择产品线"，选了产品线且 grouped.size=0
- * description="暂无分析报告"。此 spec 同时覆盖这两个分支。
+ * 两个用例：
+ *   1. 不带筛选访问 /bug-runs → 显示 "暂无 Bug 修复实例"
+ *   2. 选择 status=aborted（无匹配行）→ URL 带 status=aborted + 显示筛选空态
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { Pool } from 'pg'
@@ -41,7 +38,7 @@ test.describe('BugRunsPage 空态占位', () => {
     await resetPerTest(request, GITLAB_MOCK)
   })
 
-  test('未选产品线 + 选后无报告 → 分别显示两种 Empty 占位', async ({ request, page }) => {
+  test('不带筛选默认显示全部实例', async ({ request, page }) => {
     await loginAsAdmin(request)
 
     // DB 确认空库
@@ -60,19 +57,40 @@ test.describe('BugRunsPage 空态占位', () => {
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    // ── 分支 1：未选产品线 → "请先选择产品线" ────────────────────────────
-    await expect(pageCard.locator('.ant-empty').first()).toBeVisible({ timeout: 10_000 })
-    await expect(pageCard.getByText('请先选择产品线')).toBeVisible({ timeout: 5_000 })
+    // 无 seed 数据：Table locale.emptyText 直接渲染字符串（无 .ant-empty 组件，纯文本）
+    // 用 Table placeholder 定位
+    await expect(
+      pageCard.locator('.ant-table-placeholder').getByText(/暂无 Bug 修复实例/),
+    ).toBeVisible({ timeout: 10_000 })
+  })
 
-    // ── 分支 2：选了产品线但无报告 → "暂无分析报告" ───────────────────────
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+  test('选状态无数据时显示筛选空态', async ({ request, page }) => {
+    await loginAsAdmin(request)
 
-    // 列表加载后仍为空 → Empty + "暂无分析报告"
-    await expect(pageCard.locator('.ant-empty').first()).toBeVisible({ timeout: 10_000 })
-    await expect(pageCard.getByText('暂无分析报告')).toBeVisible({ timeout: 5_000 })
+    const loginResp = await page.request.post('/admin/auth/login', {
+      data: { username: 'admin', password: 'admin' },
+    })
+    expect(loginResp.ok()).toBe(true)
 
-    // 此时不应出现任何 "Issue #N" 卡片
-    await expect(page.locator('text=/Issue #\\d+/')).toHaveCount(0)
+    await page.goto('/bug-runs')
+    const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
+    await expect(pageCard).toBeVisible({ timeout: 10_000 })
+
+    // 选状态 = aborted（空库下无匹配）
+    // AntD Select placeholder 在 span.ant-select-selection-placeholder 上，不在 input
+    // 用 selector 链：pageCard → .ant-select（含 placeholder=状态）→ click
+    const statusSelect = pageCard.locator('.ant-select').filter({
+      has: page.locator('.ant-select-selection-placeholder', { hasText: '状态' }),
+    })
+    await statusSelect.click()
+    await page.locator('.ant-select-item-option').filter({ hasText: /^aborted$/ }).click()
+
+    // URL 带 status=aborted
+    await expect(page).toHaveURL(/status=aborted/)
+
+    // 筛选空态文案
+    await expect(
+      pageCard.locator('.ant-table-placeholder').getByText(/当前筛选条件下无结果/),
+    ).toBeVisible({ timeout: 10_000 })
   })
 })

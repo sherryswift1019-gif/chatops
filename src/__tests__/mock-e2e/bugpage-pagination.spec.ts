@@ -1,14 +1,14 @@
 /**
- * Task 18 Phase 3B — BugRunsPage 场景 B2：服务端分页
+ * BugRunsPage 服务端分页 — 适配 Table + Drawer UI
  *
- * 前端默认 pageSize = 20；后端 /admin/bug-analysis-reports 支持 page/pageSize query。
+ * 新版 UI：Table 的 pagination（AntD 原生分页器），pageSize=20 默认。
  *
  * 流程：
- *   1. 插 25 条 bug_analysis_reports（issueId 各异 → 每条对应一个 IssueCard）
- *   2. 打开 /bug-runs，选 PAM → 第 1 页展示 20 张 IssueCard
- *   3. 断言页面存在 .ant-pagination 分页器
- *   4. 点"下一页" → 展示第 21-25 条（5 张 IssueCard）
- *   5. 点"上一页" → 回到第 1 页（20 张 IssueCard）
+ *   1. 插 25 条 bug_analysis_reports（pam 产品线）
+ *   2. /bug-runs?pageSize=20 → Table 第 1 页 20 行
+ *   3. 分页器展示 pageSize changer（showSizeChanger=true）
+ *   4. 点 page 2 → URL 带 page=2 → Table 5 行
+ *   5. 点 page 1 → 回到 20 行
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { Pool } from 'pg'
@@ -39,7 +39,7 @@ test.describe('BugRunsPage 服务端分页', () => {
     await resetPerTest(request, GITLAB_MOCK)
   })
 
-  test('25 条报告，pageSize=20 → 第 1 页 20，第 2 页 5，翻页正常', async ({ request, page }) => {
+  test('25 条报告，pageSize=20 → 第 1 页 20 行，第 2 页 5 行', async ({ request, page }) => {
     await loginAsAdmin(request)
 
     const plRows = await dbQuery<{ id: number }>(
@@ -103,45 +103,29 @@ test.describe('BugRunsPage 服务端分页', () => {
     })
     expect(loginResp.ok()).toBe(true)
 
-    await page.goto('/bug-runs')
+    // URL 直接指定 pageSize=20
+    await page.goto('/bug-runs?pageSize=20')
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    // 产品线下拉是第 1 个 Select
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const rows = pageCard.locator('.ant-table-tbody tr.ant-table-row')
 
-    // 等首条 IssueCard 渲染（第 1 页最新的 1025）
-    await expect(page.locator('text=/Issue #1025/')).toBeVisible({ timeout: 15_000 })
+    // 第 1 页：20 行
+    await expect(rows).toHaveCount(20, { timeout: 10_000 })
 
-    // 分页器应存在
-    const pagination = page.locator('.ant-pagination').first()
-    await expect(pagination).toBeVisible({ timeout: 10_000 })
+    // 分页器存在：有 2 个页码按钮（25 条 / 20 = 2 页）
+    const pagination = pageCard.locator('.ant-pagination').first()
+    await expect(pagination).toBeVisible()
+    await expect(pagination.locator('li.ant-pagination-item')).toHaveCount(2)
 
-    // 第 1 页：20 张 IssueCard（1025..1006，DESC 排序）
-    // 第 2 页：5 张 IssueCard（1005..1001）
-    await expect(page.locator('text=/Issue #1006/')).toBeVisible()
+    // 点 page 2
+    await pagination.locator('.ant-pagination-item-2').click()
+    await expect(page).toHaveURL(/page=2/)
+    await expect(rows).toHaveCount(5, { timeout: 10_000 })
 
-    const issueCardsPage1 = pageCard.locator('.ant-card-small')
-    await expect(issueCardsPage1).toHaveCount(20)
-
-    // 点"下一页"
-    await pagination.locator('.ant-pagination-next').click()
-
-    // 第 2 页：5 张 IssueCard（1005..1001）
-    await expect(page.locator('text=/Issue #1005/')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('text=/Issue #1001/')).toBeVisible()
-    await expect(page.locator('text=/Issue #1025/')).toHaveCount(0)
-
-    const issueCardsPage2 = pageCard.locator('.ant-card-small')
-    await expect(issueCardsPage2).toHaveCount(5)
-
-    // 点"上一页"回到第 1 页
-    await pagination.locator('.ant-pagination-prev').click()
-    await expect(page.locator('text=/Issue #1025/')).toBeVisible({ timeout: 10_000 })
-    await expect(page.locator('text=/Issue #1001/')).toHaveCount(0)
-
-    const issueCardsBack = pageCard.locator('.ant-card-small')
-    await expect(issueCardsBack).toHaveCount(20)
+    // 回到 page 1
+    await pagination.locator('.ant-pagination-item-1').click()
+    await expect(page).toHaveURL(/page=1/)
+    await expect(rows).toHaveCount(20, { timeout: 10_000 })
   })
 })

@@ -1,20 +1,16 @@
 /**
- * Task 18 Phase 3B — BugRunsPage 场景 B4：查看分析报告
+ * BugRunsPage 详情 Drawer — 适配 Table + Drawer UI
  *
- * [降级-BugRunsPage 未实现 markdown 分析报告 Modal/Drawer 弹窗]
- * 原场景：点"查看分析报告"按钮 → Modal 弹出 → 渲染 markdown（h1/bold）→ 关闭。
- * 实际：
- *   - BugRunsPage 的 "分析报告正文" 入口实为 RoundBody 里的纯文本 "根因" 段
- *     （来源 bug_analysis_reports.root_cause_summary），未渲染 markdown；
- *   - 另有 `<a target="_blank">查看 Issue</a>` + `<a>打开 Issue</a>` 两处跳转
- *     链接，指向 bug_analysis_reports.issue_url（mock-gitlab）。
- *   - 没有 AntD Modal / Drawer 显示"分析报告全文 markdown"。
- * 因此降级为：
- *   1. 插一条报告，root_cause_summary 含可识别文案
- *   2. 打开 /bug-runs → 选 PAM → Collapse 默认展开 latest round
- *   3. 断言：RoundBody 展示"根因"标题 + 正文；
- *          两处 Issue 链接 target="_blank" + href 指向 issueUrl
- *          （等价于"查看分析报告"的前端可点入口）
+ * 文件名保留（bugpage-report-modal.spec.ts）避免 rename noise，但现在断言的是 Drawer。
+ *
+ * 流程：
+ *   1. 插一条 bug_analysis_report + 一条 analysis 事件
+ *   2. 打开 /bug-runs → 首行可见
+ *   3. 点首行"详情"按钮 → Drawer 打开
+ *   4. 断言 Drawer 内：
+ *      - Section 1 "基础元数据" + Issue 链接（href + target=_blank）
+ *      - Section 5 Timeline 首条事件（analysis）可见
+ *      - Issue 链接 target=_blank
  */
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { Pool } from 'pg'
@@ -40,12 +36,12 @@ async function dbQuery<T = Record<string, unknown>>(sql: string, params: unknown
   }
 }
 
-test.describe('BugRunsPage 分析报告查看（降级）', () => {
+test.describe('BugRunsPage 详情 Drawer', () => {
   test.beforeEach(async ({ request }) => {
     await resetPerTest(request, GITLAB_MOCK)
   })
 
-  test('根因正文展示 + 两处 Issue 外链可点', async ({ request, page }) => {
+  test('点击"详情"按钮打开 Drawer，展示 5 个 Section', async ({ request, page }) => {
     await loginAsAdmin(request)
 
     const plRows = await dbQuery<{ id: number }>(
@@ -56,14 +52,23 @@ test.describe('BugRunsPage 分析报告查看（降级）', () => {
     const issueId = 777
     const issueUrl = `http://mock-gitlab/PAM/pas-api/-/issues/${issueId}`
     const rootCause = '配置项 db.pool.maxSize 缺失导致连接耗尽'
-    await dbQuery(
+    const reportRows = await dbQuery<{ id: number }>(
       `INSERT INTO bug_analysis_reports
          (issue_id, issue_url, product_line_id, level, classification, confidence,
           confidence_score, root_cause_summary, solutions_json, status, primary_project_path)
        VALUES ($1, $2, $3, 'l1', 'bug', 'high', 0.95, $4,
          '[{"id":"a","summary":"补配置","recommended":true,"risk":"low","effort":"low"}]'::jsonb,
-         'pipeline_success', 'PAM/pas-api')`,
+         'pipeline_success', 'PAM/pas-api')
+       RETURNING id`,
       [issueId, issueUrl, productLineId, rootCause],
+    )
+    const reportId = reportRows[0].id
+
+    // 塞一条 analysis 事件以保证 Drawer Section 5 的 Timeline 非空
+    await dbQuery(
+      `INSERT INTO bug_fix_events (report_id, project_path, code, status, data)
+       VALUES ($1, NULL, 'analysis', 'success', '{"level":"l1","classification":"bug"}'::jsonb)`,
+      [reportId],
     )
 
     const loginResp = await page.request.post('/admin/auth/login', {
@@ -75,34 +80,36 @@ test.describe('BugRunsPage 分析报告查看（降级）', () => {
     const pageCard = page.locator('.ant-card').filter({ hasText: 'Bug 修复实例' }).first()
     await expect(pageCard).toBeVisible({ timeout: 10_000 })
 
-    await pageCard.locator('.ant-select').first().click()
-    await page.locator('.ant-select-item-option').filter({ hasText: 'PAM 特权访问管理' }).click()
+    const rows = pageCard.locator('.ant-table-tbody tr.ant-table-row')
+    await expect(rows.first()).toBeVisible({ timeout: 10_000 })
+    await expect(rows).toHaveCount(1)
 
-    // IssueCard 可见（标题含 Issue #777）
-    const issueCard = page.locator('.ant-card-small').filter({ hasText: `Issue #${issueId}` }).first()
-    await expect(issueCard).toBeVisible({ timeout: 10_000 })
+    // 点首行"详情"按钮
+    await rows.first().getByRole('button', { name: '详情' }).click()
 
-    // ── "查看 Issue" 链接（IssueCard title 区）—— target="_blank" + href ─────
-    const viewIssueLink = issueCard.locator('a', { hasText: '查看 Issue' }).first()
-    await expect(viewIssueLink).toBeVisible()
-    await expect(viewIssueLink).toHaveAttribute('target', '_blank')
-    await expect(viewIssueLink).toHaveAttribute('href', issueUrl)
+    const drawer = page.locator('.ant-drawer-content')
+    await expect(drawer).toBeVisible({ timeout: 10_000 })
 
-    // ── Collapse 默认展开 latest round → RoundBody 根因标题 + 正文可见 ──────
-    // 注：rootCause 文本还会被 truncate(50) 后拼进 IssueCard 标题 "Issue #777 · ..."，
-    // 因此会匹到 2 处（标题 + 正文）。两处都可见即符合预期。
-    await expect(issueCard.getByText('根因', { exact: true })).toBeVisible()
-    await expect(issueCard.getByText(rootCause).first()).toBeVisible()
+    // Drawer title：Bug 报告 #<id>
+    await expect(drawer.getByText(`Bug 报告 #${reportId}`)).toBeVisible()
 
-    // ── "打开 Issue"链接（RoundBody 下部）—— target="_blank" + href ─────────
-    const openIssueLink = issueCard.locator('a', { hasText: '打开 Issue' }).first()
-    await expect(openIssueLink).toBeVisible()
-    await expect(openIssueLink).toHaveAttribute('target', '_blank')
-    await expect(openIssueLink).toHaveAttribute('href', issueUrl)
+    // Section 1 基础元数据
+    await expect(drawer.getByRole('heading', { name: '基础元数据' })).toBeVisible()
+    // Issue 链接（target=_blank + href）
+    const issueLink = drawer.locator(`a[href="${issueUrl}"]`).first()
+    await expect(issueLink).toBeVisible()
+    await expect(issueLink).toHaveAttribute('target', '_blank')
 
-    // ── 降级断言：当前实现**没有** markdown 弹窗（无 ".ant-modal" / ".ant-drawer"
-    // 在可见态显示分析报告） ──
-    await expect(page.locator('.ant-modal:visible')).toHaveCount(0)
-    await expect(page.locator('.ant-drawer:visible')).toHaveCount(0)
+    // Section 2 分析内容（根因摘要）
+    await expect(drawer.getByRole('heading', { name: '分析内容' })).toBeVisible()
+    await expect(drawer.getByText(rootCause).first()).toBeVisible()
+
+    // Section 3 执行结果
+    await expect(drawer.getByRole('heading', { name: '执行结果' })).toBeVisible()
+
+    // Section 5 本轮完整事件时间线（至少 1 条 timeline item = analysis）
+    await expect(drawer.getByRole('heading', { name: '本轮完整事件时间线' })).toBeVisible()
+    await expect(drawer.locator('.ant-timeline-item').first()).toBeVisible()
+    await expect(drawer.locator('.ant-timeline-item')).toHaveCount(1)
   })
 })
