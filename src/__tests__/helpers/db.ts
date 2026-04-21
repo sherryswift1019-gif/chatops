@@ -60,9 +60,12 @@ interface QueryablePool {
 }
 
 /**
- * 双重防御：
+ * 三叉防御：
  * 1. NODE_ENV 必须为 'test'（vitest 自动设置）——拦非测试进程的意外调用
- * 2. 当前 DB 必须存在 marker 表 `chatops_test_db_marker`——拦 NODE_ENV 被误设的极端情况
+ * 2. 有 marker 表 → 通过（本地开发者已 bootstrap 过的测试库）
+ * 3. 无 marker 表 + public schema 完全空 → 视为全新测试库，自动 bootstrap marker 后通过
+ *    （GitLab CI 里 postgres service 刚启动时 public 就是空的；开发库/生产库不可能空）
+ * 4. 无 marker 表 + public schema 有业务表 → throw（典型开发库/生产库，硬防线）
  *
  * 抛出错误时必须包含 bootstrap 指南（CREATE TABLE + INSERT），让用户知道如何合法初始化测试 DB。
  */
@@ -82,13 +85,30 @@ export async function assertTestDbSafeToReset(
     `SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename=$1`,
     [TEST_DB_MARKER_TABLE],
   )
-  if (rows.length === 0) {
-    throw new Error(
-      `resetTestDb() 拒绝执行：当前 DB (${databaseUrl}) 缺少 marker 表 "${TEST_DB_MARKER_TABLE}"，` +
-      `不能确认是测试库。\n\nBootstrap 说明（只需做一次，确认当前连接的库确实是专用测试库后）：\n` +
-      `  psql "${databaseUrl}" -c "CREATE TABLE ${TEST_DB_MARKER_TABLE} (id INT PRIMARY KEY); INSERT INTO ${TEST_DB_MARKER_TABLE} (id) VALUES (1);"`,
+  if (rows.length > 0) return
+
+  // marker 缺失——判断是否为"全新空库"场景：public schema 一个表都没有就视为 CI 的全新 postgres 容器
+  // 开发库/生产库必有业务表（capabilities / projects / users ...），不会误判
+  const { rows: tableRows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM pg_tables WHERE schemaname='public'`,
+  )
+  const tableCount = Number((tableRows[0] as { n?: number })?.n ?? 0)
+  if (tableCount === 0) {
+    // 全新空库 → 自动 bootstrap marker，后续 resetTestDb 的 DROP SCHEMA CASCADE 会再把它一起删
+    // 再次重建 schema 时 resetTestDb 会把 marker 重新种回来（末尾 CREATE + INSERT）
+    await pool.query(`CREATE TABLE ${TEST_DB_MARKER_TABLE} (id INT PRIMARY KEY)`)
+    await pool.query(`INSERT INTO ${TEST_DB_MARKER_TABLE} (id) VALUES (1)`)
+    console.log(
+      `[test] 空库自动 bootstrap marker 表 ${TEST_DB_MARKER_TABLE} (${databaseUrl})`,
     )
+    return
   }
+
+  throw new Error(
+    `resetTestDb() 拒绝执行：当前 DB (${databaseUrl}) 缺少 marker 表 "${TEST_DB_MARKER_TABLE}"，` +
+    `不能确认是测试库（public schema 有 ${tableCount} 个业务表，不像全新空库）。\n\nBootstrap 说明（只需做一次，确认当前连接的库确实是专用测试库后）：\n` +
+    `  psql "${databaseUrl}" -c "CREATE TABLE ${TEST_DB_MARKER_TABLE} (id INT PRIMARY KEY); INSERT INTO ${TEST_DB_MARKER_TABLE} (id) VALUES (1);"`,
+  )
 }
 
 const SCHEMA_FILES = [

@@ -134,7 +134,11 @@
 
 **暂缓**：等钉钉流程验证完再动手。
 
-**过渡措施（2026-04-21）**：`assertDatabaseUrlForTests` 的 URL 名字约定（要求含 `_test` 或在 `ALLOWED_TEST_DB_NAMES` 白名单）已放宽为"仅非空校验"，原因是 GitLab CI 的 postgres service 默认 db 名是 `chatops` 导致测试启动即 throw。当前唯一防线变成 `resetTestDb` 内部的 marker 表 `chatops_test_db_marker`——真正根治仍走本节的 testcontainers 方案。
+**过渡措施（2026-04-21）**：
+1. `assertDatabaseUrlForTests` 的 URL 名字约定已放宽为"仅非空校验"，因 GitLab CI postgres service 默认 db 名是 `chatops`。
+2. `assertTestDbSafeToReset` 加第三分支：marker 缺失 + public schema 完全空时视为全新空库，自动 bootstrap marker 后通过（CI 的全新 postgres 容器走此路径；开发库/生产库必有业务表，走原 throw 路径）。
+
+真正根治仍走本节的 testcontainers 方案。
 
 ---
 
