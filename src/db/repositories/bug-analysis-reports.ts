@@ -121,6 +121,7 @@ const TERMINAL_STATUSES: ReadonlySet<ReportStatus> = new Set<ReportStatus>([
   'completed',
   'aborted',
   'pending_manual',
+  'pipeline_success',
 ])
 
 export async function updateReportStatus(id: number, status: ReportStatus): Promise<BugAnalysisReport | null> {

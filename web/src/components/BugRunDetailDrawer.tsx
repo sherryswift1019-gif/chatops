@@ -114,6 +114,13 @@ function codeLabel(code: string): string {
   return CODE_LABELS[code] ?? code
 }
 
+function lifecycleSyncTag(e: BugFixEvent): { text: string; color?: string } {
+  const action = e.data['mrAction'] as string | undefined
+  if (action === 'merge') return { text: 'MR 已合并', color: 'green' }
+  if (action === 'close') return { text: 'MR 已关闭', color: 'red' }
+  return { text: 'MR 状态同步' }
+}
+
 function get<T = unknown>(data: Record<string, unknown>, key: string): T | undefined {
   return data[key] as T | undefined
 }
@@ -714,7 +721,7 @@ function RoundsHistorySection({
 
 function eventDataSummary(e: BugFixEvent): string {
   const parts: string[] = []
-  const keys = ['branch', 'iid', 'decision', 'label', 'kind', 'reason', 'owner']
+  const keys = ['branch', 'iid', 'mrIid', 'mergedBy', 'closedBy', 'decision', 'label', 'kind', 'reason', 'owner']
   for (const k of keys) {
     const v = e.data[k]
     if (v != null && (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')) {
@@ -731,25 +738,30 @@ function FullTimelineSection({ events }: { events: BugFixEvent[] }) {
   )
   return (
     <Timeline
-      items={sorted.map((e) => ({
-        color: e.status === 'success' ? 'green' : e.status === 'failed' ? 'red' : 'gray',
-        children: (
-          <Space direction="vertical" size={2} style={{ width: '100%' }}>
-            <Space size="small" wrap>
-              <Text type="secondary">{formatDateTime(e.createdAt)}</Text>
-              <Tag>{codeLabel(e.code)}</Tag>
-              {e.projectPath && <Text code>{e.projectPath}</Text>}
-              {e.status === 'success' ? (
-                <CheckCircleTwoTone twoToneColor="#52c41a" />
-              ) : (
-                <CloseCircleTwoTone twoToneColor="#ff4d4f" />
-              )}
-              {e.durationMs != null && <Text type="secondary">{formatDuration(e.durationMs)}</Text>}
+      items={sorted.map((e) => {
+        const lifecycleTag = e.code === 'lifecycle_sync' ? lifecycleSyncTag(e) : null
+        return {
+          color: e.status === 'success' ? 'green' : e.status === 'failed' ? 'red' : 'gray',
+          children: (
+            <Space direction="vertical" size={2} style={{ width: '100%' }}>
+              <Space size="small" wrap>
+                <Text type="secondary">{formatDateTime(e.createdAt)}</Text>
+                {lifecycleTag
+                  ? <Tag color={lifecycleTag.color}>{lifecycleTag.text}</Tag>
+                  : <Tag>{codeLabel(e.code)}</Tag>}
+                {e.projectPath && <Text code>{e.projectPath}</Text>}
+                {e.status === 'success' ? (
+                  <CheckCircleTwoTone twoToneColor="#52c41a" />
+                ) : (
+                  <CloseCircleTwoTone twoToneColor="#ff4d4f" />
+                )}
+                {e.durationMs != null && <Text type="secondary">{formatDuration(e.durationMs)}</Text>}
+              </Space>
+              {eventDataSummary(e) && <Text type="secondary">{eventDataSummary(e)}</Text>}
             </Space>
-            {eventDataSummary(e) && <Text type="secondary">{eventDataSummary(e)}</Text>}
-          </Space>
-        ),
-      }))}
+          ),
+        }
+      })}
     />
   )
 }
