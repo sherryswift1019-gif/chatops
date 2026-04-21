@@ -387,6 +387,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
     analysisSteps: merged.analysisSteps,
     metadata: merged.metadata,
     primaryProjectPath: filterResult.primaryProjectPath,
+    triggeredBy: context.initiatorId || null,
   })
 
   // ========== 写 bug_fix_events: analysis（Bug 级，projectPath=NULL） ==========

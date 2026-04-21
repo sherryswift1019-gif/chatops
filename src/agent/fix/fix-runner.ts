@@ -78,6 +78,7 @@ export async function handleFixBug(opts: TriggerOptions, level: string): Promise
         : []
 
       const attempt = projectAttempts.length + 1
+      const startedAt = Date.now()
 
       try {
         const fixResult = await runFixForProject({
@@ -100,6 +101,7 @@ export async function handleFixBug(opts: TriggerOptions, level: string): Promise
           projectPath,
           code: 'fix_attempt',
           status: fixResult.testPassed ? 'success' : 'failed',
+          durationMs: Date.now() - startedAt,
           data: {
             branch: fixResult.branch,
             targetBranch: sourceBranch,
@@ -122,6 +124,7 @@ export async function handleFixBug(opts: TriggerOptions, level: string): Promise
           projectPath,
           code: 'fix_attempt',
           status: 'failed',
+          durationMs: Date.now() - startedAt,
           data: { attempt, error: msg },
         })
         failures.push(`${projectPath}: ${msg}`)

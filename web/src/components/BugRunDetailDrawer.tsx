@@ -32,6 +32,8 @@ interface Props {
   open: boolean
   report: BugAnalysisReport | null
   onClose: () => void
+  /** 钉钉 userId → name 映射，用于 triggered_by / notify userId 等字段显示姓名 */
+  userNameMap?: Record<string, string>
 }
 
 // ─── 状态 / 等级 / 分类 徽标 ────────────────────────────────────────
@@ -158,8 +160,9 @@ function IssueEventBlock({ events }: { events: BugFixEvent[] }) {
   return (
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
       {events.map((e) => {
-        const iid = get<number | string>(e.data, 'iid')
-        const url = get<string>(e.data, 'url')
+        // 后端写的是 issueIid / issueUrl；旧事件兼容 iid / url
+        const iid = get<number | string>(e.data, 'issueIid') ?? get<number | string>(e.data, 'iid')
+        const url = get<string>(e.data, 'issueUrl') ?? get<string>(e.data, 'url')
         const isReused = get<boolean>(e.data, 'isReused')
         return (
           <Descriptions key={e.id} size="small" column={2} bordered>
@@ -198,7 +201,8 @@ function FixAttemptBlock({ events }: { events: BugFixEvent[] }) {
           <Space direction="vertical" size="small" style={{ width: '100%', marginTop: 8 }}>
             {list.map((e, idx) => {
               const branch = get<string>(e.data, 'branch')
-              const testPassed = get<boolean>(e.data, 'testPassed')
+              // 后端 fix-runner 写的是 testResult；保留 testPassed 兼容
+              const testPassed = get<boolean>(e.data, 'testPassed') ?? get<boolean>(e.data, 'testResult')
               const error = get<string>(e.data, 'error')
               const output = get<string>(e.data, 'output')
               return (
@@ -256,8 +260,9 @@ function MRBlock({ events }: { events: BugFixEvent[] }) {
   return (
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
       {events.map((e) => {
-        const iid = get<number | string>(e.data, 'iid')
-        const url = get<string>(e.data, 'url')
+        // 后端 create-mr-handler 写的是 mrIid / mrUrl；旧事件兼容 iid / url
+        const iid = get<number | string>(e.data, 'mrIid') ?? get<number | string>(e.data, 'iid')
+        const url = get<string>(e.data, 'mrUrl') ?? get<string>(e.data, 'url')
         return (
           <Descriptions key={e.id} size="small" column={2} bordered>
             <Descriptions.Item label="项目">{e.projectPath ?? '—'}</Descriptions.Item>
@@ -308,15 +313,30 @@ function NotifyBlock({ events }: { events: BugFixEvent[] }) {
   return (
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
       {events.map((e) => {
-        const kind = get<string>(e.data, 'kind')
-        const targets = get<unknown[]>(e.data, 'targets') ?? get<unknown[]>(e.data, 'recipients') ?? []
+        // 后端 notify-handler 每条事件针对 1 个 userId + 可选 mrIids 数组；旧事件兼容 kind/targets/recipients
+        const kind =
+          get<string>(e.data, 'messageKind') ??
+          get<string>(e.data, 'kind') ??
+          ''
+        const userId = get<string>(e.data, 'userId')
+        const role = get<string>(e.data, 'role')
+        const mrIids = (get<unknown[]>(e.data, 'mrIids') ?? []) as Array<number | string>
+        const legacyTargets =
+          (get<unknown[]>(e.data, 'targets') ?? get<unknown[]>(e.data, 'recipients') ?? []) as unknown[]
         return (
           <Descriptions key={e.id} size="small" column={1} bordered>
-            <Descriptions.Item label="种类">{kind ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="种类">{kind || '—'}</Descriptions.Item>
             <Descriptions.Item label="对象">
-              {targets.length > 0 ? (
+              {userId ? (
                 <Space wrap>
-                  {targets.map((t, i) => (
+                  <Tag>{role ? `${role}: ${userId}` : userId}</Tag>
+                  {mrIids.map((m, i) => (
+                    <Tag key={`mr-${i}`} color="blue">MR !{String(m)}</Tag>
+                  ))}
+                </Space>
+              ) : legacyTargets.length > 0 ? (
+                <Space wrap>
+                  {legacyTargets.map((t, i) => (
                     <Tag key={i}>{typeof t === 'string' ? t : JSON.stringify(t)}</Tag>
                   ))}
                 </Space>
@@ -396,10 +416,16 @@ function ApprovalBlock({ events }: { events: BugFixEvent[] }) {
 
 // ─── Section 1：基础元数据 ───────────────────────────────────────
 
-function BasicMetaSection({ report }: { report: BugAnalysisReport }) {
-  const initiatorId = report.metadata && typeof report.metadata === 'object'
-    ? (report.metadata as Record<string, unknown>).initiatorId
-    : undefined
+function BasicMetaSection({
+  report,
+  userNameMap,
+}: {
+  report: BugAnalysisReport
+  userNameMap?: Record<string, string>
+}) {
+  const triggeredByLabel = report.triggeredBy
+    ? userNameMap?.[report.triggeredBy] ?? report.triggeredBy
+    : null
   return (
     <Descriptions column={2} bordered size="small">
       <Descriptions.Item label="Report ID">{report.id}</Descriptions.Item>
@@ -420,7 +446,7 @@ function BasicMetaSection({ report }: { report: BugAnalysisReport }) {
       <Descriptions.Item label="状态">
         <StatusTag status={report.status} />
       </Descriptions.Item>
-      <Descriptions.Item label="触发人">{String(initiatorId ?? '—')}</Descriptions.Item>
+      <Descriptions.Item label="触发人">{triggeredByLabel ?? '—'}</Descriptions.Item>
       <Descriptions.Item label="置信度">
         {report.confidence}
         {report.confidenceScore != null ? ` (${report.confidenceScore})` : ''}
@@ -730,7 +756,7 @@ function FullTimelineSection({ events }: { events: BugFixEvent[] }) {
 
 // ─── 主组件 ───────────────────────────────────────────────────────
 
-export default function BugRunDetailDrawer({ open, report, onClose }: Props) {
+export default function BugRunDetailDrawer({ open, report, onClose, userNameMap }: Props) {
   const [events, setEvents] = useState<BugFixEvent[]>([])
   const [rounds, setRounds] = useState<BugAnalysisReport[]>([])
   const [loading, setLoading] = useState(false)
@@ -810,7 +836,7 @@ export default function BugRunDetailDrawer({ open, report, onClose }: Props) {
         <Space direction="vertical" size="large" style={{ width: '100%' }}>
           <div>
             <Title level={4} style={{ marginTop: 0 }}>基础元数据</Title>
-            <BasicMetaSection report={report} />
+            <BasicMetaSection report={report} userNameMap={userNameMap} />
           </div>
 
           <Divider style={{ margin: 0 }} />

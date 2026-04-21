@@ -52,5 +52,9 @@ const schemaV14 = readFileSync(join(__dirname, 'schema-v14.sql'), 'utf8')
 await pool.query(schemaV14)
 console.log('[migrate] schema-v14 applied')
 
+const schemaV15 = readFileSync(join(__dirname, 'schema-v15.sql'), 'utf8')
+await pool.query(schemaV15)
+console.log('[migrate] schema-v15 applied')
+
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v14, 含 completed_at)')
+console.log('✅ Database schema applied (v1 ~ v15, 含 completed_at + triggered_by)')

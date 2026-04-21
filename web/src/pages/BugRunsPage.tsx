@@ -8,8 +8,9 @@ import {
   handoverBugReport,
 } from '../api/bug-analysis-reports'
 import { getProductLines } from '../api/product-lines'
+import { getDingTalkUsers } from '../api/dingtalk-users'
 import BugRunDetailDrawer from '../components/BugRunDetailDrawer'
-import type { BugAnalysisReport, ProductLine } from '../types'
+import type { BugAnalysisReport, ProductLine, DingTalkUser } from '../types'
 
 // ─── 就地定义 LevelTag / StatusTag（与 BugRunDetailDrawer 一致）─────
 
@@ -53,14 +54,9 @@ function formatDateTime(s: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-const STATUS_OPTIONS = [
-  { value: 'draft', label: 'draft' },
-  { value: 'published', label: 'published' },
-  { value: 'pipeline_success', label: 'pipeline_success' },
-  { value: 'pending_manual', label: 'pending_manual' },
-  { value: 'completed', label: 'completed' },
-  { value: 'aborted', label: 'aborted' },
-]
+const STATUS_OPTIONS = (Object.keys(STATUS_META) as Array<keyof typeof STATUS_META>).map(
+  (value) => ({ value, label: STATUS_META[value].label }),
+)
 
 const LEVEL_OPTIONS = [
   { value: 'l1', label: 'L1' },
@@ -83,12 +79,21 @@ export default function BugRunsPage() {
   const [reports, setReports] = useState<BugAnalysisReport[]>([])
   const [total, setTotal] = useState(0)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
+  const [userNameMap, setUserNameMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [selectedReport, setSelectedReport] = useState<BugAnalysisReport | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     getProductLines().then(setProductLines).catch(() => {})
+    // 拉 dingtalk_users 供 triggered_by 列显示名字（非严格：失败降级为显示原 id）
+    getDingTalkUsers()
+      .then((res) => {
+        const map: Record<string, string> = {}
+        for (const u of res.users as DingTalkUser[]) map[u.userId] = u.name
+        setUserNameMap(map)
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -213,11 +218,11 @@ export default function BugRunsPage() {
     },
     {
       title: '触发人',
-      dataIndex: 'metadata',
+      dataIndex: 'triggeredBy',
       width: 140,
-      render: (m: Record<string, unknown> | null) => {
-        const id = m?.initiatorId
-        return typeof id === 'string' || typeof id === 'number' ? id : '—'
+      render: (id: string | null) => {
+        if (!id) return '—'
+        return userNameMap[id] ?? id
       },
     },
     {
@@ -325,6 +330,7 @@ export default function BugRunsPage() {
         open={!!selectedReport}
         report={selectedReport}
         onClose={() => setSelectedReport(null)}
+        userNameMap={userNameMap}
       />
     </>
   )

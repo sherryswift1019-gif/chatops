@@ -37,6 +37,7 @@ export interface BugAnalysisReport {
   status: ReportStatus
   pipelineRunId: number | null
   primaryProjectPath: string | null
+  triggeredBy: string | null
   createdAt: Date
   updatedAt: Date
   completedAt: Date | null
@@ -62,6 +63,7 @@ function mapRow(r: Record<string, unknown>): BugAnalysisReport {
     status: r.status as ReportStatus,
     pipelineRunId: (r.pipeline_run_id as number | null) ?? null,
     primaryProjectPath: (r.primary_project_path as string | null) ?? null,
+    triggeredBy: (r.triggered_by as string | null) ?? null,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
     completedAt: (r.completed_at ?? null) as Date | null,
@@ -72,20 +74,22 @@ function mapRow(r: Record<string, unknown>): BugAnalysisReport {
 export async function createBugAnalysisReport(
   data: Pick<BugAnalysisReport, 'issueId' | 'issueUrl' | 'productLineId' | 'agentSessionId' | 'level' | 'classification' | 'confidence' | 'confidenceScore' | 'rootCauseSummary' | 'solutionsJson' | 'affectedModules' | 'analysisSteps' | 'metadata'> & {
     primaryProjectPath?: string | null
+    triggeredBy?: string | null
   }
 ): Promise<BugAnalysisReport> {
   const pool = getPool()
   const { rows } = await pool.query(
     `INSERT INTO bug_analysis_reports
-       (issue_id, issue_url, product_line_id, agent_session_id, level, classification, confidence, confidence_score, root_cause_summary, solutions_json, affected_modules, analysis_steps, metadata, primary_project_path)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+       (issue_id, issue_url, product_line_id, agent_session_id, level, classification, confidence, confidence_score, root_cause_summary, solutions_json, affected_modules, analysis_steps, metadata, primary_project_path, triggered_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
     [data.issueId, data.issueUrl, data.productLineId, data.agentSessionId ?? null,
      data.level, data.classification, data.confidence, data.confidenceScore ?? null,
      data.rootCauseSummary ?? null, JSON.stringify(data.solutionsJson),
      data.affectedModules ? JSON.stringify(data.affectedModules) : null,
      data.analysisSteps ? JSON.stringify(data.analysisSteps) : null,
      data.metadata ? JSON.stringify(data.metadata) : null,
-     data.primaryProjectPath ?? null]
+     data.primaryProjectPath ?? null,
+     data.triggeredBy ?? null]
   )
   return mapRow(rows[0])
 }

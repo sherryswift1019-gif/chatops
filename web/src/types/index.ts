@@ -121,6 +121,7 @@ export interface BugAnalysisReport {
   affectedModules: string[] | null; analysisSteps: string[] | null
   metadata: Record<string, unknown> | null; status: string
   pipelineRunId: number | null; primaryProjectPath: string | null
+  triggeredBy: string | null
   createdAt: string; updatedAt: string
   productLineName?: string
   completedAt: string | null
