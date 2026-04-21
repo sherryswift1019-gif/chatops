@@ -388,13 +388,11 @@ function HandoverBlock({ events, userNameMap }: { events: BugFixEvent[]; userNam
                 '—'
               )}
             </Descriptions.Item>
-            <Descriptions.Item label="失败摘要" span={2}>
-              {failureSummary ? (
+            {failureSummary && (
+              <Descriptions.Item label="失败摘要" span={2}>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{failureSummary}</pre>
-              ) : (
-                '—'
-              )}
-            </Descriptions.Item>
+              </Descriptions.Item>
+            )}
           </Descriptions>
         )
       })}
