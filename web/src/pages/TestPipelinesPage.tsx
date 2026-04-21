@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, Checkbox, message } from 'antd'
 import { PlusOutlined, DeleteOutlined, PlayCircleOutlined, RobotOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
@@ -13,6 +14,7 @@ import type { TestPipeline, ProductLine, TestServer, ArtifactInput } from '../ty
 
 
 export default function TestPipelinesPage() {
+  const nav = useNavigate()
   const [data, setData] = useState<TestPipeline[]>([])
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [dingtalkUsers, setDingtalkUsers] = useState<{userId: string; name: string}[]>([])
@@ -194,6 +196,7 @@ export default function TestPipelinesPage() {
       render: (_: unknown, r: TestPipeline) => (
         <Space>
           <a onClick={() => openTrigger(r)}><PlayCircleOutlined /> 执行</a>
+          <a onClick={() => nav(`/test-pipelines/${r.id}/canvas`)}>画布编辑</a>
           <a onClick={() => openEdit(r)}>编辑</a>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}><a style={{ color: 'red' }}>删除</a></Popconfirm>
         </Space>
