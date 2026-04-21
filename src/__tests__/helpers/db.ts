@@ -9,6 +9,12 @@ if (!process.env.DATABASE_URL) {
   process.env.DATABASE_URL = 'postgres://test:test@localhost:5432/chatops_test'
 }
 
+// Pipeline executor resolves TEST_DATA_DIR at module-load time; must be set
+// before any pipeline import, which happens before any beforeAll().
+if (!process.env.TEST_DATA_DIR) {
+  process.env.TEST_DATA_DIR = '/tmp/chatops-test-runs'
+}
+
 let testPool: Pool | null = null
 
 export function getTestPool(): Pool {
