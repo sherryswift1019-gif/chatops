@@ -149,18 +149,27 @@ describe('bug-analysis-reports repository — completed_at', () => {
     expect(fresh!.completedAt).toBeInstanceOf(Date)
   })
 
-  it('非终态 (published / pipeline_success) 不写 completed_at', async () => {
+  // 注：pipeline_success 自 ec67276 起被视为终态（"当前轮次已结束"语义），
+  // 与 completed/aborted/pending_manual 并列触发 completed_at 写入。
+  it('终态状态 (pipeline_success) 也触发写入', async () => {
+    const r = await createBugAnalysisReport({
+      issueId: 6, issueUrl: 'x', productLineId: 1, level: 'l2',
+      classification: 'bug', confidence: 'high',
+      solutionsJson: [], status: 'draft',
+    } as any)
+    await updateReportStatus(r.id, 'pipeline_success')
+    const fresh = await getBugAnalysisReportById(r.id)
+    expect(fresh!.completedAt).toBeInstanceOf(Date)
+  })
+
+  it('非终态 (published) 不写 completed_at', async () => {
     const r = await createBugAnalysisReport({
       issueId: 4, issueUrl: 'x', productLineId: 1, level: 'l2',
       classification: 'bug', confidence: 'high',
       solutionsJson: [], status: 'draft',
     } as any)
     await updateReportStatus(r.id, 'published')
-    let fresh = await getBugAnalysisReportById(r.id)
-    expect(fresh!.completedAt).toBeNull()
-
-    await updateReportStatus(r.id, 'pipeline_success')
-    fresh = await getBugAnalysisReportById(r.id)
+    const fresh = await getBugAnalysisReportById(r.id)
     expect(fresh!.completedAt).toBeNull()
   })
 

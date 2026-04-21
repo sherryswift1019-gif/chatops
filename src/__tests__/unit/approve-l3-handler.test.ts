@@ -182,8 +182,15 @@ describe('approve_l3 handler', () => {
       extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
-    // 只有从仓库 owner 收到 FYI DM（主仓库 owner 的审批 DM 由 approval-manager 发，被 mock 拦截了）
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
+    // 预期 2 次 DM：
+    //   1. 主 owner 收"L3 修复方案审批"互动卡片（approve-l3-handler 自己发，不走 approval-manager）
+    //   2. 从仓库 owner 收 FYI 纯文本 DM
+    // （approval-manager 内部的文字 DM 被 mock 拦了）
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(2)
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith(
+      'u-primary',
+      expect.objectContaining({ title: expect.stringMatching(/L3.*审批/) }),
+    )
     expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith('u-secondary', expect.anything())
   })
 
@@ -236,8 +243,12 @@ describe('approve_l3 handler', () => {
       extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
-    // 去重后只发一次
-    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
+    // 预期 2 次：主 owner 卡片 + u-shared 一次 FYI（两个非主 project 的 owner 去重后一次）
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(2)
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith(
+      'u-primary',
+      expect.objectContaining({ title: expect.stringMatching(/L3.*审批/) }),
+    )
     expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith('u-shared', expect.anything())
   })
 
@@ -278,8 +289,12 @@ describe('approve_l3 handler', () => {
       extraParams: { reportId: report.id, approvalTimeoutMs: 3_600_000 },
     })
 
-    // 主 owner 已经由 approval-manager 发审批 DM，此处不应重复发 FYI
-    expect(mockAdapter.sendDirectMessage).not.toHaveBeenCalled()
+    // 预期 1 次：仅主 owner 收卡片。从仓库 owner 和主 owner 相同，被去重排除不发 FYI。
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledTimes(1)
+    expect(mockAdapter.sendDirectMessage).toHaveBeenCalledWith(
+      'u-primary',
+      expect.objectContaining({ title: expect.stringMatching(/L3.*审批/) }),
+    )
   })
 
   it('no primary owner → returns no_primary_owner', async () => {

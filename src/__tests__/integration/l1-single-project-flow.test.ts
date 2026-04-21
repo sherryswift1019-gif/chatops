@@ -180,9 +180,14 @@ describe('AC1: L2 单 project 端到端', () => {
     // ── 2. 调 handleAnalysisComplete 触发 Pipeline ──
     await handleAnalysisComplete(reportId, 'l2', 'bug', 'u-trigger')
 
-    // Pipeline 运行是异步的（runPipeline 内部有 await，但 onComplete 在 return 之后才 fire）
-    // runPipeline 本身是 await 执行完整 pipeline 的，所以完成后立刻查状态
-    const report = await getBugAnalysisReportById(reportId)
+    // main 的 LangGraph 改造后 runPipeline 是 fire-and-forget（见 executor.ts:167），
+    // pipeline 在后台跑完后通过 onComplete 把 status 设为 pipeline_success。
+    // 这里 poll 等待直到达到终态或超时。
+    let report = await getBugAnalysisReportById(reportId)
+    for (let i = 0; i < 40 && report?.status !== 'pipeline_success' && report?.status !== 'aborted'; i++) {
+      await new Promise(r => setTimeout(r, 100))
+      report = await getBugAnalysisReportById(reportId)
+    }
     expect(report).not.toBeNull()
     expect(report!.pipelineRunId).toBeTruthy()
     expect(report!.status).toBe('pipeline_success')

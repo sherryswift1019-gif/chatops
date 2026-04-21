@@ -498,3 +498,10 @@ app.post('/bug-reports/:id/retry', async (req, reply) => {
 **优先级**：**高**（L3 审批是产品核心能力，不能长期缺失）
 
 **阻塞点**：等 merge 的这一批改动上线稳定后立刻做；在稳定前优先保证 L1/L2/L4 可用。
+
+**已 skip 的回归（2026-04-21）**：
+- [integration/approval-timeout-retry.test.ts](../src/__tests__/integration/approval-timeout-retry.test.ts) 整个 `AC3: 审批超时 → aborted → retry 复用 Issue` describe
+- [integration/l3-multi-project-approval.test.ts](../src/__tests__/integration/l3-multi-project-approval.test.ts) 整个 `AC2: L3 多 project 审批 + 主/从仓库` describe
+- [integration/reanalyze-flow.test.ts](../src/__tests__/integration/reanalyze-flow.test.ts) `retry_analysis` case
+
+恢复 L3 审批能力后，需要把这 3 组 spec 去掉 skip 并重跑（可能需要改造为 graph-runner interrupt 语义）。

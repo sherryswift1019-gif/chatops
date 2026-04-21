@@ -97,7 +97,11 @@ function makeMockAdapter(): IMAdapter & { sendDirectMessage: ReturnType<typeof v
   } as unknown as IMAdapter & { sendDirectMessage: ReturnType<typeof vi.fn> }
 }
 
-describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
+// main 的 LangGraph 改造合并后 L3 审批已降级（seed.sql 删 approve_l3 stage,
+// approval-manager.requestApproval 改为 throw）。L3 pipeline 当前等同 L2 流程,
+// 无"主 owner 审批 + 从仓库 FYI"分叉，本 spec 无有效路径。
+// 整组 skip 直至 TODO §11 把 approval stage 接入 graph-runner 后恢复。
+describe.skip('AC2: L3 多 project 审批 + 主/从仓库', () => {
   let productLineId: number
   let mockAdapter: IMAdapter & { sendDirectMessage: ReturnType<typeof vi.fn> }
 

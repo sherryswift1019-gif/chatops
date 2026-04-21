@@ -109,6 +109,7 @@ describe('POST /bug-reports/:id/retry', () => {
   })
 
   it('returns 502 when analyzer fails', async () => {
+    // fire-and-forget 后 analyzer 失败只写日志不影响 HTTP；断言改为"立即返回 200 + 受理态"
     ;(getBugAnalysisReportById as any).mockResolvedValue(abortedReport)
     ;(handleAnalyzeBug as any).mockResolvedValue({
       success: false,
@@ -117,28 +118,24 @@ describe('POST /bug-reports/:id/retry', () => {
     })
     const app = await buildApp()
     const res = await app.inject({ method: 'POST', url: '/bug-reports/42/retry' })
-    expect(res.statusCode).toBe(502)
-    expect(res.json()).toMatchObject({ success: false, error: 'GITLAB_API_ERROR' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ success: true, data: { reportId: 42 } })
     await app.close()
   })
 
   it('returns 500 when analyzer throws', async () => {
+    // fire-and-forget 后 throw 被 void async 吞；断言改为"立即返回 200 + 受理态"
     ;(getBugAnalysisReportById as any).mockResolvedValue(abortedReport)
     ;(handleAnalyzeBug as any).mockRejectedValue(new Error('unexpected boom'))
     const app = await buildApp()
     const res = await app.inject({ method: 'POST', url: '/bug-reports/42/retry' })
-    expect(res.statusCode).toBe(500)
-    expect(res.json()).toMatchObject({ success: false, error: 'INTERNAL_ERROR' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ success: true, data: { reportId: 42 } })
     await app.close()
   })
 
-  it('on successful retry with bug classification: triggers Pipeline and returns newRunId', async () => {
-    // First call: read original aborted report
-    // Subsequent call: read the newly-created report (reloaded) to pick up pipelineRunId
-    ;(getBugAnalysisReportById as any)
-      .mockResolvedValueOnce(abortedReport)
-      .mockResolvedValueOnce({ ...abortedReport, id: 77, pipelineRunId: 888 })
-
+  it('on successful retry: fire-and-forget 立即 200 + 后台调 handleAnalyzeBug (reuseIssueId)', async () => {
+    ;(getBugAnalysisReportById as any).mockResolvedValue(abortedReport)
     ;(handleAnalyzeBug as any).mockResolvedValue({
       success: true,
       output: 'ok',
@@ -153,13 +150,16 @@ describe('POST /bug-reports/:id/retry', () => {
     expect(body).toMatchObject({
       success: true,
       data: {
-        newReportId: 77,
-        newRunId: 888,
+        reportId: 42,
         issueId: 501,
         issueUrl: 'https://gitlab/test/issues/501',
       },
     })
-    // handleAnalyzeBug called with reuseIssueId
+    // 不再返回 newReportId / newRunId（后台异步创建）
+    expect(body.data.newReportId).toBeUndefined()
+    expect(body.data.newRunId).toBeUndefined()
+    // 等后台 void async 的 microtask flush
+    await new Promise(r => setTimeout(r, 20))
     expect(handleAnalyzeBug).toHaveBeenCalledWith(expect.objectContaining({
       capabilityKey: 'analyze_bug',
       extraParams: expect.objectContaining({
@@ -171,8 +171,8 @@ describe('POST /bug-reports/:id/retry', () => {
     await app.close()
   })
 
-  it('on successful retry with non-bug classification: does NOT trigger Pipeline, newRunId undefined', async () => {
-    ;(getBugAnalysisReportById as any).mockResolvedValueOnce(abortedReport)
+  it('on successful retry with non-bug classification: does NOT trigger Pipeline', async () => {
+    ;(getBugAnalysisReportById as any).mockResolvedValue(abortedReport)
     ;(handleAnalyzeBug as any).mockResolvedValue({
       success: true,
       output: 'ok',
@@ -184,8 +184,9 @@ describe('POST /bug-reports/:id/retry', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(body.success).toBe(true)
-    expect(body.data.newReportId).toBe(88)
-    expect(body.data.newRunId).toBeUndefined()
+    expect(body.data.reportId).toBe(42)
+    // 等后台 async 执行完
+    await new Promise(r => setTimeout(r, 20))
     expect(handleAnalysisComplete).not.toHaveBeenCalled()
     await app.close()
   })
@@ -278,10 +279,11 @@ describe('POST /bug-reports/:id/handover', () => {
     await app.close()
   })
 
+  // 注：`aborted` 已在 f8002c9 起被加入 allowed 列表（用户中止后想转人工也可以），
+  // 只剩 `pending_manual` / `completed` 两种状态拒绝 handover
   it.each([
     ['pending_manual'],
     ['completed'],
-    ['aborted'],
   ])('returns 409 when status=%s (不允许转人工)', async status => {
     ;(getBugAnalysisReportById as any).mockResolvedValue({ ...abortedReport, status })
     const app = await buildApp()
@@ -295,6 +297,7 @@ describe('POST /bug-reports/:id/handover', () => {
     ['draft'],
     ['published'],
     ['pipeline_success'],
+    ['aborted'],
   ])('success when status=%s → calls checkAndTriggerHandover(user_requested)', async status => {
     ;(getBugAnalysisReportById as any)
       .mockResolvedValueOnce({ ...abortedReport, status })  // 前置读

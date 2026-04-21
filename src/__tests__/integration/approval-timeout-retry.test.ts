@@ -97,7 +97,10 @@ function makeMockAdapter(): IMAdapter & { sendDirectMessage: ReturnType<typeof v
   } as unknown as IMAdapter & { sendDirectMessage: ReturnType<typeof vi.fn> }
 }
 
-describe('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
+// main 的 LangGraph 改造合并后 L3 审批已降级（seed.sql 删 approve_l3 stage,
+// approval-manager.requestApproval 改为 throw）。整套"审批超时 → aborted → retry"
+// 无可触发路径，整组 skip 直至 TODO §11 把 approval stage 接入 graph-runner 后恢复。
+describe.skip('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
   let productLineId: number
   let mockAdapter: IMAdapter & { sendDirectMessage: ReturnType<typeof vi.fn> }
 
