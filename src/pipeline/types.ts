@@ -60,3 +60,31 @@ export interface ArtifactInput {
   defaultStrategy?: 'latest-by-mtime' | 'first-match'
   authHeaders?: Record<string, string>
 }
+
+// ---- Visual canvas DAG model ---------------------------------------------
+// StageDefinition 字段在节点内部复用；画布仅增加 id / position / edges。
+
+export type ConditionSpec =
+  | { kind: 'onSuccess' }
+  | { kind: 'onFailure' }
+  | { kind: 'expression'; expression: string }
+// expression 首版只支持两种模板（详见 graph-builder conditionMatches）：
+//   1. status === 'success' | 'failed' | 'skipped'
+//   2. output.includes('...')
+
+export interface PipelineNode extends StageDefinition {
+  id: string                        // ULID
+  position: { x: number; y: number }
+}
+
+export interface PipelineEdge {
+  id: string                        // ULID
+  source: string                    // PipelineNode.id
+  target: string                    // PipelineNode.id
+  condition?: ConditionSpec
+}
+
+export interface PipelineGraph {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
+}
