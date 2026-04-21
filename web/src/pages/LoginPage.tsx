@@ -32,9 +32,9 @@ export default function LoginPage() {
       <div className="login-card">
         {/* Logo mark */}
         <div className="login-logo">
-          <div className="login-logo-icon">CO</div>
+          <div className="login-logo-icon">MT</div>
           <div className="login-logo-info">
-            <h1>ChatOps</h1>
+            <h1>Mewtwo</h1>
             <p>DEVOPS MANAGEMENT CONSOLE</p>
           </div>
         </div>

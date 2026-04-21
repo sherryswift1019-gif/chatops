@@ -46,6 +46,12 @@ assertDatabaseUrlForTests(
   process.env.NODE_ENV,
 )
 
+// Pipeline executor resolves TEST_DATA_DIR at module-load time; must be set
+// before any pipeline import, which happens before any beforeAll().
+if (!process.env.TEST_DATA_DIR) {
+  process.env.TEST_DATA_DIR = '/tmp/chatops-test-runs'
+}
+
 let testPool: Pool | null = null
 
 export function getTestPool(): Pool {
@@ -127,6 +133,8 @@ const SCHEMA_FILES = [
   'schema-v13.sql',
   'schema-v14.sql',
   'schema-v15.sql',
+  'schema-v16.sql',
+  'schema-v17.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

@@ -12,6 +12,7 @@ export interface TestPipeline {
   triggerParams: Record<string, unknown>
   variables: Record<string, string>
   artifactInputs: unknown[]
+  graph: unknown | null
   createdAt: Date
   updatedAt: Date
 }
@@ -25,6 +26,7 @@ function mapRow(r: Record<string, unknown>): TestPipeline {
     triggerParams: (r.trigger_params ?? {}) as Record<string, unknown>,
     variables: (r.variables ?? {}) as Record<string, string>,
     artifactInputs: (r.artifact_inputs ?? []) as unknown[],
+    graph: (r.graph ?? null) as unknown,
     createdAt: r.created_at as Date, updatedAt: r.updated_at as Date,
   }
 }
@@ -57,15 +59,17 @@ export async function createTestPipeline(data: {
   schedule?: string; enabled?: boolean; triggerParams?: Record<string, unknown>
   variables?: Record<string, string>
   artifactInputs?: unknown[]
+  graph?: unknown
 }): Promise<TestPipeline> {
   const pool = getPool()
   const { rows } = await pool.query(
-    `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables, artifact_inputs)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables, artifact_inputs, graph)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [data.productLineId, data.name, data.description ?? '', JSON.stringify(data.stages),
      JSON.stringify(data.serverRoles), data.schedule ?? '', data.enabled ?? true,
      JSON.stringify(data.triggerParams ?? {}), JSON.stringify(data.variables ?? {}),
-     JSON.stringify(data.artifactInputs ?? [])]
+     JSON.stringify(data.artifactInputs ?? []),
+     data.graph !== undefined ? JSON.stringify(data.graph) : null]
   )
   return mapRow(rows[0])
 }
@@ -75,6 +79,7 @@ export async function updateTestPipeline(id: number, data: Partial<{
   serverRoles: Record<string, { count: number }>; schedule: string; enabled: boolean
   triggerParams: Record<string, unknown>; variables: Record<string, string>
   artifactInputs: unknown[]
+  graph: unknown | null
 }>): Promise<TestPipeline | null> {
   const pool = getPool()
   const { rows } = await pool.query(
@@ -85,6 +90,7 @@ export async function updateTestPipeline(id: number, data: Partial<{
        trigger_params = COALESCE($8, trigger_params),
        variables = COALESCE($9, variables),
        artifact_inputs = COALESCE($10, artifact_inputs),
+       graph = COALESCE($11, graph),
        updated_at = NOW()
      WHERE id = $1 RETURNING *`,
     [id, data.name ?? null, data.description ?? null,
@@ -93,7 +99,21 @@ export async function updateTestPipeline(id: number, data: Partial<{
      data.schedule ?? null, data.enabled ?? null,
      data.triggerParams ? JSON.stringify(data.triggerParams) : null,
      data.variables ? JSON.stringify(data.variables) : null,
-     data.artifactInputs ? JSON.stringify(data.artifactInputs) : null]
+     data.artifactInputs ? JSON.stringify(data.artifactInputs) : null,
+     data.graph !== undefined ? (data.graph === null ? null : JSON.stringify(data.graph)) : null]
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+/**
+ * 画布保存专用：直接覆写 graph 列（不影响 stages）。
+ * 传 null 可清空 graph，让 runtime fallback 到 stages。
+ */
+export async function setPipelineGraph(id: number, graph: unknown | null): Promise<TestPipeline | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `UPDATE test_pipelines SET graph = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    [id, graph === null ? null : JSON.stringify(graph)]
   )
   return rows[0] ? mapRow(rows[0]) : null
 }

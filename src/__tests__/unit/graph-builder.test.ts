@@ -354,3 +354,71 @@ describe('buildGraphFromStages — script with no target servers', () => {
     expect(called).toBe(false)
   })
 })
+
+// ---- buildGraphFromPipeline with conditional edges -----------------------
+
+import { buildGraphFromPipeline } from '../../pipeline/graph-builder.js'
+import type { PipelineGraph } from '../../pipeline/types.js'
+
+describe('buildGraphFromPipeline with conditional edges', () => {
+  function makeNode(id: string, name: string, script = 'true'): PipelineGraph['nodes'][number] {
+    return {
+      id, name, stageType: 'script', script,
+      targetRoles: ['app'], parallel: false, timeoutSeconds: 60,
+      retryCount: 0, onFailure: 'stop',
+      position: { x: 0, y: 0 },
+    }
+  }
+
+  it('onSuccess 走 A→B，onFailure 分支不执行', async () => {
+    const a = makeNode('a', 'A')
+    const b = makeNode('b', 'B')
+    const c = makeNode('c', 'C')
+    const graph: PipelineGraph = {
+      nodes: [a, b, c],
+      edges: [
+        { id: 'e1', source: 'a', target: 'b', condition: { kind: 'onSuccess' } },
+        { id: 'e2', source: 'a', target: 'c', condition: { kind: 'onFailure' } },
+      ],
+    }
+    const hooks: StageHooks = {
+      async runScript(stage): Promise<StageExecutionResult> {
+        return { status: 'success', output: `${stage.name} ran` }
+      },
+      async runCapability() { return { status: 'success', output: '' } },
+    }
+    const builder = buildGraphFromPipeline({ graph, stageContext: baseCtx(), hooks })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (builder as any).compile({ checkpointer: new MemorySaver() })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await app.stream({ runId: 1 }, config))
+    const snap = await app.getState(config)
+    const names = snap.values.stageResults.map((r: { name: string }) => r.name)
+    expect(names).toContain('A')
+    expect(names).toContain('B')
+    expect(names).not.toContain('C')
+  })
+
+  it('expression 匹配 output.includes', async () => {
+    const a = makeNode('a', 'A')
+    const b = makeNode('b', 'B')
+    const graph: PipelineGraph = {
+      nodes: [a, b],
+      edges: [{
+        id: 'e1', source: 'a', target: 'b',
+        condition: { kind: 'expression', expression: "output.includes('RETRY')" },
+      }],
+    }
+    const hooks: StageHooks = {
+      async runScript() { return { status: 'success', output: 'RETRY needed' } },
+      async runCapability() { return { status: 'success', output: '' } },
+    }
+    const builder = buildGraphFromPipeline({ graph, stageContext: baseCtx(), hooks })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (builder as any).compile({ checkpointer: new MemorySaver() })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await app.stream({ runId: 1 }, config))
+    const snap = await app.getState(config)
+    expect(snap.values.stageResults.map((r: { name: string }) => r.name)).toEqual(['A', 'B'])
+  })
+})

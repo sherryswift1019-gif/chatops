@@ -65,6 +65,9 @@ importers:
       ssh2:
         specifier: ^1.17.0
         version: 1.17.0
+      ulidx:
+        specifier: ^2.4.1
+        version: 2.4.1
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -1334,6 +1337,9 @@ packages:
       ws:
         optional: true
 
+  layerr@3.0.0:
+    resolution: {integrity: sha512-tv754Ki2dXpPVApOrjTyRo4/QegVb9eVFq4mjqp4+NM5NaX7syQvN5BBNfV/ZpAHCEHV24XdUVrBAoka4jt3pA==}
+
   lazystream@1.0.1:
     resolution: {integrity: sha512-b94GiNHQNy6JNTrt5w6zNyffMrNkXZb3KTkCZJb2V1xaEGCk093vkZ2jk3tpaeP33/OiXC+WvK9AxUebnf5nbw==}
     engines: {node: '>= 0.6.3'}
@@ -1924,6 +1930,10 @@ packages:
     resolution: {integrity: sha512-bGdAIrZ0wiGDo5l8c++HWtbaNCWTS4UTv7RaTH/ThVIgjkveJt83m74bBHMJkuCbslY8ixgLBVZJIOiQlQTjfQ==}
     engines: {node: '>=14.17'}
     hasBin: true
+
+  ulidx@2.4.1:
+    resolution: {integrity: sha512-xY7c8LPyzvhvew0Fn+Ek3wBC9STZAuDI/Y5andCKi9AX6/jvfaX45PhsDX8oxgPL0YFp0Jhr8qWMbS/p9375Xg==}
+    engines: {node: '>=16'}
 
   undici-types@5.26.5:
     resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
@@ -3276,6 +3286,8 @@ snapshots:
     optionalDependencies:
       ws: 8.20.0
 
+  layerr@3.0.0: {}
+
   lazystream@1.0.1:
     dependencies:
       readable-stream: 2.3.8
@@ -3858,6 +3870,10 @@ snapshots:
       mime-types: 3.0.2
 
   typescript@6.0.2: {}
+
+  ulidx@2.4.1:
+    dependencies:
+      layerr: 3.0.0
 
   undici-types@5.26.5: {}
 
