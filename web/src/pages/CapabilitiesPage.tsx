@@ -1,8 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message, Tooltip, theme } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
-import { getCapabilities, createCapability, updateCapability, updateCapabilitySystemPrompt, resetCapabilitySystemPrompt } from '../api/capabilities'
+import {
+  getCapabilities,
+  createCapability,
+  updateCapability,
+  updateCapabilitySystemPrompt,
+  resetCapabilitySystemPrompt,
+  updateCapabilityPipelineBinding,
+} from '../api/capabilities'
 import type { Capability } from '../api/capabilities'
+import { getTestPipelines } from '../api/test-pipelines'
+import type { TestPipeline } from '../types'
 
 const categoryColors: Record<string, string> = {
   query: 'blue', action: 'orange', admin: 'red',
@@ -16,18 +25,27 @@ const categoryLabels: Record<string, string> = {
 export default function CapabilitiesPage() {
   const { token } = theme.useToken()
   const [data, setData] = useState<Capability[]>([])
+  const [pipelines, setPipelines] = useState<TestPipeline[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Capability | null>(null)
   const [form] = Form.useForm()
   const [promptValue, setPromptValue] = useState('')
   const [promptModified, setPromptModified] = useState(false)
+  const [pipelineBindingDirty, setPipelineBindingDirty] = useState(false)
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    loadPipelines()
+  }, [])
 
   async function load() {
     setLoading(true)
     try { setData(await getCapabilities()) } finally { setLoading(false) }
+  }
+
+  async function loadPipelines() {
+    try { setPipelines(await getTestPipelines()) } catch { /* ignore */ }
   }
 
   function openCreate() {
@@ -35,6 +53,7 @@ export default function CapabilitiesPage() {
     form.resetFields()
     setPromptValue('')
     setPromptModified(false)
+    setPipelineBindingDirty(false)
     setModalOpen(true)
   }
 
@@ -43,6 +62,7 @@ export default function CapabilitiesPage() {
     form.setFieldsValue({ ...record })
     setPromptValue(record.systemPrompt ?? '')
     setPromptModified(false)
+    setPipelineBindingDirty(false)
     setModalOpen(true)
   }
 
@@ -50,9 +70,16 @@ export default function CapabilitiesPage() {
     const values = await form.validateFields()
     try {
       if (editing) {
-        await updateCapability(editing.id, values)
+        const { defaultPipelineId, ...rest } = values
+        await updateCapability(editing.id, rest)
         if (promptModified) {
           await updateCapabilitySystemPrompt(editing.id, promptValue)
+        }
+        if (pipelineBindingDirty) {
+          const next = defaultPipelineId === undefined || defaultPipelineId === null
+            ? null
+            : Number(defaultPipelineId)
+          await updateCapabilityPipelineBinding(editing.id, next)
         }
         message.success('更新成功')
       } else {
@@ -156,6 +183,27 @@ export default function CapabilitiesPage() {
           <Form.Item name="needsApproval" label="需审批" valuePropName="checked" initialValue={false}>
             <Switch checkedChildren="是" unCheckedChildren="否" />
           </Form.Item>
+          {editing && (
+            <Form.Item
+              name="defaultPipelineId"
+              label={
+                <Space>
+                  <span>默认 Pipeline（IM 触发）</span>
+                  <Tooltip title="绑定后，IM 中触发此能力将启动对应 pipeline（通常首节点为参数澄清），具备审批/容错/回滚能力。未绑定则走 Agent 直接处理。">
+                    <Tag color="blue">说明</Tag>
+                  </Tooltip>
+                </Space>
+              }
+            >
+              <Select
+                allowClear
+                placeholder="未绑定 — 走 Agent 直接处理"
+                options={pipelines.map(p => ({ value: p.id, label: p.name }))}
+                onChange={() => setPipelineBindingDirty(true)}
+                onClear={() => setPipelineBindingDirty(true)}
+              />
+            </Form.Item>
+          )}
           {editing && (
             <Form.Item label={
               <Space>

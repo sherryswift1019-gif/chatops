@@ -1,5 +1,12 @@
 import type { FastifyInstance } from 'fastify'
-import { listCapabilities, createCapability, updateCapability, updateCapabilitySystemPrompt, resetCapabilitySystemPrompt } from '../../db/repositories/capabilities.js'
+import {
+  listCapabilities,
+  createCapability,
+  updateCapability,
+  updateCapabilitySystemPrompt,
+  resetCapabilitySystemPrompt,
+  updateCapabilityPipelineBinding,
+} from '../../db/repositories/capabilities.js'
 
 export async function registerCapabilityRoutes(app: FastifyInstance): Promise<void> {
   app.get('/capabilities', async (_req, reply) => {
@@ -44,6 +51,19 @@ export async function registerCapabilityRoutes(app: FastifyInstance): Promise<vo
   app.post<{ Params: { id: string } }>(
     '/capabilities/:id/system-prompt/reset', async (req, reply) => {
       const item = await resetCapabilitySystemPrompt(Number(req.params.id))
+      if (!item) return reply.status(404).send({ error: 'not found' })
+      return reply.send(item)
+    }
+  )
+
+  // 绑定/解绑 IM 触发时默认启动的 Pipeline
+  app.put<{ Params: { id: string }; Body: { pipelineId: number | null } }>(
+    '/capabilities/:id/pipeline-binding', async (req, reply) => {
+      const { pipelineId } = req.body
+      if (pipelineId !== null && typeof pipelineId !== 'number') {
+        return reply.status(400).send({ error: 'pipelineId must be number or null' })
+      }
+      const item = await updateCapabilityPipelineBinding(Number(req.params.id), pipelineId)
       if (!item) return reply.status(404).send({ error: 'not found' })
       return reply.send(item)
     }
