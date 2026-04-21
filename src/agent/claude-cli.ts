@@ -21,8 +21,10 @@ export async function runClaudeCli(opts: {
   timeoutMs?: number
   onEvent?: EventCallback
   signal?: AbortSignal
+  /** Claude 子进程工作目录；传值时 Glob/Grep/Read 以此为根（如 worktree.path）。未传时用 tmpDir。 */
+  cwd?: string
 }): Promise<string> {
-  const { prompt, allowedTools = 'Read,Glob,Grep', timeoutMs = 5 * 60_000, onEvent, signal } = opts
+  const { prompt, allowedTools = 'Read,Glob,Grep', timeoutMs = 5 * 60_000, onEvent, signal, cwd } = opts
 
   // 如果外部已取消，直接拒绝
   if (signal?.aborted) {
@@ -41,7 +43,7 @@ export async function runClaudeCli(opts: {
 [[ -f ~/.zshrc ]] && source ~/.zshrc
 [[ -f ~/.bashrc ]] && source ~/.bashrc
 
-cd "${tmpDir}"
+cd "${cwd ?? tmpDir}"
 unset CLAUDECODE
 PROMPT=$(cat "${promptPath}")
 claude -p "$PROMPT" --allowed-tools "${allowedTools}" --output-format stream-json --verbose < /dev/null
@@ -56,7 +58,7 @@ claude -p "$PROMPT" --allowed-tools "${allowedTools}" --output-format stream-jso
     let toolCallCount = 0
 
     const child = spawn('bash', ['-l', scriptPath], {
-      cwd: tmpDir,
+      cwd: cwd ?? tmpDir,
       env: process.env,
     })
 

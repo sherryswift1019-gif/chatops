@@ -17,6 +17,7 @@ import {
   findByReportCode,
   findLatest,
 } from '../../db/repositories/bug-fix-events.js'
+import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { runClaudeReview } from './claude-review.js'
 import { gitlabPostMrNote, gitlabUpdateMrLabels } from './gitlab-mr-note.js'
 
@@ -24,6 +25,11 @@ export async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResul
   const reportId = Number(opts.extraParams?.reportId)
   if (!reportId) {
     return { success: false, error: 'missing_reportId', output: '参数错误: 缺少 reportId' }
+  }
+
+  const report = await getBugAnalysisReportById(reportId)
+  if (!report) {
+    return { success: false, error: 'report_not_found', output: `报告 ${reportId} 不存在` }
   }
 
   const createMrEvents = await findByReportCode(reportId, 'create_mr')
@@ -38,7 +44,14 @@ export async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResul
 
   for (const mrEvent of successMrs) {
     const projectPath = mrEvent.projectPath as string
-    const mrIid = (mrEvent.data as Record<string, unknown>).mrIid as number
+    const data = (mrEvent.data ?? {}) as Record<string, unknown>
+    const mrIid = data.mrIid as number
+    const fixBranch = typeof data.branch === 'string' ? data.branch : ''
+
+    if (!fixBranch) {
+      failures.push(`${projectPath}#${mrIid}: create_mr 事件 data.branch 缺失，无法 acquire worktree`)
+      continue
+    }
 
     // 幂等检查：若已有 ai_review 成功事件则跳过
     const existing = await findLatest(reportId, projectPath, 'ai_review')
@@ -49,7 +62,13 @@ export async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResul
     }
 
     try {
-      const review = await runClaudeReview({ projectPath, mrIid, signal: opts.signal })
+      const review = await runClaudeReview({
+        projectPath,
+        mrIid,
+        productLineId: report.productLineId,
+        fixBranch,
+        signal: opts.signal,
+      })
 
       const body = buildReviewNoteBody({
         label: review.label,

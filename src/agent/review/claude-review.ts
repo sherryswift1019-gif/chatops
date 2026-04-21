@@ -2,21 +2,28 @@
  * Claude Review 调用封装（便于单元测试 mock）。
  * 仅供 reviewer.ts 使用。
  *
- * 从 reviewer.ts 抽出，保留原有逻辑：
+ * 执行逻辑：
  *   1. 读 capability systemPrompt
  *   2. 调 GitLab 拉取 MR diff
- *   3. 拼 prompt 调 claude CLI
- *   4. 解析输出判定 label
+ *   3. acquire worktree（fix 分支）——让 Claude 能 Grep/Read 完整代码库，不只看 diff
+ *   4. 拼 prompt，executor.run(cwd=worktree.path)
+ *   5. 解析输出判定 label，finally release worktree
  */
 import axios from 'axios'
 import { mask } from '../masking/sensitive-info.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { getClaudeExecutor } from '../claude-executor.js'
+import { acquire, release, makeWorktreeKey } from '../worktree/manager.js'
+import { projectPathToGitUrl } from '../fix/fix-logic.js'
 import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
 
 export interface RunClaudeReviewInput {
   projectPath: string
   mrIid: number
+  /** 产品线 id，用于 worktree acquire 的 product 命名 */
+  productLineId: number
+  /** fix 分支名（create_mr 事件 data.branch），worktree checkout 到此分支让 Claude 看到修改后代码 */
+  fixBranch: string
   signal?: AbortSignal
 }
 
@@ -46,7 +53,7 @@ export async function runClaudeReview(input: RunClaudeReviewInput): Promise<Clau
     )
   }
 
-  const { projectPath, mrIid, signal } = input
+  const { projectPath, mrIid, productLineId, fixBranch, signal } = input
 
   const capabilityRow = await getCapabilityByKey('ai_review_mr')
   if (!capabilityRow?.systemPrompt) {
@@ -64,20 +71,41 @@ export async function runClaudeReview(input: RunClaudeReviewInput): Promise<Clau
     throw new Error('无法获取 MR diff')
   }
 
-  const prompt = `${capabilityRow.systemPrompt}\n\nMR !${mrIid}（项目 ${projectPath}）的 diff：\n\n${diffText}`
-
-  const rawOutput = await getClaudeExecutor().run({
-    prompt,
-    allowedTools: 'Read,Glob,Grep',
-    timeoutMs: 5 * 60_000,
-    onEvent: (e) => console.log(`[ReviewAgent] ${e.type}: ${e.message}`),
-    signal,
+  // acquire fix 分支 worktree，让 Claude 能 Grep/Read 完整代码库（不只看 diff）
+  const key = makeWorktreeKey({ productLineId, projectPath, branch: fixBranch })
+  const worktree = await acquire({
+    userId: 'review-agent',
+    product: `pl-${productLineId}`,
+    version: fixBranch,
+    sessionId: `review-${projectPath.replace(/\//g, '-')}-${mrIid}-${key}`,
+    repoUrl: projectPathToGitUrl(projectPath),
+    projectPath,
   })
 
-  const summary = mask(rawOutput)
-  const approved =
-    summary.includes('ai-approved') || summary.includes('可以合并') || summary.includes('无高风险')
-  const label: ClaudeReviewResult['label'] = approved ? 'ai-approved' : 'ai-needs-attention'
+  try {
+    const prompt =
+      `${capabilityRow.systemPrompt}\n\n` +
+      `你的工作目录已切到 **${projectPath}** 仓库的 fix 分支 \`${fixBranch}\`——` +
+      `可用 Glob/Grep/Read 查阅**完整源码**（不限于 diff 范围），` +
+      `特别推荐用来核查被修改函数的其他调用点、继承/实现方、反射引用。\n\n` +
+      `MR !${mrIid}（项目 ${projectPath}）的 diff：\n\n${diffText}`
 
-  return { label, summary }
+    const rawOutput = await getClaudeExecutor().run({
+      prompt,
+      allowedTools: 'Read,Glob,Grep',
+      timeoutMs: 10 * 60_000,
+      onEvent: (e) => console.log(`[ReviewAgent] ${e.type}: ${e.message}`),
+      signal,
+      cwd: worktree.path,
+    })
+
+    const summary = mask(rawOutput)
+    const approved =
+      summary.includes('ai-approved') || summary.includes('可以合并') || summary.includes('无高风险')
+    const label: ClaudeReviewResult['label'] = approved ? 'ai-approved' : 'ai-needs-attention'
+
+    return { label, summary }
+  } finally {
+    release(worktree)
+  }
 }

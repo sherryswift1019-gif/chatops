@@ -26,6 +26,8 @@ export interface RunClaudeOpts {
   timeoutMs?: number
   signal?: AbortSignal
   onEvent?: (e: { type: string; message: string; data?: Record<string, unknown> }) => void
+  /** Claude 子进程工作目录；传值时 Glob/Grep/Read 以此为根（如 worktree.path）。未传时用默认 cwd。 */
+  cwd?: string
 }
 
 export interface ClaudeExecutor {
@@ -41,6 +43,7 @@ export class CliExecutor implements ClaudeExecutor {
       timeoutMs: opts.timeoutMs,
       onEvent: opts.onEvent,
       signal: opts.signal,
+      cwd: opts.cwd,
     })
   }
 }
@@ -86,6 +89,7 @@ export class PorygonExecutor implements ClaudeExecutor {
       prompt: opts.prompt,
       ...(onlyTools ? { onlyTools } : {}),
       ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.cwd ? { cwd: opts.cwd } : {}),
       envVars: claudeEnv,
     })) {
       switch (msg.type) {
