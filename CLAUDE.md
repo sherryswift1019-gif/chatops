@@ -56,6 +56,41 @@ IM 消息 → Adapter(DingTalk/Feishu) → SessionManager → ClaudeRunner → M
                                                                               IM 回复 ← Adapter
 ```
 
+### IM-Driven Pipeline Flow（schema-v13 起）
+
+当 IM 消息触发某 capability 时，若 `capabilities.default_pipeline_id` 非空则走
+Pipeline 路径而非裸 Agent：
+
+```
+IM 消息 → Adapter → SessionManager.handleMessage
+                          │
+                          ├── findImInputWaiter 命中？（已有 pipeline 等输入）
+                          │   └── resumeFromImInput → graph.stream(Command)
+                          │
+                          └── 无 waiter → queue → Agent
+                                                 │
+                          ┌── coordinator.triggerCapability ←─┘
+                          │         │
+                          │         ├── capability.defaultPipelineId != null
+                          │         │   └── runPipeline(triggerType='im',
+                          │         │                   imContext={platform,groupId,userId})
+                          │         │        └── im_input stage interrupt()
+                          │         │             ├── graph-runner 注册 im-router waiter
+                          │         │             ├── notifyImGroup 推 prompt 到群
+                          │         │             └── 等下一条 IM 消息 resume
+                          │         │
+                          │         └── 无绑定 → 走旧 handler（零回归）
+```
+
+关键模块：
+- `src/pipeline/im-router.ts` — `(platform, groupId)` ↔ `(runId, stageIndex)` 双向映射
+- `src/pipeline/im-input-agent.ts` — 启发式参数判定（key=value / 单字段 / enum / 取消）
+- `src/pipeline/im-notifier.ts` — pipeline → IM 群消息通道，adapter 启动时注册 sender
+- `src/pipeline/graph-builder.ts:buildImInputNode` — im_input stage 多轮 interrupt 循环
+- `src/pipeline/graph-runner.ts:resumeFromImInput` — 带 race-winner claim 的 resume 入口
+
+冒烟手册：`docs/smoke-im-pipeline.md`
+
 ### 后端 (`src/`)
 
 - **server.ts** — Fastify 入口，注册适配器、审批网关、管理 API、静态文件服务
