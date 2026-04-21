@@ -92,4 +92,33 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
     if (!deleted) return reply.status(404).send({ error: 'not found' })
     return reply.status(204).send()
   })
+
+  app.get<{ Params: { id: string } }>('/test-pipelines/:id/graph', async (req, reply) => {
+    const id = Number(req.params.id)
+    const pipeline = await getTestPipelineById(id)
+    if (!pipeline) return reply.status(404).send({ error: 'not found' })
+    const { linearizeStages } = await import('../../pipeline/graph-migration.js')
+    const graph = pipeline.graph ?? linearizeStages(pipeline.stages as any)
+    return reply.send(graph)
+  })
+
+  app.put<{ Params: { id: string }; Body: { graph?: unknown } }>('/test-pipelines/:id/graph', async (req, reply) => {
+    const id = Number(req.params.id)
+    const existing = await getTestPipelineById(id)
+    if (!existing) return reply.status(404).send({ error: 'not found' })
+
+    const body = req.body
+    if (!body || typeof body !== 'object' || !('graph' in body)) {
+      return reply.status(400).send({ error: 'body.graph required' })
+    }
+    const { validatePipelineGraph } = await import('../../pipeline/graph-validation.js')
+    const result = validatePipelineGraph(body.graph as any)
+    if (!result.ok) {
+      return reply.status(400).send({ error: 'invalid graph', details: result.errors })
+    }
+
+    const { setPipelineGraph } = await import('../../db/repositories/test-pipelines.js')
+    const saved = await setPipelineGraph(id, body.graph)
+    return reply.send(saved)
+  })
 }
