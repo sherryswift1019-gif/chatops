@@ -12,7 +12,12 @@ export default function ProductKnowledgePage() {
   const [editing, setEditing] = useState(false)
   const [form] = Form.useForm()
 
-  useEffect(() => { getProductLines().then(setProductLines) }, [])
+  useEffect(() => {
+    getProductLines().then(list => {
+      setProductLines(list)
+      setSelectedPL(prev => prev ?? list[0]?.id)
+    })
+  }, [])
 
   useEffect(() => { if (selectedPL) load() }, [selectedPL])
 

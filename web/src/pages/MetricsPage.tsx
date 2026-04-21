@@ -20,7 +20,12 @@ export default function MetricsPage() {
   const [rootCauses, setRootCauses] = useState<{ root_cause_type: string; count: number }[]>([])
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => { getProductLines().then(setProductLines) }, [])
+  useEffect(() => {
+    getProductLines().then(list => {
+      setProductLines(list)
+      setSelectedPL(prev => prev ?? list[0]?.id)
+    })
+  }, [])
 
   useEffect(() => { if (selectedPL) load() }, [selectedPL])
 
