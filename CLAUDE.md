@@ -56,7 +56,7 @@ IM 消息 → Adapter(DingTalk/Feishu) → SessionManager → ClaudeRunner → M
                                                                               IM 回复 ← Adapter
 ```
 
-### IM-Driven Pipeline Flow（schema-v15 起）
+### IM-Driven Pipeline Flow（schema-v17 起）
 
 当 IM 消息触发某 capability 时，若 `capabilities.default_pipeline_id` 非空则走
 Pipeline 路径而非裸 Agent：

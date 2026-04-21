@@ -40,11 +40,11 @@ await pool.query(schemaV10)
 const schemaV11 = readFileSync(join(__dirname, 'schema-v11.sql'), 'utf8')
 await pool.query(schemaV11)
 
-const schemaV14 = readFileSync(join(__dirname, 'schema-v14.sql'), 'utf8')
+const schemaV14 = readFileSync(join(__dirname, 'schema-v16.sql'), 'utf8')
 await pool.query(schemaV14)
 
-const schemaV15 = readFileSync(join(__dirname, 'schema-v15.sql'), 'utf8')
+const schemaV15 = readFileSync(join(__dirname, 'schema-v17.sql'), 'utf8')
 await pool.query(schemaV15)
 
 await pool.end()
-console.log('✅ Database schema applied (v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11 + v14 + v15)')
+console.log('✅ Database schema applied (v1..v11 + v16 + v17; merge main 后还会接上 v12/v13/v14/v15)')
