@@ -246,6 +246,8 @@ async function main(): Promise<void> {
         return
       }
 
+      console.log(`[Card] 审批回调路由: taskId=${taskId} decision=${decision} approver=${approverId}`)
+
       // Route pipeline approval callbacks
       try {
         const mgr = PipelineApprovalManager.getInstance()
@@ -323,7 +325,7 @@ async function main(): Promise<void> {
     await app.register(fastifyStatic, {
       root: webDistPath,
       prefix: '/',
-      wildcard: false,
+      wildcard: true,
     })
 
     // SPA fallback: non-API GET requests return index.html
