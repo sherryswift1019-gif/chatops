@@ -19,6 +19,7 @@ import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
 import { initGraphRunnerDispatchers } from './pipeline/graph-runner.js'
+import { registerImSender } from './pipeline/im-notifier.js'
 
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
@@ -92,6 +93,13 @@ async function main(): Promise<void> {
   const gate = new ApprovalGate(adapters)
   await gate.initialize()
   setApprovalGate(gate)
+
+  // Register IM senders so pipeline im-notifier can push prompts/progress.
+  for (const adapter of adapters) {
+    registerImSender(adapter.platform, async (groupId, text) => {
+      await adapter.sendMessage({ type: 'group', id: groupId }, { text })
+    })
+  }
 
   // Claude runner
   const runner = new ClaudeRunner()
