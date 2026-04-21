@@ -147,9 +147,10 @@ describe('AC6: reanalyze 决策 → 新一轮分析', () => {
     })
   })
 
-  it('approval decision=retry_analysis → 触发新 analyze_bug 且 issue_id 相同', async () => {
-    // 第一次审批返回 retry_analysis，触发 coordinator 内部自动重新分析
-    vi.spyOn(PipelineApprovalManager.prototype, 'requestApproval').mockResolvedValue('retry_analysis')
+  it.skip('approval decision=retry_analysis → 触发新 analyze_bug 且 issue_id 相同', async () => {
+    // 跳过：main 的 LangGraph 改造里 ApprovalDecision 已移除 retry_analysis（只剩 approved/rejected）。
+    // reanalyze 语义需要走新机制（如独立的 capability 或群命令接入），重新补测再启用此 case。
+    vi.spyOn(PipelineApprovalManager.prototype, 'requestApproval').mockResolvedValue('rejected' as any)
 
     const analyzerResult = await handleAnalyzeBug({
       capabilityKey: 'analyze_bug',

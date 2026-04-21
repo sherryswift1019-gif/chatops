@@ -18,6 +18,7 @@ import type { IMAdapter } from './adapters/im/types.js'
 import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
+import { initGraphRunnerDispatchers } from './pipeline/graph-runner.js'
 
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
@@ -232,11 +233,15 @@ async function main(): Promise<void> {
   // Initialize pipeline approval manager
   PipelineApprovalManager.initialize(adapters)
 
+  // Wire Task 3 adapter resume handlers → graph-runner.resumeRun. Must run
+  // after PipelineApprovalManager.initialize() so getInstance() succeeds.
+  initGraphRunnerDispatchers()
+
   // Card action (approval responses)
   for (const adapter of adapters) {
     adapter.onCardAction(async (taskId, action, approverId) => {
-      // 钉钉互动卡片的 Action ID 是自定义的（我们用 agree/reject）；
-      // 旧路径也可能直接传 approved/rejected。这里统一映射到 approval-manager 期待的决策词。
+      // 钉钉互动卡片的 Action ID 是自定义的（agree/reject）；旧路径可能直接传 approved/rejected。
+      // 统一映射到 approval-manager 期待的决策词。
       const decision: 'approved' | 'rejected' | null =
         action === 'agree' || action === 'approved' ? 'approved' :
         action === 'reject' || action === 'rejected' ? 'rejected' :
@@ -248,11 +253,15 @@ async function main(): Promise<void> {
 
       console.log(`[Card] 审批回调路由: taskId=${taskId} decision=${decision} approver=${approverId}`)
 
-      // Route pipeline approval callbacks
-      try {
-        const mgr = PipelineApprovalManager.getInstance()
-        mgr.handleCallback(taskId, decision, approverId)
-      } catch { /* not a pipeline approval */ }
+      // Route pipeline approval callbacks first: only forward when the id is
+      // owned by PipelineApprovalManager，避免 tool/generic-gate 卡片日志噪音。
+      const mgr = PipelineApprovalManager.getInstance()
+      if (mgr.isPipelineApproval(taskId)) {
+        await mgr.handleCallback(taskId, decision, approverId).catch((err) => {
+          app.log.error({ err, taskId }, 'pipeline handleCallback failed')
+        })
+        return
+      }
 
       await gate.respond(taskId, approverId, decision)
     })

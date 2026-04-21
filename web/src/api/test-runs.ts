@@ -28,3 +28,15 @@ export const triggerTestRun = (body: {
   runtimeVars?: Record<string, string>
 }) =>
   client.post<{ runId: number; message: string }>('/test-runs', body).then(r => r.data)
+
+export interface ResumeTestRunBody {
+  approval?: 'approved' | 'rejected' | 'timeout'
+  webhookData?: unknown
+  webhookTimeout?: true
+}
+
+export const resumeTestRun = (id: number, body: ResumeTestRunBody) =>
+  client.post<{ ok: boolean; resumed: boolean; interruptType: 'approval' | 'webhook' }>(
+    `/test-runs/${id}/resume`,
+    body
+  ).then(r => r.data)

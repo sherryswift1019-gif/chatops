@@ -2,6 +2,7 @@ import { registerTool } from './index.js'
 import { getFreshImages, upsertImageCache } from '../../db/repositories/image-cache.js'
 import { getConfig } from '../../db/repositories/system-config.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
+import { findProjectByName } from './ssh-utils.js'
 import axios from 'axios'
 import https from 'https'
 import { appendFileSync } from 'fs'
@@ -50,9 +51,7 @@ const listImagesTool: AgentTool = {
       toolLog(`listProjects ERROR: ${String(err)}`)
       return { success: false, output: `数据库查询模块失败: ${String(err)}` }
     }
-    const projectRecord = allProjects.find(p =>
-      p.name === project || p.displayName === project || p.harborProject === project
-    )
+    const projectRecord = findProjectByName(allProjects, project)
     const harborProject = projectRecord?.harborProject || project
     toolLog(`Matching: input="${project}" → matched=${projectRecord?.name ?? 'NONE'} → harborProject="${harborProject}"`)
 

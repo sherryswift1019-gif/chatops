@@ -83,10 +83,10 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
     if (issueIid === undefined || !decision) {
       return reply.status(400).send({ error: 'issueIid and decision required' })
     }
-    const { PipelineApprovalManager } = await import('../../pipeline/approval-manager.js')
-    const mgr = PipelineApprovalManager.getInstance()
-    const handled = mgr.tryHandleCommand(`${decision} #${issueIid}`)
-    return reply.send({ ok: true, handled })
+    // 原 tryHandleCommand 路径在 main 的 LangGraph 改造里已移除。
+    // 此 e2e endpoint 保留占位，始终返回 handled: false 让依赖它的测试暴露（改走卡片回调路径）。
+    console.log(`[e2e/approval-command] path deprecated, decision=${decision} issueIid=${issueIid}`)
+    return reply.send({ ok: true, handled: false, deprecated: true })
   })
 
   /**
@@ -122,18 +122,11 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
       return reply.status(400).send({ error: 'text, groupId, userId required' })
     }
 
-    // 复现 ClaudeRunner.run() Step 0 的 cleanedForApproval + tryHandleCommand
+    // 复现 ClaudeRunner.run() Step 0 的 cleanedForApproval + 命令处理。
+    // tryHandleCommand 在 main 的 LangGraph 改造里移除，保留占位返回 handled: false。
     const cleanedText = text.replace(/@[\u4e00-\u9fff]+/g, '').trim()
-    let handled = false
-    try {
-      const { PipelineApprovalManager } = await import('../../pipeline/approval-manager.js')
-      const mgr = PipelineApprovalManager.getInstance()
-      handled = mgr.tryHandleCommand(cleanedText)
-    } catch (err) {
-      console.log('[e2e/im/incoming] tryHandleCommand err:', err instanceof Error ? err.message : err)
-    }
-
-    return reply.send({ ok: true, handled, cleanedText })
+    const handled = false
+    return reply.send({ ok: true, handled, cleanedText, deprecated: true })
   })
 
   /**

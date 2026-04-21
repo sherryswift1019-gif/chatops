@@ -106,7 +106,7 @@ export interface TestRun {
 }
 
 export interface StageResult {
-  name: string; type: string; status: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
+  name: string; type: string; status: 'pending' | 'running' | 'waiting' | 'success' | 'failed' | 'skipped'
   startedAt?: string; finishedAt?: string; durationMs?: number; output?: string; error?: string
   aiAnalysis?: string
 }

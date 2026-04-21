@@ -188,24 +188,8 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 0: 拦截审批命令（approve/reject/reanalyze）
-      //   先用纯函数 parseApprovalCommand 做快速识别（支持单测覆盖），
-      //   识别为命令再调 approval-manager.tryHandleCommand 去匹配 pending。
-      const cleanedForApproval = prompt.replace(/@[\u4e00-\u9fff]+/g, '').trim()
-      try {
-        const { parseApprovalCommand } = await import('../pipeline/approval-command-parser.js')
-        const parsed = parseApprovalCommand(cleanedForApproval)
-        if (parsed) {
-          const { PipelineApprovalManager } = await import('../pipeline/approval-manager.js')
-          const mgr = PipelineApprovalManager.getInstance()
-          if (mgr.tryHandleCommand(cleanedForApproval)) {
-            await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: '审批已处理 ✅', atDingtalkIds: atIds } as any)
-            return
-          }
-        }
-      } catch (err) {
-        console.log('[Runner] approval command check skipped:', err instanceof Error ? err.message : '')
-      }
+      // Step 0: 群内审批命令路径已下线（main 的 LangGraph 改造把 approval-manager.tryHandleCommand 移除）。
+      //   现走钉钉互动卡片按钮 → TOPIC_CARD → server.ts onCardAction → handleCallback 链路。
 
       // Step 0b: 从消息文本提取 project 和 branch
       // 约定格式：[@机器人] 项目 分支 问题描述

@@ -6,7 +6,7 @@ import { listProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../../db/repositories/environments-repo.js'
 import { getConfig } from '../../db/repositories/system-config.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
-import { resolveSSHConfig, resolveComposeFile } from './ssh-utils.js'
+import { resolveSSHConfig, resolveComposeFile, findProjectByName, findEnvByName } from './ssh-utils.js'
 import { appendFileSync } from 'fs'
 import axios from 'axios'
 import https from 'https'
@@ -50,11 +50,11 @@ function sshExec(config: { host: string; port?: number; username: string; passwo
 
 async function lookupProjectAndEnv(projectName: string, envName: string) {
   const projects = await listProjects()
-  const project = projects.find(p => p.name === projectName || p.displayName === projectName)
+  const project = findProjectByName(projects, projectName)
   if (!project) throw new Error(`模块 "${projectName}" 未在数据库中注册`)
 
   const envs = await listEnvironments()
-  const env = envs.find(e => e.name === envName || e.displayName === envName)
+  const env = findEnvByName(envs, envName)
   if (!env) throw new Error(`环境 "${envName}" 未定义`)
 
   const plEnvs = await listProductLineEnvs(project.productLineId)
@@ -214,11 +214,13 @@ const deployTool: AgentTool = {
             `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
             `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
             `$COMPOSE_CMD -f '${composeFile}' stop ${containerName} || true`,
-            // 备份当前版本用于回滚
+            // 备份当前版本用于回滚（带前缀 + 本地短名都备份）
             `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+            `docker tag ${containerName}:latest ${containerName}:prev 2>/dev/null || true`,
             `docker rmi ${latestImage} 2>/dev/null || true`,
             `docker pull ${fullImage}`,
             `docker tag ${fullImage} ${latestImage}`,
+            `docker tag ${fullImage} ${containerName}:latest`,
             `$COMPOSE_CMD -f '${composeFile}' up -d ${containerName}`,
             // 清理多余镜像（只保留 :latest 和 :prev）
             `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
@@ -229,11 +231,13 @@ const deployTool: AgentTool = {
             `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
             `docker stop ${containerName} || true`,
             `docker rm ${containerName} || true`,
-            // 备份当前版本用于回滚
+            // 备份当前版本用于回滚（带前缀 + 本地短名都备份）
             `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+            `docker tag ${containerName}:latest ${containerName}:prev 2>/dev/null || true`,
             `docker rmi ${latestImage} 2>/dev/null || true`,
             `docker pull ${fullImage}`,
             `docker tag ${fullImage} ${latestImage}`,
+            `docker tag ${fullImage} ${containerName}:latest`,
             `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
             // 清理多余镜像
             `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
@@ -336,11 +340,16 @@ const rollbackTool: AgentTool = {
           commands = [
             `COMPOSE_CMD=$(docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")`,
             `docker inspect ${prevImage} >/dev/null 2>&1 || (echo "NO_PREV" && exit 1)`,
-            // 交换 :latest ↔ :prev
+            // 交换 :latest ↔ :prev（带前缀）
             `docker tag ${latestImage} ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
             `docker tag ${prevImage} ${latestImage}`,
             `docker tag ${registryHost}/${harborProject}:rollback_tmp ${prevImage} 2>/dev/null || true`,
             `docker rmi ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
+            // 同步交换本地短名 :latest ↔ :prev
+            `docker tag ${containerName}:latest ${containerName}:rollback_tmp 2>/dev/null || true`,
+            `docker tag ${containerName}:prev ${containerName}:latest 2>/dev/null || docker tag ${latestImage} ${containerName}:latest`,
+            `docker tag ${containerName}:rollback_tmp ${containerName}:prev 2>/dev/null || true`,
+            `docker rmi ${containerName}:rollback_tmp 2>/dev/null || true`,
             `$COMPOSE_CMD -f '${composeFile}' up -d ${containerName}`,
           ].join(' && ')
         } else {
@@ -350,6 +359,11 @@ const rollbackTool: AgentTool = {
             `docker tag ${prevImage} ${latestImage}`,
             `docker tag ${registryHost}/${harborProject}:rollback_tmp ${prevImage} 2>/dev/null || true`,
             `docker rmi ${registryHost}/${harborProject}:rollback_tmp 2>/dev/null || true`,
+            // 同步交换本地短名 :latest ↔ :prev
+            `docker tag ${containerName}:latest ${containerName}:rollback_tmp 2>/dev/null || true`,
+            `docker tag ${containerName}:prev ${containerName}:latest 2>/dev/null || docker tag ${latestImage} ${containerName}:latest`,
+            `docker tag ${containerName}:rollback_tmp ${containerName}:prev 2>/dev/null || true`,
+            `docker rmi ${containerName}:rollback_tmp 2>/dev/null || true`,
             `docker stop ${containerName} || true`,
             `docker rm ${containerName} || true`,
             `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
@@ -390,9 +404,11 @@ const rollbackTool: AgentTool = {
           `docker login -u '${harborUser}' -p '${harborPass}' ${registryHost}`,
           `$COMPOSE_CMD -f '${composeFile}' stop ${containerName} || true`,
           `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+          `docker tag ${containerName}:latest ${containerName}:prev 2>/dev/null || true`,
           `docker rmi ${latestImage} 2>/dev/null || true`,
           `docker pull ${fullImage}`,
           `docker tag ${fullImage} ${latestImage}`,
+          `docker tag ${fullImage} ${containerName}:latest`,
           `$COMPOSE_CMD -f '${composeFile}' up -d ${containerName}`,
           `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
         ].join(' && ')
@@ -402,9 +418,11 @@ const rollbackTool: AgentTool = {
           `docker stop ${containerName} || true`,
           `docker rm ${containerName} || true`,
           `docker tag ${latestImage} ${prevImage} 2>/dev/null || true`,
+          `docker tag ${containerName}:latest ${containerName}:prev 2>/dev/null || true`,
           `docker rmi ${latestImage} 2>/dev/null || true`,
           `docker pull ${fullImage}`,
           `docker tag ${fullImage} ${latestImage}`,
+          `docker tag ${fullImage} ${containerName}:latest`,
           `docker run -d --name ${containerName} --restart unless-stopped ${latestImage}`,
           `docker images ${repoPath} --format '{{.Repository}}:{{.Tag}}' | grep -v ':latest$' | grep -v ':prev$' | grep -v '<none>' | xargs -r docker rmi 2>/dev/null || true`,
         ].join(' && ')

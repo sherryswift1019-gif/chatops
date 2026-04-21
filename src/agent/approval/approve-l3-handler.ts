@@ -120,11 +120,12 @@ export async function handleApproveL3(opts: TriggerOptions): Promise<TriggerResu
         })
     }
 
+    // 注意：main 的 LangGraph 改造里 requestApproval 已 throw "legacy API removed"。
+    // 这里保留旧签名供编译通过，运行时会走 graph-runner 的 approval stage（见 TODO §11）。
     const decision = await mgr.requestApproval(
       [primaryOwnerId],
       description,
       timeoutMs,
-      String(report.issueId),
     )
 
     await createEvent({

@@ -1,6 +1,7 @@
 import { registerTool } from './index.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
+import { findProjectByName } from './ssh-utils.js'
 import axios from 'axios'
 import https from 'https'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
@@ -22,7 +23,7 @@ const getGitLabCommitsTool: AgentTool = {
     const { project: projectName, limit = 10, since } = params as { project: string; limit?: number; since?: string }
     try {
       const projects = await listProjects()
-      const projectRecord = projects.find(p => p.name === projectName || p.displayName === projectName)
+      const projectRecord = findProjectByName(projects, projectName)
       const gitlabPath = projectRecord?.gitlabPath || projectName
 
       const gitlab = await resolveGitlabConfig()
