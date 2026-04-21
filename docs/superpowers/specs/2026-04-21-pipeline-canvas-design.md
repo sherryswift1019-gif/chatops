@@ -47,7 +47,7 @@
 
 ### 4.1 PipelineGraph
 
-新增 `pipelines.graph JSONB` 列：
+新增 `test_pipelines.graph JSONB` 列（注：实际表名 `test_pipelines`，domain 层口径 "pipeline"）：
 
 ```ts
 interface PipelineGraph {
@@ -82,11 +82,11 @@ type ConditionSpec =
 新增 `src/db/schema-v12.sql`（幂等）：
 
 ```sql
-ALTER TABLE pipelines
+ALTER TABLE test_pipelines
   ADD COLUMN IF NOT EXISTS graph JSONB;
 
--- 新增: 校验 graph 必须包含 START 入口（画布保存时后端校验，此处不做 CHECK 约束）
-COMMENT ON COLUMN pipelines.graph IS
+-- 新增: 校验 graph 必须包含入口（画布保存时后端校验，此处不做 CHECK 约束）
+COMMENT ON COLUMN test_pipelines.graph IS
   '可视化画布的 DAG 定义。为空时 runtime 自动将 stages 列当作线性图读取。';
 ```
 
