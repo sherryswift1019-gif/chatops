@@ -420,6 +420,9 @@ export function buildGraphFromPipeline(
         builder = builder.addNode(name, buildApprovalNode(node, i)); break
       case 'wait_webhook':
         builder = builder.addNode(name, buildWaitWebhookNode(node, i)); break
+      case 'im_input':
+        // Handler 在 Task 6 实现。此处占位避免 exhaustive check 报错。
+        throw new Error('im_input stage not yet implemented (Task 6)')
       default: {
         const unknown: never = node.stageType
         throw new Error(`Unsupported stage type: ${String(unknown)}`)

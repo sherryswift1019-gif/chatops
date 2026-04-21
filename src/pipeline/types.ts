@@ -1,6 +1,17 @@
+export interface ImInputConfig {
+  /** 首次引导语；支持 {{triggerParams.xxx}}。 */
+  prompt: string
+  /** 需要采集的参数 JSON Schema（至少 properties+required）。 */
+  paramSchema: Record<string, unknown>
+  /** 可选：用于加载 system_prompt / 工具白名单增强 Agent 判定（预留，v1 未用）。 */
+  capabilityKey?: string
+  /** 收集超时（秒），超过则 stage 失败。 */
+  timeoutSeconds?: number
+}
+
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook'
+  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
@@ -16,9 +27,11 @@ export interface StageDefinition {
   capabilityParams?: Record<string, unknown>
   // wait_webhook stage（等待外部 Webhook 恢复）
   webhookTag?: string
+  // im_input stage（IM 对话式参数采集）
+  imInputConfig?: ImInputConfig
 }
 
-export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'capability' | 'wait_webhook' {
+export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input' {
   return stage.stageType ?? 'script'
 }
 
