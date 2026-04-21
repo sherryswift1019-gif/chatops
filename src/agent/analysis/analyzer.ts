@@ -10,6 +10,7 @@ import { getByProductLineId as getKnowledgeRepoByProductLineId } from '../../db/
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { listProjects } from '../../db/repositories/projects-repo.js'
 import { createEvent } from '../../db/repositories/bug-fix-events.js'
+import { getDingTalkUserById } from '../../db/repositories/dingtalk-users.js'
 import { runFilterStage, runDetailStage, mergeDetailResults, type DetailStageOutcome } from './claude-runs.js'
 import {
   gitlabCreateIssue,
@@ -43,6 +44,8 @@ export interface AnalysisOutput {
   solutions: Solution[]
   affected_modules: string[]
   analysis_steps: string[]
+  /** Claude 对 prompt 附图的文字转述；可选，仅当 prompt 含图片时填。 */
+  images_described?: string[]
 }
 
 export function parseAnalysisOutput(text: string): AnalysisOutput | null {
@@ -121,6 +124,77 @@ function buildIssueTitle(summary: string): string {
 /** 计算 reuse 模式的 N（基于已有 create_issue 事件数量）—— 简单记录次数的字符串。 */
 function buildReuseMarker(): string {
   return `🔄 复用 Issue 的再次分析（${new Date().toISOString()}）`
+}
+
+/**
+ * 拼接 Issue 的完整 7 段描述。
+ *
+ * 分工：
+ * - §1 问题描述背景：后端拼（用户原文 / 提问人 / 时间 / 截图转写）
+ * - §2-§6 根因 / 方案 / 影响 / 测试 / 不确定性：Claude markdown 主体（已在 markdownBody 参数里）
+ * - §7 分析步骤：后端从 analysis_steps 折叠成 <details>
+ *
+ * 原文超过 2KB 会用 <details> 折叠，GitLab markdown 原生支持。
+ */
+export function buildIssueDescription(params: {
+  userPrompt: string | undefined
+  senderName: string
+  senderId: string
+  createdAt: Date
+  imagesDescribed: string[] | undefined
+  markdownBody: string
+  analysisSteps: string[]
+}): string {
+  const ts = params.createdAt.toISOString().slice(0, 19).replace('T', ' ')
+  const senderLine = params.senderId
+    ? `**提问人**: @${params.senderName}（钉钉 userId: \`${params.senderId}\`）`
+    : `**提问人**: @${params.senderName}`
+  const LONG_THRESHOLD = 2000
+
+  // 原文段：长则折叠
+  let originalSection: string
+  const userText = params.userPrompt?.trim() ?? ''
+  if (!userText) {
+    originalSection = '### 原文\n\n_（用户未提供具体描述）_'
+  } else if (userText.length <= LONG_THRESHOLD) {
+    const quoted = userText
+      .split('\n')
+      .map(l => `> ${l}`)
+      .join('\n')
+    originalSection = `### 原文\n\n${quoted}`
+  } else {
+    originalSection =
+      `### 原文（较长，已折叠）\n\n` +
+      `<details>\n<summary>展开查看完整原文（${userText.length} 字）</summary>\n\n` +
+      '```\n' +
+      userText +
+      '\n```\n\n' +
+      `</details>`
+  }
+
+  // 截图段：仅当 imagesDescribed 非空
+  const imagesSection =
+    params.imagesDescribed && params.imagesDescribed.length > 0
+      ? `\n\n### 附加截图（AI 视觉转写）\n\n` +
+        params.imagesDescribed.map((d, i) => `- 图${i + 1}: ${d}`).join('\n')
+      : ''
+
+  const section1 =
+    `## 1. 问题描述背景\n\n` +
+    `${senderLine}  \n` +
+    `**时间**: ${ts}\n\n` +
+    `${originalSection}` +
+    `${imagesSection}`
+
+  // §7：分析步骤折叠
+  const section7 =
+    params.analysisSteps.length > 0
+      ? `\n\n<details>\n<summary>§7 AI 分析步骤（点击展开）</summary>\n\n` +
+        params.analysisSteps.map(s => `- ${s}`).join('\n') +
+        `\n\n</details>`
+      : ''
+
+  return `${section1}\n\n---\n\n${params.markdownBody}${section7}`
 }
 
 // C2：reuseIssueId 时同步 Issue body banner。使用 HTML 注释做幂等标记，便于替换。
@@ -326,6 +400,24 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
   const merged = mergeDetailResults(detailRuns)
   const durationMs = Date.now() - startMs
 
+  // ========== 拼接 Issue 的完整 7 段描述 ==========
+  // §1 后端拼（用户原文 + 截图转写）；§2-§6 用 Claude markdown 主体（merged.markdownFull）；
+  // §7 后端从 analysis_steps 折叠生成。
+  const senderUser = context.initiatorId
+    ? await getDingTalkUserById(context.initiatorId).catch(() => null)
+    : null
+  const issueDescription = buildIssueDescription({
+    userPrompt: userMessage,
+    senderName: senderUser?.name ?? context.initiatorId ?? 'unknown',
+    senderId: context.initiatorId ?? '',
+    createdAt: new Date(),
+    imagesDescribed: (merged.metadata as Record<string, unknown>)?.imagesDescribed as
+      | string[]
+      | undefined,
+    markdownBody: merged.markdownFull,
+    analysisSteps: merged.analysisSteps,
+  })
+
   // ========== 创建 Issue（或复用）========== 仅在 classification=bug 时
   let issueIid = 0
   let issueUrl = ''
@@ -334,7 +426,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
   if (merged.classification === 'bug') {
     if (reuseIssueId) {
       // 复用模式：向原 Issue 追加 comment
-      const body = `${buildReuseMarker()}\n\n${merged.markdownFull}`
+      const body = `${buildReuseMarker()}\n\n${issueDescription}`
       const note = await gitlabPostIssueNote({
         projectPath: filterResult.primaryProjectPath,
         issueIid: reuseIssueId,
@@ -360,11 +452,13 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
         )
       }
     } else {
+      const labelList = [`ai-analyzed`, `level-${merged.level}`]
+      if (merged.level === 'l3') labelList.push('needs-review')
       const created = await gitlabCreateIssue({
         projectPath: filterResult.primaryProjectPath,
         title: buildIssueTitle(merged.rootCauseSummary),
-        description: merged.markdownFull,
-        labels: `ai-analyzed,level-${merged.level},needs-analysis`,
+        description: issueDescription,
+        labels: labelList.join(','),
       })
       issueIid = created.iid
       issueUrl = created.url
