@@ -5,6 +5,8 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     setupFiles: ['src/__tests__/helpers/db.ts'],
-    exclude: ['**/node_modules/**', '**/.git/**', '**/.claude/**'],
+    // integration/ 下仍有 PG 依赖测试共享单 schema，并发跑会 DROP SCHEMA 竞态。串行保险。
+    fileParallelism: false,
+    exclude: ['**/node_modules/**', '**/.git/**', '**/.claude/**', '**/mock-e2e/**'],
   },
 })

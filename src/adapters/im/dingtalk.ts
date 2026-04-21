@@ -42,6 +42,7 @@ interface RobotMessage {
         richText?: RichTextItem[]
         downloadCode?: string
         photoURL?: string
+        text?: string  // 纯文本引用时的字段
       } | string
     }
   }
@@ -102,7 +103,6 @@ export class DingTalkAdapter implements IMAdapter {
         void this.handleRobotMessage(res)
       })
       .registerCallbackListener(TOPIC_CARD, (res: DWClientDownStream) => {
-        console.log('[DingTalk] Card callback received:', res.headers.messageId)
         void this.handleCardCallback(res)
       })
   }
@@ -169,12 +169,21 @@ export class DingTalkAdapter implements IMAdapter {
 
   // ── Sending ──────────────────────────────────────────────────────────────
 
-  async sendMessage(target: MessageTarget, content: TextContent): Promise<void> {
+  async sendMessage(target: MessageTarget, content: TextContent & { atDingtalkIds?: string[] }): Promise<void> {
     const webhook = this.getWebhook(target)
-    await axios.post(webhook, {
-      msgtype: 'markdown',
-      markdown: { title: 'ChatOps', text: content.text },
-    })
+    if (content.atDingtalkIds && content.atDingtalkIds.length > 0) {
+      // sessionWebhook + text + at.atDingtalkIds = 蓝色 @ 效果
+      await axios.post(webhook, {
+        msgtype: 'text',
+        text: { content: content.text },
+        at: { atDingtalkIds: content.atDingtalkIds, isAtAll: false },
+      })
+    } else {
+      await axios.post(webhook, {
+        msgtype: 'markdown',
+        markdown: { title: 'ChatOps', text: content.text },
+      })
+    }
   }
 
   async sendCard(target: MessageTarget, card: InteractiveCard): Promise<void> {
@@ -187,27 +196,73 @@ export class DingTalkAdapter implements IMAdapter {
   }
 
   async sendDirectMessage(userId: string, content: TextContent | InteractiveCard): Promise<void> {
+    // 互动卡片分支：走 /v1.0/im/interactiveCards/send
+    if ('actions' in content) {
+      return this.sendInteractiveCard(userId, content as InteractiveCard)
+    }
     const token = await this.getAccessToken()
-    const isCard = 'actions' in content
-    const msgBody = isCard
-      ? {
-          msgtype: 'markdown',
-          markdown: {
-            title: (content as InteractiveCard).title,
-            text: this.cardToMarkdown(content as InteractiveCard),
-          },
-        }
-      : { msgtype: 'text', text: { content: (content as TextContent).text } }
+    const text = (content as TextContent).text
 
     await axios.post(
-      'https://oapi.dingtalk.com/topapi/message/corpconversation/asyncsend_v2',
+      'https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend',
       {
-        agent_id: this.cfg.clientId,
-        userid_list: userId,
-        msg: msgBody,
+        robotCode: this.cfg.clientId,
+        userIds: [userId],
+        msgKey: 'sampleMarkdown',
+        msgParam: JSON.stringify({ title: 'ChatOps 通知', text }),
       },
       { headers: { 'x-acs-dingtalk-access-token': token } }
     )
+    console.log(`[DingTalk] DM sent to ${userId}`)
+  }
+
+  /**
+   * 发送钉钉互动卡片（基于已在钉钉 OA 后台创建的 cardTemplateId）。
+   *
+   * 依赖环境变量 `DINGTALK_L3_CARD_TEMPLATE_ID`。
+   * 用卡片 2.0 API：`/v1.0/card/instances/createAndDeliver`（需权限 `Card.Instance.Write`）。
+   * outTrackId 用 content.callbackData.taskId（保证同一 approval 幂等 + 回调能映射回）。
+   * openSpaceId 用 `dtv1.card//IM_ROBOT.<userId>` 维度投放到机器人 1v1 会话。
+   * cardParamMap 优先用 content.templateParams；未提供则用默认 { title, body }。
+   */
+  private async sendInteractiveCard(userId: string, card: InteractiveCard): Promise<void> {
+    const templateId = process.env.DINGTALK_L3_CARD_TEMPLATE_ID
+    if (!templateId) {
+      // 未配置模板时降级为文字（fallback）
+      console.warn('[DingTalk] DINGTALK_L3_CARD_TEMPLATE_ID 未配置，InteractiveCard 降级为文字')
+      const text = `${card.title}\n\n${card.body}`
+      return this.sendDirectMessage(userId, { text })
+    }
+    const outTrackId = card.callbackData.taskId
+    if (!outTrackId) {
+      throw new Error('[DingTalk] InteractiveCard.callbackData.taskId is required (used as outTrackId)')
+    }
+    const cardParamMap: Record<string, string> = card.templateParams ?? {
+      title: card.title,
+      body: card.body,
+    }
+    const token = await this.getAccessToken()
+    await axios.post(
+      'https://api.dingtalk.com/v1.0/card/instances/createAndDeliver',
+      {
+        userIdType: 1, // 1=企业 userId（默认）；2=unionId
+        cardTemplateId: templateId,
+        outTrackId,
+        callbackType: 'STREAM', // 按钮点击通过 Stream 回传（复用现有 WSS 通道）
+        cardData: { cardParamMap },
+        openSpaceId: `dtv1.card//IM_ROBOT.${userId}`,
+        imRobotOpenSpaceModel: {
+          lastMessageI18n: { ZH_CN: card.title },
+          supportForward: false,
+        },
+        imRobotOpenDeliverModel: {
+          spaceType: 'IM_ROBOT',
+          robotCode: this.cfg.clientId,
+        },
+      },
+      { headers: { 'x-acs-dingtalk-access-token': token } }
+    )
+    console.log(`[DingTalk] InteractiveCard sent to ${userId}, outTrackId=${outTrackId}`)
   }
 
   async getUserInfo(userId: string): Promise<UserInfo> {
@@ -238,33 +293,55 @@ export class DingTalkAdapter implements IMAdapter {
       if (first) this.processedMsgIds.delete(first)
     }
 
-    console.log('[DingTalk] Message from:', msg.senderNick, '| conversationId:', msg.conversationId, '| msgtype:', msg.msgtype)
+    console.log('[DingTalk] 原始消息:', JSON.stringify(msg, null, 2))
 
     // Cache sessionWebhook so we can reply to this conversation later
     if (msg.sessionWebhook) {
       this.webhookCache.set(msg.conversationId, msg.sessionWebhook)
     }
 
-    // ── 提取文本 ──────────────────────────────────────────
+    // ── @ mention 过滤：精确删除 @机器人名（从 conversationTitle 无法拿到，用 robotCode 查不到名字）
+    // 方案：从 atUsers 里找到 chatbotUserId 对应的条目，然后在文本里匹配 @+任意字符直到下一个空格
+    // 但钉钉可能不在 @ 后面加空格。最终方案：不删 @，直接传给 Claude，在 Step 0 里用前几个词提取 project/branch
     let text = ''
     const contentObj = typeof msg.content === 'string' ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : msg.content
 
     if (msg.msgtype === 'richText' && contentObj?.richText) {
-      // richText 图文混排：从 content.richText[] 提取文本
       text = contentObj.richText
         .filter((item: RichTextItem) => item.text || (item.type === 'text' && item.content))
         .map((item: RichTextItem) => item.text || item.content || '')
         .join('')
-        .replace(/@\S+/g, '').trim()
+        .trim()
     } else {
-      text = (msg.text?.content ?? '').replace(/@\S+/g, '').trim()
+      text = (msg.text?.content ?? '').trim()
+    }
+
+    // 钉钉引用回复消息场景：
+    // - 图文混排（文字+图片）：msgtype=text + repliedMsg.content.richText 数组
+    // - 纯文本引用回复：msgtype=text + repliedMsg.content.text 字符串（新增覆盖）
+    // 当 text.content 为空但有 repliedMsg 时，从引用内容提取用户的完整消息
+    const repliedMsg = msg.text?.repliedMsg
+    if (!text && repliedMsg) {
+      const repliedContent = typeof repliedMsg.content === 'string'
+        ? (() => { try { return JSON.parse(repliedMsg.content) } catch { return null } })()
+        : repliedMsg.content
+
+      if (repliedContent?.richText) {
+        text = repliedContent.richText
+          .filter((item: RichTextItem) => (item.msgType === 'text' || item.type === 'text') && item.content)
+          .map((item: RichTextItem) => item.content || '')
+          .join('\n')
+          .trim()
+      } else if (typeof repliedContent?.text === 'string') {
+        // 纯文本引用（钉钉 msgType='text' 时 content.text 是字符串）
+        text = repliedContent.text.trim()
+      }
     }
 
     // ── 提取图片 ──────────────────────────────────────────
     const images: string[] = []
 
-    // 1. 引用回复中的图片（优先级最高，因为用户明确引用了某条消息）
-    const repliedMsg = msg.text?.repliedMsg
+    // 1. repliedMsg 中的图片（图文混排或引用回复）
     if (repliedMsg) {
       const repliedContent = typeof repliedMsg.content === 'string'
         ? (() => { try { return JSON.parse(repliedMsg.content) } catch { return null } })()
@@ -275,11 +352,6 @@ export class DingTalkAdapter implements IMAdapter {
         for (const item of repliedContent.richText) {
           if (item.msgType === 'picture' && item.downloadCode) {
             images.push(item.downloadCode)
-          }
-          // 同时提取引用消息的文本
-          if (item.msgType === 'text' && item.content) {
-            const cleanText = item.content.replace(/@\S+\s*/g, '').trim()
-            if (cleanText) text = cleanText + '\n' + text
           }
         }
       }
@@ -363,13 +435,58 @@ export class DingTalkAdapter implements IMAdapter {
     // ACK
     this.client.send(res.headers.messageId, { status: 'SUCCESS' })
 
-    const callbackData = (data.callbackData ?? data) as Record<string, string>
-    const taskId = callbackData.taskId ?? (data.taskId as string)
-    const action = callbackData.action ?? (data.action as string)
+    // 钉钉 AI 卡片 2.0 回传实测格式（/v1.0/card/instances/callback）：
+    //   {
+    //     outTrackId: "...",                                 ← top-level
+    //     userId: "...",                                     ← top-level
+    //     type: "actionCallback",
+    //     content: "{\"cardPrivateData\":{\"actionIds\":[\"agree\"],\"params\":{\"action\":\"agree\"}}}"
+    //           ↑ 双层 JSON：content 本身是字符串，parse 后 cardPrivateData.actionIds[0] 是按钮 Action ID
+    //   }
+    //
+    // 兼容旧互动卡片格式：callbackData.{taskId, action} 仍解析。
+
+    const taskId =
+      (data.outTrackId as string) ??
+      ((data.callbackData as Record<string, string> | undefined)?.taskId) ??
+      ((data.callbackData as Record<string, string> | undefined)?.outTrackId)
+
     const userId = (data.userId ?? data.operatorUserId) as string
 
+    // 解析 action：先试新版 content JSON，再 fallback 旧 callbackData
+    let action: string | undefined
+    if (typeof data.content === 'string') {
+      try {
+        const content = JSON.parse(data.content) as {
+          cardPrivateData?: { actionIds?: string[]; params?: Record<string, string> }
+        }
+        action = content.cardPrivateData?.actionIds?.[0] ?? content.cardPrivateData?.params?.action
+      } catch {
+        /* content 不是合法 JSON，忽略 */
+      }
+    }
+    if (!action) {
+      const cb = (data.callbackData ?? {}) as Record<string, unknown>
+      const actionObj = (data.action ?? cb.action) as unknown
+      action =
+        (typeof actionObj === 'object' && actionObj !== null
+          ? (actionObj as Record<string, string>).id ??
+            (actionObj as Record<string, string>).key ??
+            (actionObj as Record<string, string>).value
+          : (actionObj as string)) ??
+        (cb.actionId as string) ??
+        (cb.actionKey as string)
+    }
+
     if (taskId && action && userId) {
+      console.log(`[DingTalk] Card callback parsed OK: outTrackId=${taskId} action=${action} userId=${userId}`)
       await this.cardActionHandler?.(taskId, action, userId)
+    } else {
+      console.warn('[DingTalk] handleCardCallback: missing fields', {
+        taskId: !!taskId,
+        action: !!action,
+        userId: !!userId,
+      })
     }
   }
 

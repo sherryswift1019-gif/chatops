@@ -9,9 +9,10 @@ import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
 import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
-import { buildClaudeAuthEnv } from './claude-auth.js'
 import { listEnvironments } from '../db/repositories/environments-repo.js'
 import { buildClaudeEnv } from './claude-config.js'
+import { getConfig } from '../db/repositories/system-config.js'
+import { triggerCapability, maybeCompleteAnalyze } from './coordinator.js'
 import { ApprovalRouter } from '../approval/router.js'
 import { getApprovalRules } from '../db/repositories/approval-rules.js'
 import { acquireLock, releaseLock } from './deploy-lock.js'
@@ -33,6 +34,8 @@ export interface RunOptions {
   productLineId?: number
   lockProject?: string
   lockEnv?: string
+  userName?: string
+  senderDingtalkId?: string
 }
 
 interface DetectedIntent {
@@ -161,8 +164,9 @@ export class ClaudeRunner {
   }
 
   async run(opts: RunOptions): Promise<void> {
-    const { prompt, context, adapter, executionMode = false, productLineId } = opts
+    const { prompt, context, adapter, executionMode = false, productLineId, senderDingtalkId } = opts
     const userId = context.initiatorId
+    const atIds = senderDingtalkId ? [senderDingtalkId] : undefined
 
     try {
       // executionMode（审批通过后）
@@ -184,14 +188,34 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 1: 每次都先 intent 检测
+      // Step 0: 群内审批命令路径已下线（main 的 LangGraph 改造把 approval-manager.tryHandleCommand 移除）。
+      //   现走钉钉互动卡片按钮 → TOPIC_CARD → server.ts onCardAction → handleCallback 链路。
+
+      // Step 0b: 从消息文本提取 project 和 branch
+      // 约定格式：[@机器人] 项目 分支 问题描述
+      // 用 DB 里存的机器人名精确去除 @ mention
+      let cleanedPrompt = prompt
+      try {
+        const robotCfg = await getConfig('dingtalk')
+        const robotName = (robotCfg?.value as any)?.robotName
+        if (robotName) {
+          cleanedPrompt = cleanedPrompt.replace(new RegExp(`@${robotName}`, 'g'), '')
+        }
+      } catch {}
+      cleanedPrompt = cleanedPrompt.trim()
+      const words = cleanedPrompt.split(/\s+/)
+      const parsedProject = words[0] || undefined
+      const parsedBranch = words[1]?.replace(/分支$/, '') || undefined
+      console.log('[Runner] Step 0b: cleaned=', cleanedPrompt.substring(0, 50), 'project=', parsedProject, 'branch=', parsedBranch)
+
+      // Step 1: intent 检测（识别 capability 类型）
       console.log('[Runner] Step 1: detecting intent for:', prompt)
       const intent = await this.detectIntent(prompt)
       console.log('[Runner] Intent result:', JSON.stringify(intent))
 
       // Step 2: greet → 固定帮助（永不 resume）
       if (intent?.capability === 'greet') {
-        await this.sendGreeting(adapter, opts.groupId)
+        await this.sendGreeting(adapter, opts.groupId, atIds)
         return
       }
 
@@ -209,7 +233,7 @@ export class ClaudeRunner {
           }
         }
         // 无 session 也无 intent → 当 greet
-        await this.sendGreeting(adapter, opts.groupId)
+        await this.sendGreeting(adapter, opts.groupId, atIds)
         return
       }
 
@@ -261,7 +285,59 @@ export class ClaudeRunner {
         }
       }
 
-      // Step 5: 加载工具
+      // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent capability 走 handler
+      const HANDLER_CAPABILITIES = new Set(['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr', 'search_knowledge'])
+
+      if (HANDLER_CAPABILITIES.has(intent.capability)) {
+        console.log(`[Runner] Agent capability: ${intent.capability}, routing to handler`)
+        await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: '收到，处理中...', atDingtalkIds: atIds } as any)
+
+        // 用 userId 作为 sessionKey，让 executeCapabilityDirect 保存 session
+        const sessionKey = userId
+
+        const result = await triggerCapability({
+          capabilityKey: intent.capability,
+          context: {
+            ...context,
+            productLineId,
+          },
+          extraParams: {
+            message: prompt,
+            productLineId,
+            version: parsedBranch || intent.env || undefined,
+            project: parsedProject || intent.project,
+            images: (opts as any).images,
+          },
+        })
+
+        // 保存 session，让后续追问可以 resume
+        const savedSession = this.sessions.get(sessionKey)
+        if (savedSession) {
+          // executeCapabilityDirect 已通过 sessionKey 保存了 sessionId
+          // 确保 tools 也存上，追问时复用
+          const capTools = capability.toolNames
+            .map(name => getTool(name))
+            .filter((t): t is AgentTool => t !== undefined)
+          savedSession.tools = capTools
+          savedSession.lastUsed = Date.now()
+        }
+
+        // 回复结果
+        const replyText = result.success
+          ? (result.output ?? '处理完成')
+          : `处理失败：${result.error ?? '未知错误'}`
+        await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: replyText, atDingtalkIds: atIds } as any)
+
+        // analyze_bug 完成后：若 result 含 (reportId, level, classification)，触发 Pipeline（后台跑，不阻塞 IM 响应）
+        if (intent.capability === 'analyze_bug') {
+          void maybeCompleteAnalyze(result, userId).catch(err => {
+            console.error('[Runner] maybeCompleteAnalyze error:', err)
+          })
+        }
+        return
+      }
+
+      // Step 6: 通用 capability → 加载工具走对话模式
       const capabilityTools = capability.toolNames
         .map(name => getTool(name))
         .filter((t): t is AgentTool => t !== undefined)
@@ -345,7 +421,7 @@ export class ClaudeRunner {
     }
   }
 
-  private async sendGreeting(adapter: IMAdapter, groupId: string): Promise<void> {
+  private async sendGreeting(adapter: IMAdapter, groupId: string, atDingtalkIds?: string[]): Promise<void> {
     const caps = await listCapabilities()
     const examples: Record<string, string> = {
       deploy: '部署 ssh-proxy 到 dev 环境，分支 develop',
@@ -371,7 +447,7 @@ export class ClaudeRunner {
       capsList,
       '直接用自然语言告诉我你想做什么即可。',
     ].join('\n\n')
-    await adapter.sendMessage({ type: 'group', id: groupId }, { text })
+    await adapter.sendMessage({ type: 'group', id: groupId }, { text, atDingtalkIds } as any)
   }
 
   private async detectIntent(prompt: string): Promise<DetectedIntent | null> {
@@ -380,6 +456,16 @@ export class ClaudeRunner {
 
     try {
       console.log('[Runner] Calling porygon.run for intent detection...')
+
+      // 从 system_config 读取可配置的 intent 规则（fallback 到默认）
+      const intentCfg = await getConfig('intent_rules').catch(() => null)
+      const intentRules = (intentCfg?.value as Record<string, string>)?.rules ||
+`1. 如果用户提到"执行"、"运行"、"触发"某个流水线名称，优先匹配 pipeline_ 开头的能力
+2. 流水线名称可能是产品名、模块名等，如"执行Windows流水线"应匹配 pipeline_X 而非 view_deployments
+3. 如果用户回复是简短的确认、否认或补充信息（如"好"、"是的"、"不"、"1"、"对"、"用 dev 分支"、"ssh-proxy"），说明是在回复之前的对话，返回 null（不要返回 JSON）
+4. 仅当用户主动打招呼、问好、或询问系统功能时才返回 greet
+5. 用户提到的分支名（如 test分支、dev分支、master分支、develop分支）应放在 env 字段，不是 project 字段。project 是项目/模块名（如 pas、osc、ssh-proxy）`
+
       const result = await this.porygon.run({
         prompt: `分析以下用户请求，识别意图。
 
@@ -389,10 +475,7 @@ ${capList}
 用户请求: ${prompt}
 
 重要规则:
-1. 如果用户提到"执行"、"运行"、"触发"某个流水线名称，优先匹配 pipeline_ 开头的能力
-2. 流水线名称可能是产品名、模块名等，如"执行Windows流水线"应匹配 pipeline_X 而非 view_deployments
-3. 如果用户回复是简短的确认、否认或补充信息（如"好"、"是的"、"不"、"1"、"对"、"用 dev 分支"、"ssh-proxy"），说明是在回复之前的对话，返回 null（不要返回 JSON）
-4. 仅当用户主动打招呼、问好、或询问系统功能时才返回 greet
+${intentRules}
 
 返回 JSON（不要代码块）：
 {"capability":"能力key","project":"模块名(如有)","env":"环境名(如有)","summary":"一句话总结"}
@@ -405,7 +488,7 @@ ${capList}
 
 如果是简短的确认/否认/补充信息，直接返回文本 null`,
         maxTurns: 1,
-        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Skill', 'AskUserQuestion'],
+        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'Skill', 'AskUserQuestion', 'Agent'],
         envVars: await buildClaudeEnv(),
       })
 
@@ -425,10 +508,15 @@ ${capList}
     const userId = context.initiatorId
 
     const FALLBACK_PROMPT = '你是一个 DevOps 助手。用户通过群聊与你交互。只使用提供给你的 MCP 工具，不要使用 Bash 等内置工具。'
+    const EXECUTION_PROMPT = '你是一个 DevOps 自动化 agent，正在执行已审批的操作。直接执行，无需再次确认。'
+
+    // 从 system_config 读取可配置 prompt（fallback 到写死值）
+    const promptsCfg = await getConfig('prompts').catch(() => null)
+    const promptsValue = (promptsCfg?.value ?? {}) as Record<string, string>
 
     let systemPrompt: string
     if (executionMode) {
-      systemPrompt = '你是一个 DevOps 自动化 agent，正在执行已审批的操作。直接执行，无需再次确认。'
+      systemPrompt = promptsValue.execution || EXECUTION_PROMPT
     } else if (capability?.systemPrompt) {
       systemPrompt = interpolatePrompt(capability.systemPrompt, {
         initiatorRole: context.initiatorRole ?? 'developer',
@@ -508,7 +596,7 @@ ${capList}
             },
           },
         },
-        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill', 'AskUserQuestion'],
+        disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Skill', 'AskUserQuestion', 'Agent'],
         envVars: claudeEnv,
       })) {
         console.log(`[Runner] Porygon msg: type=${msg.type}`, msg.type === 'error' ? msg.message : '')
@@ -583,11 +671,15 @@ ${capList}
   }): Promise<string> {
     const { prompt, systemPrompt, context, tools, cwd, sessionKey } = opts
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
-    const toolNames = tools.map(t => t.name)
 
     const existingSessionId = sessionKey ? this.getSessionId(sessionKey) : undefined
+    const claudeEnv = await buildClaudeEnv()
+
+    console.log(`[Runner] executeCapabilityDirect: cwd=${cwd}, tools=${tools.map(t=>t.name).join(',')}, resume=${!!existingSessionId}`)
 
     let textBuffer = ''
+    let toolCallCount = 0
+    const MAX_TOOL_CALLS = 20
 
     for await (const msg of this.porygon.query({
       prompt,
@@ -602,15 +694,20 @@ ${capList}
             ...(process.env as Record<string, string>),
             CHATOPS_TASK_CONTEXT: JSON.stringify({ ...context, cwd }),
             DATABASE_URL: process.env.DATABASE_URL ?? '',
-            ...buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
+            ...claudeEnv,
           },
         },
       },
-      disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch'],
-      envVars: buildClaudeAuthEnv(process.env.ANTHROPIC_API_KEY),
+      disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent'],
+      envVars: claudeEnv,
+      maxTurns: 200,
     })) {
       if ('sessionId' in msg && msg.sessionId && sessionKey) {
         this.saveSession(sessionKey, msg.sessionId as string, tools)
+      }
+      if (msg.type === 'tool_use') {
+        const toolName = 'name' in msg ? msg.name : 'unknown'
+        console.log(`[Runner] Tool called: ${toolName}`)
       }
       if (msg.type === 'assistant' && 'content' in msg) {
         textBuffer += String(msg.content)
@@ -619,6 +716,7 @@ ${capList}
       }
     }
 
+    console.log(`[Runner] executeCapabilityDirect completed, output length: ${textBuffer.length}`)
     return textBuffer
   }
 

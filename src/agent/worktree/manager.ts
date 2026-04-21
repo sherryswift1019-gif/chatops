@@ -18,6 +18,7 @@ export interface Worktree {
   version: string
   sessionId: string
   repoUrl: string
+  projectPath?: string
   createdAt: Date
   expiresAt: Date
 }
@@ -28,11 +29,36 @@ export interface AcquireOptions {
   version: string
   sessionId: string
   repoUrl: string
+  /**
+   * 可选。多 project 并行修复场景下必传，避免不同 project 的同分支 clone 到同一目录产生冲突。
+   * 例如 'PAM/pas-6.0'、'PAM/java-code/pas-api'。
+   */
+  projectPath?: string
+}
+
+/**
+ * 生成 worktree 的唯一 key（也用作目录名）。
+ * key = `${productLineId}-${projectPath with '/' → '-'}-${branch with '/' → '-'}`
+ * 不同 project 的同分支产生不同 key，保证多 project 并行修复不冲突。
+ */
+export function makeWorktreeKey(params: {
+  productLineId: number | string
+  projectPath: string
+  branch: string
+}): string {
+  const safeProject = params.projectPath.replace(/\//g, '-')
+  const safeBranch = params.branch.replace(/\//g, '-')
+  return `${params.productLineId}-${safeProject}-${safeBranch}`
 }
 
 const activeWorktrees = new Map<string, Worktree>()
 
 function buildId(opts: AcquireOptions): string {
+  if (opts.projectPath) {
+    const safeProject = opts.projectPath.replace(/\//g, '-')
+    const safeVersion = opts.version.replace(/\//g, '-')
+    return `${opts.userId}-${opts.product}-${safeProject}-${safeVersion}-${opts.sessionId}`
+  }
   return `${opts.userId}-${opts.product}-${opts.version}-${opts.sessionId}`
 }
 
@@ -55,12 +81,22 @@ async function ensureMainRepo(product: string, repoUrl: string): Promise<string>
 
   if (existsSync(join(cachePath, '.git')) || existsSync(join(cachePath, 'HEAD'))) {
     await runGit('git worktree prune', cachePath).catch(() => {})
-    await runGit('git fetch --all --prune', cachePath)
+    // 幂等校正 refspec（老 cache / 被手改过的情况均能自动升级到 remotes/origin 模式）
+    await runGit('git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"', cachePath)
+    await runGit('git fetch origin --prune', cachePath)
     return cachePath
   }
 
   mkdirSync(cachePath, { recursive: true })
   await runGit(`git clone --bare ${repoUrl} ${cachePath}`)
+  // git clone --bare 默认不写 fetch refspec，后续 git fetch --all 拉不到新分支。
+  // 用 refs/remotes/origin/* 命名空间（不是 refs/heads/*）：
+  // - fetch 永远写入 remotes/origin/，不会尝试更新本地 heads——避免
+  //   "refusing to fetch into branch checked out at worktree" 错误；
+  // - worktree add 改用 origin/<branch> 从 remotes/origin 创建 detached HEAD。
+  await runGit('git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"', cachePath)
+  // 初次 clone 时 heads 已建好但 remotes/ 还空，做一次 fetch 建立镜像
+  await runGit('git fetch origin', cachePath)
   return cachePath
 }
 
@@ -74,6 +110,25 @@ export async function acquire(opts: AcquireOptions): Promise<Worktree> {
     return existing
   }
 
+  // E2E 模式：返回虚拟 worktree，绕过真实 clone / fetch（mock GitLab server 不提供 git 协议）
+  if (process.env.E2E_MODE === '1') {
+    const worktree: Worktree = {
+      id,
+      path: wtPath,
+      userId: opts.userId,
+      product: opts.product,
+      version: opts.version,
+      sessionId: opts.sessionId,
+      repoUrl: opts.repoUrl,
+      projectPath: opts.projectPath,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + DEFAULT_TTL_MS),
+    }
+    activeWorktrees.set(id, worktree)
+    console.log(`[Worktree] E2E acquired (stub): ${wtPath}`)
+    return worktree
+  }
+
   const mainRepoPath = await ensureMainRepo(opts.product, opts.repoUrl)
 
   if (existsSync(wtPath)) {
@@ -82,8 +137,8 @@ export async function acquire(opts: AcquireOptions): Promise<Worktree> {
     })
   }
 
-  // 使用 --detach 避免锁定分支名，允许多个会话并行分析同一分支
-  await runGit(`git worktree add --detach ${wtPath} ${opts.version}`, mainRepoPath)
+  // 使用 --detach + origin/<branch> 从 remotes/origin ref 创建；不锁定分支名，支持并行会话
+  await runGit(`git worktree add --detach ${wtPath} origin/${opts.version}`, mainRepoPath)
 
   const worktree: Worktree = {
     id,
@@ -93,6 +148,7 @@ export async function acquire(opts: AcquireOptions): Promise<Worktree> {
     version: opts.version,
     sessionId: opts.sessionId,
     repoUrl: opts.repoUrl,
+    projectPath: opts.projectPath,
     createdAt: new Date(),
     expiresAt: new Date(Date.now() + DEFAULT_TTL_MS),
   }
@@ -133,6 +189,32 @@ export async function cleanup(): Promise<number> {
   if (cleaned > 0) {
     console.log(`[Worktree] cleanup: removed ${cleaned} expired worktrees`)
   }
+  return cleaned
+}
+
+/** 兜底清理：移除所有 worktree（凌晨 3 点调用，防磁盘泄漏） */
+export async function cleanupAll(): Promise<number> {
+  let cleaned = 0
+  for (const [id, wt] of activeWorktrees) {
+    await remove(wt).catch(err => {
+      console.error(`[Worktree] cleanupAll error for ${wt.path}:`, err)
+    })
+    cleaned++
+  }
+  // 清理孤立目录
+  try {
+    const { readdirSync, rmSync } = await import('fs')
+    if (existsSync(WORKTREE_BASE)) {
+      for (const dir of readdirSync(WORKTREE_BASE)) {
+        const fullPath = join(WORKTREE_BASE, dir)
+        rmSync(fullPath, { recursive: true, force: true })
+        cleaned++
+      }
+    }
+  } catch (err) {
+    console.error('[Worktree] cleanupAll dir cleanup error:', err)
+  }
+  console.log(`[Worktree] cleanupAll: removed ${cleaned} items`)
   return cleaned
 }
 

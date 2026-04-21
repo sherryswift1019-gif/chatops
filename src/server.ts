@@ -46,11 +46,16 @@ import './agent/tools/update-ai-summary.js'
 import './agent/tools/review-mr-diff.js'
 
 // 研发 AI 助手 Agent handler 注册
-import { registerAnalysisBugHandler, setClaudeRunner } from './agent/analysis/analyzer.js'
-import { registerFixHandlers, setFixClaudeRunner } from './agent/fix/fix-runner.js'
-import { registerReviewHandler, setReviewClaudeRunner } from './agent/review/reviewer.js'
+import { registerAnalysisBugHandler } from './agent/analysis/analyzer.js'
+import { registerFixHandlers } from './agent/fix/fix-runner.js'
+import { registerReviewHandler } from './agent/review/reviewer.js'
+import { registerApproveL3Handler } from './agent/approval/approve-l3-handler.js'
+import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
+import { registerNotifyHandler } from './agent/notify/notify-handler.js'
+import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
-import { setApprovalGate } from './agent/coordinator.js'
+import { startMrReconciler, stopMrReconciler } from './agent/reconcile/mr-state-reconciler.js'
+import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
 
 async function resolveProductLineId(userId: string): Promise<{ productLineId: number; role: string } | null> {
   try {
@@ -62,36 +67,66 @@ async function resolveProductLineId(userId: string): Promise<{ productLineId: nu
 }
 
 async function main(): Promise<void> {
+  // 生产环境兜底：禁止 E2E_MODE / CLAUDE_MOCK 误开
+  // 这些开关会：
+  //   1. 替换 DingTalk 适配器为 MockIMAdapter（真机器人不连）
+  //   2. /admin/_e2e/* 控制端点完全绕过 auth（可匿名触发 Pipeline、清审批状态）
+  //   3. Claude 调用短路为 mock 响应（真 AI 不跑）
+  // 任何一条误开都会让后端失去生产保护，必须 hard-fail 阻止启动
+  if (process.env.NODE_ENV === 'production') {
+    if (process.env.E2E_MODE === '1') {
+      throw new Error('E2E_MODE=1 is not allowed when NODE_ENV=production (bypasses auth + replaces IM adapter)')
+    }
+    if (process.env.CLAUDE_MOCK === '1') {
+      throw new Error('CLAUDE_MOCK=1 is not allowed when NODE_ENV=production (returns canned responses instead of real Claude)')
+    }
+  }
+
   const app = Fastify({ logger: true })
 
   // Build IM adapters (only create if credentials are configured in system_config)
   const adapters: IMAdapter[] = []
 
-  const dingtalkCfg = (await getConfig('dingtalk'))?.value as { clientId?: string; clientSecret?: string } | undefined
-  if (dingtalkCfg?.clientId && dingtalkCfg?.clientSecret) {
-    const dingtalk = new DingTalkAdapter({
-      clientId: dingtalkCfg.clientId,
-      clientSecret: dingtalkCfg.clientSecret,
-    })
-    adapters.push(dingtalk)
-    app.log.info('DingTalk adapter enabled (Stream mode)')
-  }
+  if (process.env.E2E_MODE === '1') {
+    // E2E 模式：用 MockIMAdapter 替代真实钉钉/飞书连接，保持生产行为不变
+    const { MockIMAdapter } = await import('./adapters/im/mock.js')
+    adapters.push(new MockIMAdapter())
+    app.log.info('E2E_MODE enabled: MockIMAdapter loaded in place of DingTalk/Feishu')
+  } else {
+    const dingtalkCfg = (await getConfig('dingtalk'))?.value as { clientId?: string; clientSecret?: string } | undefined
+    if (dingtalkCfg?.clientId && dingtalkCfg?.clientSecret) {
+      const dingtalk = new DingTalkAdapter({
+        clientId: dingtalkCfg.clientId,
+        clientSecret: dingtalkCfg.clientSecret,
+      })
+      adapters.push(dingtalk)
+      app.log.info('DingTalk adapter enabled (Stream mode)')
+    }
 
-  const feishuCfg = (await getConfig('feishu'))?.value as { appId?: string; appSecret?: string; verificationToken?: string } | undefined
-  if (feishuCfg?.appId && feishuCfg?.appSecret) {
-    const feishu = new FeishuAdapter({
-      appId: feishuCfg.appId,
-      appSecret: feishuCfg.appSecret,
-      verificationToken: feishuCfg.verificationToken ?? '',
-    })
-    adapters.push(feishu)
-    app.log.info('Feishu adapter enabled (Webhook mode)')
+    const feishuCfg = (await getConfig('feishu'))?.value as { appId?: string; appSecret?: string; verificationToken?: string } | undefined
+    if (feishuCfg?.appId && feishuCfg?.appSecret) {
+      const feishu = new FeishuAdapter({
+        appId: feishuCfg.appId,
+        appSecret: feishuCfg.appSecret,
+        verificationToken: feishuCfg.verificationToken ?? '',
+      })
+      adapters.push(feishu)
+      app.log.info('Feishu adapter enabled (Webhook mode)')
+    }
   }
 
   // Approval gate
   const gate = new ApprovalGate(adapters)
   await gate.initialize()
   setApprovalGate(gate)
+
+  // 注入钉钉 DM 通知回调（Review 完成后通知模块负责人）
+  const primaryAdapter = adapters[0]
+  if (primaryAdapter) {
+    setNotifyDmFn(async (userId: string, message: string) => {
+      await primaryAdapter.sendDirectMessage(userId, { text: message })
+    })
+  }
 
   // Claude runner
   const runner = new ClaudeRunner()
@@ -147,18 +182,22 @@ async function main(): Promise<void> {
     )
   })
 
-  // 注入 ClaudeRunner 到各 Agent handler
-  setClaudeRunner(runner)
-  setFixClaudeRunner(runner)
-  setReviewClaudeRunner(runner)
+  // analyzer/fix/review 均已改用 runClaudeCli，不再需要注入 ClaudeRunner
 
   // 注册 Agent capability handler
   registerAnalysisBugHandler()
   registerFixHandlers()
   registerReviewHandler()
+  registerApproveL3Handler()
+  registerCreateMrHandler()
+  registerNotifyHandler()
+  registerRequestHandoverHandler()
 
   // 启动 worktree 清理调度器
   startCleanupScheduler()
+
+  // 启动 MR 状态对账调度器（webhook 漏发兜底，默认 5min）
+  startMrReconciler()
 
   // Session manager — processes each message
   const sessionManager = new SessionManager(
@@ -182,6 +221,8 @@ async function main(): Promise<void> {
             platform: msg.platform,
             adapter,
             productLineId: membership?.productLineId,
+            userName: msg.userName,
+            senderDingtalkId: (msg.rawPayload as any)?.senderId,
           })
         }
       )
@@ -199,24 +240,30 @@ async function main(): Promise<void> {
   // Card action (approval responses)
   for (const adapter of adapters) {
     adapter.onCardAction(async (taskId, action, approverId) => {
-      // Route pipeline approval callbacks first: only forward when the id is
-      // owned by PipelineApprovalManager, so tool-approval / generic-gate
-      // cards don't produce log noise here. handleCallback is fire-and-forget
-      // internally (errors are logged, not propagated) — we still guard with
-      // .catch() to cover unexpected synchronous/scheduling failures.
-      const mgr = PipelineApprovalManager.getInstance()
-      if (mgr.isPipelineApproval(taskId)) {
-        await mgr
-          .handleCallback(taskId, action as 'approved' | 'rejected', approverId)
-          .catch((err) => {
-            app.log.error({ err, taskId }, 'pipeline handleCallback failed')
-          })
+      // 钉钉互动卡片的 Action ID 是自定义的（agree/reject）；旧路径可能直接传 approved/rejected。
+      // 统一映射到 approval-manager 期待的决策词。
+      const decision: 'approved' | 'rejected' | null =
+        action === 'agree' || action === 'approved' ? 'approved' :
+        action === 'reject' || action === 'rejected' ? 'rejected' :
+        null
+      if (!decision) {
+        console.warn('[Card] unknown action from card callback:', action)
         return
       }
 
-      if (action === 'approved' || action === 'rejected') {
-        await gate.respond(taskId, approverId, action)
+      console.log(`[Card] 审批回调路由: taskId=${taskId} decision=${decision} approver=${approverId}`)
+
+      // Route pipeline approval callbacks first: only forward when the id is
+      // owned by PipelineApprovalManager，避免 tool/generic-gate 卡片日志噪音。
+      const mgr = PipelineApprovalManager.getInstance()
+      if (mgr.isPipelineApproval(taskId)) {
+        await mgr.handleCallback(taskId, decision, approverId).catch((err) => {
+          app.log.error({ err, taskId }, 'pipeline handleCallback failed')
+        })
+        return
       }
+
+      await gate.respond(taskId, approverId, decision)
     })
   }
 
@@ -255,6 +302,31 @@ async function main(): Promise<void> {
 
   app.get('/health', async () => ({ status: 'ok' }))
 
+  // 测试端点：通过 triggerCapability 触发完整分析流程（含 Issue 创建）
+  app.post('/api/test/analyze', async (req, reply) => {
+    const body = req.body as { message: string; version?: string; productLineId?: number }
+    if (!body.message) return reply.status(400).send({ error: 'message required' })
+
+    const { triggerCapability } = await import('./agent/coordinator.js')
+    const result = await triggerCapability({
+      capabilityKey: 'analyze_bug',
+      context: {
+        taskId: `test-${Date.now()}`,
+        groupId: 'test',
+        platform: 'test',
+        initiatorId: '183832601538060368',
+        initiatorRole: 'admin',
+      },
+      extraParams: {
+        message: body.message,
+        productLineId: body.productLineId ?? 1,
+        version: body.version,
+      },
+    })
+
+    return reply.send(result)
+  })
+
   // Serve frontend SPA static files (production build)
   const __dirname = dirname(fileURLToPath(import.meta.url))
   const webDistPath = join(__dirname, '..', 'web', 'dist')
@@ -262,7 +334,7 @@ async function main(): Promise<void> {
     await app.register(fastifyStatic, {
       root: webDistPath,
       prefix: '/',
-      wildcard: false,
+      wildcard: true,
     })
 
     // SPA fallback: non-API GET requests return index.html
@@ -292,6 +364,7 @@ async function main(): Promise<void> {
 
   // Graceful shutdown
   const shutdown = async () => {
+    stopMrReconciler()
     for (const adapter of adapters) {
       await adapter.stop?.()
     }

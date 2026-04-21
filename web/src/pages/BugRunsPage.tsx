@@ -1,57 +1,297 @@
-import { useEffect, useState } from 'react'
-import { Card, Table, Tag, Button, Drawer, Descriptions, Timeline, Select, Space, message } from 'antd'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Card, Table, Tag, Button, Select, Space, Modal, message } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
-import { getBugAnalysisReports, getBugAnalysisReport } from '../api/bug-analysis-reports'
+import { useSearchParams } from 'react-router-dom'
+import {
+  listBugReports,
+  retryBugReport,
+  handoverBugReport,
+  forceAbortBugReport,
+} from '../api/bug-analysis-reports'
 import { getProductLines } from '../api/product-lines'
-import type { BugAnalysisReport, ProductLine } from '../types'
+import { getDingTalkUsers } from '../api/dingtalk-users'
+import BugRunDetailDrawer from '../components/BugRunDetailDrawer'
+import type { BugAnalysisReport, ProductLine, DingTalkUser } from '../types'
 
-const levelColors: Record<string, string> = { l1: 'green', l2: 'blue', l3: 'orange', l4: 'red' }
-const confidenceColors: Record<string, string> = { high: 'green', medium: 'gold', low: 'red' }
-const statusColors: Record<string, string> = { draft: 'default', published: 'processing', superseded: 'warning' }
+// ─── 就地定义 LevelTag / StatusTag（与 BugRunDetailDrawer 一致）─────
 
-const LABEL_FLOW = ['needs-analysis', 'analyzing', 'graded', 'fixing', 'in-review', 'testing', 'ready-to-merge', 'merged', 'done']
+const LEVEL_COLOR: Record<string, string> = {
+  l1: 'blue',
+  l2: 'cyan',
+  l3: 'orange',
+  l4: 'purple',
+}
+
+function LevelTag({ level }: { level: string | null | undefined }) {
+  if (!level) return <Tag color="default">—</Tag>
+  const key = String(level).toLowerCase()
+  const color = LEVEL_COLOR[key] ?? 'default'
+  return <Tag color={color}>{key.toUpperCase()}</Tag>
+}
+
+const STATUS_META: Record<string, { color: string; label: string }> = {
+  draft: { color: 'default', label: '草稿' },
+  published: { color: 'processing', label: '已发布' },
+  pipeline_success: { color: 'cyan', label: 'Pipeline 成功' },
+  pending_manual: { color: 'orange', label: '待人工接手' },
+  completed: { color: 'success', label: '已完成' },
+  aborted: { color: 'error', label: '已终止' },
+}
+
+function StatusTag({ status }: { status: string | null | undefined }) {
+  if (!status) return <Tag>—</Tag>
+  const meta = STATUS_META[status]
+  if (!meta) return <Tag>{status}</Tag>
+  return <Tag color={meta.color}>{meta.label}</Tag>
+}
+
+// ─── 工具 ─────────────────────────────────────────────────────────
+
+function formatDateTime(s: string | null | undefined): string {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return String(s)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+const STATUS_OPTIONS = (Object.keys(STATUS_META) as Array<keyof typeof STATUS_META>).map(
+  (value) => ({ value, label: STATUS_META[value].label }),
+)
+
+const LEVEL_OPTIONS = [
+  { value: 'l1', label: 'L1' },
+  { value: 'l2', label: 'L2' },
+  { value: 'l3', label: 'L3' },
+  { value: 'l4', label: 'L4' },
+]
 
 export default function BugRunsPage() {
-  const [data, setData] = useState<BugAnalysisReport[]>([])
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  // URL → state
+  const productLineIdStr = searchParams.get('productLine')
+  const productLineId = productLineIdStr ? Number(productLineIdStr) : undefined
+  const status = searchParams.get('status') || undefined
+  const level = searchParams.get('level') || undefined
+  const page = Number(searchParams.get('page') || 1)
+  const pageSize = Number(searchParams.get('pageSize') || 20)
+
+  const [reports, setReports] = useState<BugAnalysisReport[]>([])
+  const [total, setTotal] = useState(0)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
+  const [userNameMap, setUserNameMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
-  const [selectedPL, setSelectedPL] = useState<number | undefined>()
-  const [drawerOpen, setDrawerOpen] = useState(false)
-  const [detail, setDetail] = useState<BugAnalysisReport | null>(null)
+  const [selectedReport, setSelectedReport] = useState<BugAnalysisReport | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
-  useEffect(() => { getProductLines().then(setProductLines) }, [])
+  useEffect(() => {
+    getProductLines().then(setProductLines).catch(() => {})
+    // 拉 dingtalk_users 供 triggered_by 列显示名字（非严格：失败降级为显示原 id）
+    getDingTalkUsers()
+      .then((res) => {
+        const map: Record<string, string> = {}
+        for (const u of res.users as DingTalkUser[]) map[u.userId] = u.name
+        setUserNameMap(map)
+      })
+      .catch(() => {})
+  }, [])
 
-  useEffect(() => { if (selectedPL) load() }, [selectedPL])
+  useEffect(() => {
+    load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productLineId, status, level, page, pageSize])
 
   async function load() {
-    if (!selectedPL) return
+    abortRef.current?.abort()
+    abortRef.current = new AbortController()
     setLoading(true)
     try {
-      const res = await getBugAnalysisReports(selectedPL)
-      setData(res.data)
-    } finally { setLoading(false) }
+      const res = await listBugReports({
+        productLineId,
+        status,
+        level,
+        page,
+        pageSize,
+        signal: abortRef.current.signal,
+      })
+      setReports(res.data)
+      setTotal(res.total)
+    } catch (err) {
+      const isAbort =
+        (err as { name?: string })?.name === 'AbortError' ||
+        (err as { code?: string })?.code === 'ERR_CANCELED'
+      if (!isAbort) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error('[BugRunsPage] load failed:', err)
+        message.error(`加载 Bug 列表失败: ${msg}`)
+      }
+    } finally {
+      setLoading(false)
+    }
   }
 
-  async function showDetail(id: number) {
-    try {
-      const report = await getBugAnalysisReport(id)
-      setDetail(report)
-      setDrawerOpen(true)
-    } catch { message.error('加载详情失败') }
+  function setFilter(key: string, value: string | number | undefined) {
+    const next = new URLSearchParams(searchParams)
+    if (value == null || value === '') next.delete(key)
+    else next.set(key, String(value))
+    next.delete('page') // 筛选变化回到第 1 页
+    setSearchParams(next, { replace: true })
+  }
+
+  function onPageChange(p: number, ps: number) {
+    const next = new URLSearchParams(searchParams)
+    next.set('page', String(p))
+    next.set('pageSize', String(ps))
+    setSearchParams(next, { replace: true })
+  }
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (productLineId != null) n++
+    if (status) n++
+    if (level) n++
+    return n
+  }, [productLineId, status, level])
+
+  async function handleRetry(record: BugAnalysisReport) {
+    Modal.confirm({
+      title: '确认重新开始处理吗？',
+      content: '后台会启动新一轮分析 + Pipeline（耗时 3-6 分钟），完成后新 report 会出现在列表里。',
+      okText: '确认重试',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await retryBugReport(record.id)
+          message.success('已受理，后台分析中。请过几分钟刷新查看新 report')
+          load()
+        } catch (err) {
+          const serverMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+          message.error(`重试失败: ${serverMsg ?? (err as Error).message}`)
+        }
+      },
+    })
+  }
+
+  async function handleHandover(record: BugAnalysisReport) {
+    Modal.confirm({
+      title: '确认转人工接手？',
+      content: 'AI 将放弃自动处理，Issue 打 needs-manual label 并 DM 负责人。',
+      okText: '确认转人工',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const r = await handoverBugReport(record.id, 'user_requested')
+          message.success(`已转人工接手（status=${r.status}）`)
+          load()
+        } catch (err) {
+          const serverMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+          message.error(`转人工失败: ${serverMsg ?? (err as Error).message}`)
+        }
+      },
+    })
+  }
+
+  async function handleForceAbort(record: BugAnalysisReport) {
+    Modal.confirm({
+      title: '强制终止这条处理？',
+      content: `当前 status=${record.status}。用于 Pipeline 卡死场景（进程中断、stage 无超时等）。标记为 aborted 后会显示"重试"按钮。`,
+      okText: '确认强制终止',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const r = await forceAbortBugReport(record.id, '管理员前端强制终止')
+          message.success(`已强制终止（status=${r.status}）`)
+          load()
+        } catch (err) {
+          const serverMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+          message.error(`强制终止失败: ${serverMsg ?? (err as Error).message}`)
+        }
+      },
+    })
   }
 
   const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: 'Issue', dataIndex: 'issueId', render: (v: number, r: BugAnalysisReport) => r.issueUrl ? <a href={r.issueUrl} target="_blank">#{v}</a> : `#${v}` },
-    { title: '级别', dataIndex: 'level', render: (v: string) => <Tag color={levelColors[v]}>{v.toUpperCase()}</Tag> },
-    { title: '置信度', dataIndex: 'confidence', render: (v: string) => <Tag color={confidenceColors[v]}>{v}</Tag> },
-    { title: '分类', dataIndex: 'classification', render: (v: string) => <Tag>{v}</Tag> },
-    { title: '根因', dataIndex: 'rootCauseSummary', ellipsis: true },
-    { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{v}</Tag> },
-    { title: '时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
+    {
+      title: '产品线',
+      dataIndex: 'productLineName',
+      width: 140,
+      render: (v: string | undefined) => <Tag>{v || '—'}</Tag>,
+    },
+    {
+      title: '摘要',
+      dataIndex: 'rootCauseSummary',
+      ellipsis: { showTitle: true },
+      render: (v: string | null) => v || '—',
+    },
+    {
+      title: '等级',
+      dataIndex: 'level',
+      width: 80,
+      render: (v: string | null) => <LevelTag level={v} />,
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 130,
+      render: (v: string | null) => <StatusTag status={v} />,
+    },
+    {
+      title: '触发人',
+      dataIndex: 'triggeredBy',
+      width: 140,
+      render: (id: string | null) => {
+        if (!id) return '—'
+        return userNameMap[id] ?? id
+      },
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'createdAt',
+      width: 160,
+      defaultSortOrder: 'descend' as const,
+      sorter: (a: BugAnalysisReport, b: BugAnalysisReport) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      render: (v: string) => formatDateTime(v),
+    },
+    {
+      title: '完成时间',
+      dataIndex: 'completedAt',
+      width: 160,
+      render: (v: string | null) => (v ? formatDateTime(v) : '—'),
+    },
     {
       title: '操作',
-      render: (_: unknown, r: BugAnalysisReport) => <a onClick={() => showDetail(r.id)}>详情</a>,
+      fixed: 'right' as const,
+      width: 280,
+      render: (_: unknown, record: BugAnalysisReport) => (
+        <Space size={4}>
+          <Button type="link" size="small" onClick={() => setSelectedReport(record)}>
+            详情
+          </Button>
+          {record.issueUrl && (
+            <Button type="link" size="small" href={record.issueUrl} target="_blank" rel="noopener noreferrer">
+              查看 Issue
+            </Button>
+          )}
+          {record.status === 'aborted' && (
+            <>
+              <Button type="link" size="small" danger onClick={() => handleRetry(record)}>
+                重试
+              </Button>
+              <Button type="link" size="small" onClick={() => handleHandover(record)}>
+                转人工
+              </Button>
+            </>
+          )}
+          {(record.status === 'published' || record.status === 'pipeline_success') && (
+            <Button type="link" size="small" danger onClick={() => handleForceAbort(record)}>
+              强制终止
+            </Button>
+          )}
+        </Space>
+      ),
     },
   ]
 
@@ -60,50 +300,64 @@ export default function BugRunsPage() {
       <Card
         title="Bug 修复实例"
         extra={
-          <Space>
-            <Select style={{ width: 200 }} placeholder="选择产品线" value={selectedPL} onChange={setSelectedPL}
-              options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))} />
-            <Button icon={<ReloadOutlined />} onClick={load} disabled={!selectedPL}>刷新</Button>
+          <Space wrap>
+            <Select
+              allowClear
+              style={{ width: 220 }}
+              placeholder="产品线"
+              value={productLineId}
+              onChange={(v) => setFilter('productLine', v)}
+              options={productLines.map((p) => ({ value: p.id, label: p.displayName }))}
+            />
+            <Select
+              allowClear
+              style={{ minWidth: 180 }}
+              placeholder="状态"
+              value={status}
+              onChange={(v) => setFilter('status', v)}
+              options={STATUS_OPTIONS}
+            />
+            <Select
+              allowClear
+              style={{ minWidth: 120 }}
+              placeholder="等级"
+              value={level}
+              onChange={(v) => setFilter('level', v)}
+              options={LEVEL_OPTIONS}
+            />
+            <Button icon={<ReloadOutlined />} onClick={load}>
+              刷新
+            </Button>
           </Space>
         }
       >
-        <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={{ pageSize: 20 }} />
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={reports}
+          loading={loading}
+          scroll={{ x: 1400 }}
+          locale={{
+            emptyText: activeFilterCount > 0 ? '当前筛选条件下无结果，试试调整筛选' : '暂无 Bug 修复实例',
+          }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 条`,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            onChange: onPageChange,
+          }}
+        />
       </Card>
 
-      <Drawer title={detail ? `分析报告 #${detail.id}` : ''} open={drawerOpen} onClose={() => setDrawerOpen(false)} width={700}>
-        {detail && (
-          <>
-            <Descriptions column={2} size="small" bordered>
-              <Descriptions.Item label="Issue">
-                {detail.issueUrl ? <a href={detail.issueUrl} target="_blank">#{detail.issueId}</a> : `#${detail.issueId}`}
-              </Descriptions.Item>
-              <Descriptions.Item label="级别"><Tag color={levelColors[detail.level]}>{detail.level.toUpperCase()}</Tag></Descriptions.Item>
-              <Descriptions.Item label="置信度"><Tag color={confidenceColors[detail.confidence]}>{detail.confidence} ({((detail.confidenceScore ?? 0) * 100).toFixed(0)}%)</Tag></Descriptions.Item>
-              <Descriptions.Item label="分类"><Tag>{detail.classification}</Tag></Descriptions.Item>
-              <Descriptions.Item label="状态"><Tag color={statusColors[detail.status]}>{detail.status}</Tag></Descriptions.Item>
-              <Descriptions.Item label="影响模块">{(detail.affectedModules ?? []).join(', ') || '-'}</Descriptions.Item>
-            </Descriptions>
-
-            <div style={{ margin: '16px 0 8px', fontWeight: 500 }}>根因</div>
-            <p>{detail.rootCauseSummary ?? '-'}</p>
-
-            <div style={{ margin: '16px 0 8px', fontWeight: 500 }}>修复方案</div>
-            {detail.solutionsJson.map(s => (
-              <div key={s.id} style={{ marginBottom: 8, padding: 8, background: '#fafafa', borderRadius: 4 }}>
-                <strong>{s.id}</strong> {s.recommended && <Tag color="gold">推荐</Tag>}
-                <p style={{ margin: '4px 0 0' }}>{s.summary}（风险: {s.risk}，工作量: {s.effort}）</p>
-              </div>
-            ))}
-
-            {detail.analysisSteps && (
-              <>
-                <div style={{ margin: '16px 0 8px', fontWeight: 500 }}>分析过程</div>
-                <Timeline items={detail.analysisSteps.map((step, i) => ({ children: step }))} />
-              </>
-            )}
-          </>
-        )}
-      </Drawer>
+      <BugRunDetailDrawer
+        open={!!selectedReport}
+        report={selectedReport}
+        onClose={() => setSelectedReport(null)}
+        userNameMap={userNameMap}
+      />
     </>
   )
 }

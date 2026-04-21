@@ -1,77 +1,151 @@
-import { registerCapabilityHandler } from '../coordinator.js'
-import { getTool } from '../tools/index.js'
-import { mask } from '../masking/sensitive-info.js'
-import { updateMrLabels } from '../../adapters/gitlab/labels.js'
+/**
+ * ai_review_mr capability handler：按 report 循环所有 create_mr 事件进行 Review。
+ *
+ * 职责：
+ *  1. 查所有 create_mr 成功事件，得到待 Review 的 MR 列表
+ *  2. 幂等：跳过已有 ai_review 成功事件的 MR
+ *  3. 调 Claude 生成 Review 评语与结论 label
+ *  4. 将评语作为 Note 写到 GitLab MR
+ *  5. 保留原有 label 更新逻辑（ai-approved / ai-needs-attention）
+ *  6. 多 project 场景在 Note 开头加跨服务协调提示
+ *  7. 每个 MR 完成后写 bug_fix_events(code='ai_review')
+ */
 import type { TriggerOptions, TriggerResult } from '../coordinator.js'
-import type { ClaudeRunner } from '../claude-runner.js'
+import { registerCapabilityHandler } from '../coordinator.js'
+import {
+  createEvent,
+  findByReportCode,
+  findLatest,
+} from '../../db/repositories/bug-fix-events.js'
+import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
+import { runClaudeReview } from './claude-review.js'
+import { gitlabPostMrNote, gitlabUpdateMrLabels } from './gitlab-mr-note.js'
 
-let runner: ClaudeRunner | null = null
-export function setReviewClaudeRunner(r: ClaudeRunner): void { runner = r }
-
-const REVIEW_SYSTEM_PROMPT = `你是一个独立的代码审查专家。你的职责是审查 Merge Request 的 diff，从"这个改动有没有问题"的视角检查。
-
-## 审查清单
-1. **方案一致性**：改动是否与分析报告中的推荐方案一致？
-2. **遗漏检查**：是否还有遗漏的修改点？
-3. **代码质量**：变量命名、代码结构、错误处理是否合理？
-4. **安全检查**：是否引入 SQL 注入、XSS、敏感信息泄露等风险？
-5. **副作用**：改动是否影响其他模块？
-
-## 输出格式
-对每个问题给出：
-- 文件名 + 行号
-- 问题描述
-- 风险等级（high / medium / low）
-- 建议
-
-## 最终结论
-- **ai-approved**：无高风险问题，可以合并
-- **ai-needs-attention**：存在需要人工关注的问题
-
-你必须使用 review_mr_diff 工具读取 MR diff。
-`
-
-async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResult> {
-  const mrIid = opts.extraParams?.mrIid as number | undefined
-  const projectPath = opts.extraParams?.projectPath as string | undefined
-
-  if (!mrIid || !projectPath) {
-    return { success: false, error: '缺少 mrIid 或 projectPath' }
+export async function handleReviewMr(opts: TriggerOptions): Promise<TriggerResult> {
+  const reportId = Number(opts.extraParams?.reportId)
+  if (!reportId) {
+    return { success: false, error: 'missing_reportId', output: '参数错误: 缺少 reportId' }
   }
 
-  console.log(`[ReviewAgent] reviewing MR !${mrIid} in ${projectPath}`)
+  const report = await getBugAnalysisReportById(reportId)
+  if (!report) {
+    return { success: false, error: 'report_not_found', output: `报告 ${reportId} 不存在` }
+  }
 
-  if (!runner) return { success: false, error: 'ClaudeRunner 未初始化' }
+  const createMrEvents = await findByReportCode(reportId, 'create_mr')
+  const successMrs = createMrEvents.filter(e => e.status === 'success' && e.projectPath)
+  if (successMrs.length === 0) {
+    return { success: false, error: 'no_mrs', output: '无可 Review 的 MR（report 下没有 create_mr success 事件）' }
+  }
 
-  const tools = [getTool('review_mr_diff')].filter(Boolean) as any[]
+  const multiProject = successMrs.length > 1
+  const failures: string[] = []
+  const reviewed: Array<{ projectPath: string; mrIid: number; label: string; skipped: boolean }> = []
 
-  const rawOutput = await runner.executeCapabilityDirect({
-    prompt: `请审查 MR !${mrIid}（项目 ${projectPath}）。使用 review_mr_diff 工具读取 diff 后给出审查结论。`,
-    systemPrompt: REVIEW_SYSTEM_PROMPT,
-    context: opts.context,
-    tools,
-    sessionKey: `review-mr-${mrIid}`,
-  })
+  for (const mrEvent of successMrs) {
+    const projectPath = mrEvent.projectPath as string
+    const data = (mrEvent.data ?? {}) as Record<string, unknown>
+    const mrIid = data.mrIid as number
+    const fixBranch = typeof data.branch === 'string' ? data.branch : ''
 
-  const output = mask(rawOutput)
-  const approved = output.includes('ai-approved') || output.includes('可以合并') || output.includes('无高风险')
-  const label = approved ? 'ai-approved' : 'ai-needs-attention'
+    if (!fixBranch) {
+      failures.push(`${projectPath}#${mrIid}: create_mr 事件 data.branch 缺失，无法 acquire worktree`)
+      continue
+    }
 
-  // 在 MR 上添加 Review 结论标签
-  await updateMrLabels(projectPath, mrIid, { add: [label] }).catch(err =>
-    console.error(`[ReviewAgent] MR !${mrIid} label 更新失败:`, err)
-  )
+    // 幂等检查：若已有 ai_review 成功事件则跳过
+    const existing = await findLatest(reportId, projectPath, 'ai_review')
+    if (existing && existing.status === 'success') {
+      const existingLabel = ((existing.data as Record<string, unknown>).label as string) ?? 'unknown'
+      reviewed.push({ projectPath, mrIid, label: existingLabel, skipped: true })
+      continue
+    }
 
+    try {
+      const review = await runClaudeReview({
+        projectPath,
+        mrIid,
+        productLineId: report.productLineId,
+        fixBranch,
+        signal: opts.signal,
+      })
+
+      const body = buildReviewNoteBody({
+        label: review.label,
+        summary: review.summary,
+        multiProject,
+        totalMrs: successMrs.length,
+      })
+
+      await gitlabPostMrNote({ projectPath, mrIid, body })
+
+      await gitlabUpdateMrLabels({
+        projectPath,
+        mrIid,
+        labelToAdd: review.label,
+      }).catch(err =>
+        console.error(`[ReviewAgent] MR !${mrIid} label 更新失败:`, err instanceof Error ? err.message : String(err)),
+      )
+
+      await createEvent({
+        reportId,
+        projectPath,
+        code: 'ai_review',
+        status: 'success',
+        data: { label: review.label, mrIid, reviewSummary: review.summary },
+      })
+      reviewed.push({ projectPath, mrIid, label: review.label, skipped: false })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[ReviewAgent] MR ${projectPath}#${mrIid} review 失败:`, msg)
+      await createEvent({
+        reportId,
+        projectPath,
+        code: 'ai_review',
+        status: 'failed',
+        data: { mrIid, error: msg },
+      })
+      failures.push(`${projectPath}#${mrIid}: ${msg}`)
+    }
+  }
+
+  if (failures.length > 0) {
+    return {
+      success: false,
+      error: 'review_failed',
+      output: `部分 MR Review 失败: ${failures.join('; ')}`,
+    }
+  }
+
+  const summary = reviewed
+    .map(r => `${r.projectPath}#${r.mrIid}(${r.label}${r.skipped ? ',已存在' : ''})`)
+    .join(', ')
   return {
     success: true,
-    output: `Review 完成（${label}）:\n\n${output}`,
-    data: { label, mrIid },
+    output: `完成 Review ${reviewed.length} 个 MR: ${summary}`,
   }
+}
+
+function buildReviewNoteBody(p: {
+  label: string
+  summary: string
+  multiProject: boolean
+  totalMrs: number
+}): string {
+  const lines: string[] = []
+  if (p.multiProject) {
+    lines.push(`⚠️ 此为跨服务修复的一部分，请确保所有 ${p.totalMrs} 个 MR 都通过 Review 后再协调合并。`)
+    lines.push('')
+  }
+  lines.push('## 🤖 AI Review 结果')
+  lines.push('')
+  lines.push(`**结论：** ${p.label}`)
+  lines.push('')
+  lines.push(p.summary)
+  return lines.join('\n')
 }
 
 export function registerReviewHandler(): void {
   registerCapabilityHandler('ai_review_mr', handleReviewMr)
   console.log('[ReviewAgent] ai_review_mr handler registered')
 }
-
-export { REVIEW_SYSTEM_PROMPT }

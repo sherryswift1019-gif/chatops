@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar, Divider, Input } from 'antd'
+import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar, Divider, Input, theme } from 'antd'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, UserOutlined } from '@ant-design/icons'
 import { getTestRuns, getTestRun, resumeTestRun } from '../api/test-runs'
 import type { TestRunWithUser } from '../api/test-runs'
@@ -17,6 +17,7 @@ function formatDuration(ms: number): string {
 }
 
 export default function TestRunsPage() {
+  const { token } = theme.useToken()
   const [data, setData] = useState<TestRunWithUser[]>([])
   const [pipelines, setPipelines] = useState<TestPipeline[]>([])
   const [loading, setLoading] = useState(false)
@@ -179,7 +180,7 @@ export default function TestRunsPage() {
             </Descriptions>
 
             {selectedRun.errorMessage && (
-              <div style={{ background: '#fff2f0', border: '1px solid #ffa39e', padding: '8px 12px', borderRadius: 4, marginBottom: 16, fontSize: 13 }}>
+              <div style={{ background: token.colorErrorBg, border: `1px solid ${token.colorErrorBorder}`, padding: '8px 12px', borderRadius: 4, marginBottom: 16, fontSize: 13, color: token.colorErrorText }}>
                 {selectedRun.errorMessage}
               </div>
             )}
@@ -199,13 +200,13 @@ export default function TestRunsPage() {
                   <strong>{s.name}</strong> <Tag color={stageStatusColors[s.status]}>{s.status}</Tag>
                   {s.durationMs !== undefined && <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatDuration(s.durationMs)}</span>}
                   {s.output && (
-                    <pre style={{ background: '#f5f5f5', border: '1px solid #e8e8e8', borderRadius: 4, padding: '8px 12px', marginTop: 6, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto' }}>
+                    <pre style={{ background: token.colorFillTertiary, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 4, padding: '8px 12px', marginTop: 6, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto', color: token.colorText }}>
                       {s.output}
                     </pre>
                   )}
-                  {s.error && <div style={{ color: '#ff4d4f', fontSize: 12, marginTop: 4, background: '#fff2f0', padding: '4px 8px', borderRadius: 4 }}>{s.error}</div>}
+                  {s.error && <div style={{ color: token.colorErrorText, fontSize: 12, marginTop: 4, background: token.colorErrorBg, padding: '4px 8px', borderRadius: 4 }}>{s.error}</div>}
                   {s.aiAnalysis && (
-                    <div style={{ background: '#f0f5ff', border: '1px solid #adc6ff', borderRadius: 4, padding: '8px 12px', marginTop: 6, fontSize: 12 }}>
+                    <div style={{ background: token.colorInfoBg, border: `1px solid ${token.colorInfoBorder}`, borderRadius: 4, padding: '8px 12px', marginTop: 6, fontSize: 12, color: token.colorText }}>
                       <strong>🤖 AI 分析：</strong>
                       <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{s.aiAnalysis}</div>
                     </div>

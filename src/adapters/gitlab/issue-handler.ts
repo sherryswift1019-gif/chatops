@@ -1,6 +1,12 @@
-import { triggerCapability } from '../../agent/coordinator.js'
-import { getBugAnalysisReportByIssueId } from '../../db/repositories/bug-analysis-reports.js'
-import type { TaskContext } from '../../agent/tools/types.js'
+import { getPool } from '../../db/client.js'
+import {
+  getBugAnalysisReportById,
+  updateReportStatus,
+} from '../../db/repositories/bug-analysis-reports.js'
+import { createEvent } from '../../db/repositories/bug-fix-events.js'
+
+// TODO: 保留 webhook 接收做 Bug 修复实例生命周期闭环（MR merge/close → status 同步）
+//       Label/MR-created 的 capability 分发已废除，改由 Pipeline 内部驱动
 
 interface GitLabIssueEvent {
   object_kind: 'issue'
@@ -36,63 +42,64 @@ interface GitLabMergeRequestEvent {
   }
 }
 
-function getNewLabels(event: GitLabIssueEvent): string[] {
-  const prev = new Set((event.changes?.labels?.previous ?? []).map(l => l.title))
-  return (event.changes?.labels?.current ?? []).filter(l => !prev.has(l.title)).map(l => l.title)
-}
-
-function getCurrentLabels(event: GitLabIssueEvent): string[] {
-  return (event.object_attributes.labels ?? []).map(l => l.title)
-}
-
-function buildSystemContext(event: { project: { path_with_namespace: string } }): TaskContext {
-  return {
-    taskId: `gitlab-webhook-${Date.now()}`,
-    groupId: 'system',
-    platform: 'gitlab',
-    initiatorId: 'gitlab-webhook',
-    initiatorRole: 'admin',
-  }
-}
-
+/**
+ * Issue webhook：老的 label 驱动 fix_bug_l3 分支已废除（由 Pipeline 驱动）。
+ * 这里仅记日志，保留函数签名供 webhook-receiver 调用。
+ */
 export async function handleIssueEvent(event: GitLabIssueEvent): Promise<void> {
-  const issueIid = event.object_attributes.iid
-  const action = event.object_attributes.action
-  const newLabels = getNewLabels(event)
-  const allLabels = getCurrentLabels(event)
-
-  console.log(`[GitLab] Issue #${issueIid} action=${action}, new labels: [${newLabels.join(',')}]`)
-
-  // Label 状态机驱动
-  if (newLabels.includes('approved')) {
-    // L3 方案审批通过 → 触发修复
-    const report = await getBugAnalysisReportByIssueId(issueIid)
-    if (report) {
-      console.log(`[GitLab] Issue #${issueIid} approved → triggering fix_bug_l3`)
-      triggerCapability({
-        capabilityKey: 'fix_bug_l3',
-        context: buildSystemContext(event),
-        extraParams: { reportId: report.id, issueId: issueIid },
-      }).catch(err => console.error(`[GitLab] fix_bug_l3 trigger failed:`, err))
-    }
-  }
+  const issueIid = event.object_attributes?.iid
+  const action = event.object_attributes?.action
+  console.log(`[GitLab] issue webhook ignored: #${issueIid} action=${action}`)
 }
 
+/**
+ * MR webhook：仅处理 merge/close 两个终态动作，用于 Bug 修复实例生命周期闭环：
+ *   - action='merge' → bug_analysis_reports.status = 'completed'
+ *   - action='close' → bug_analysis_reports.status = 'aborted'
+ * 其它 action（open/update/reopen/approved 等）一律忽略——由 Pipeline 自己驱动。
+ */
 export async function handleMergeRequestEvent(event: GitLabMergeRequestEvent): Promise<void> {
-  const mrIid = event.object_attributes.iid
-  const action = event.object_attributes.action
-  const projectPath = event.project.path_with_namespace
-  const labels = (event.object_attributes.labels ?? []).map(l => l.title)
+  const mrIid = event.object_attributes?.iid
+  const action = event.object_attributes?.action
+  const projectPath = event.project?.path_with_namespace
 
-  console.log(`[GitLab] MR !${mrIid} action=${action}, labels: [${labels.join(',')}]`)
-
-  // MR 创建且含 ai-generated label → 触发 AI Review
-  if (action === 'open' && labels.includes('ai-generated')) {
-    console.log(`[GitLab] MR !${mrIid} is ai-generated → triggering ai_review_mr`)
-    triggerCapability({
-      capabilityKey: 'ai_review_mr',
-      context: buildSystemContext(event),
-      extraParams: { mrIid, projectPath },
-    }).catch(err => console.error(`[GitLab] ai_review_mr trigger failed:`, err))
+  if (action !== 'merge' && action !== 'close') {
+    console.log(`[GitLab] MR !${mrIid} action=${action} ignored`)
+    return
   }
+  if (!mrIid || !projectPath) return
+
+  // 反查 create_mr 事件 → 定位 report
+  const { rows } = await getPool().query(
+    `SELECT report_id FROM bug_fix_events
+     WHERE code = 'create_mr'
+       AND project_path = $1
+       AND (data->>'mrIid')::int = $2
+     ORDER BY id DESC LIMIT 1`,
+    [projectPath, mrIid],
+  )
+  if (rows.length === 0) {
+    console.log(`[GitLab] MR ${projectPath}!${mrIid} not managed by us, skip`)
+    return
+  }
+
+  const reportId = rows[0].report_id as number
+  const report = await getBugAnalysisReportById(reportId)
+  if (!report) return
+
+  // 幂等：已是终态则跳过，不重复写事件
+  if (report.status === 'completed' || report.status === 'aborted') {
+    console.log(`[GitLab] report ${reportId} already terminal (${report.status}), skip`)
+    return
+  }
+
+  const targetStatus = action === 'merge' ? 'completed' : 'aborted'
+  await updateReportStatus(reportId, targetStatus)
+  await createEvent({
+    reportId,
+    projectPath,
+    code: 'lifecycle_sync',
+    data: { mrIid, mrAction: action, targetStatus },
+  })
+  console.log(`[GitLab] report ${reportId} → ${targetStatus} (MR ${action})`)
 }

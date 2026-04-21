@@ -30,6 +30,12 @@ export async function adminPlugin(app: FastifyInstance, opts: { adapters?: IMAda
   // Session middleware — must be registered before any route definition
   await app.register(sessionPlugin)
 
+  // E2E 测试控制端点（仅在 E2E_MODE=1 时装载，且必须注册在 requireAuth 之前以跳过 auth）
+  if (process.env.E2E_MODE === '1') {
+    const { e2eRoutes } = await import('./routes/_e2e.js')
+    await app.register(e2eRoutes)
+  }
+
   // preHandler runs on every /admin/* request. Whitelist handled inside requireAuth.
   app.addHook('preHandler', requireAuth)
 

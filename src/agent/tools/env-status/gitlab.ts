@@ -1,6 +1,6 @@
 import axios from 'axios'
 import https from 'https'
-import { getConfig } from '../../../db/repositories/system-config.js'
+import { resolveGitlabConfig } from '../../../config/gitlab.js'
 
 export interface LatestCommit {
   commitId: string
@@ -15,15 +15,12 @@ export interface CompareResult {
 }
 
 async function gitlabConfig(): Promise<{ url: string; token: string; agent?: https.Agent } | null> {
-  const cfg = await getConfig('gitlab')
-  if (!cfg) return null
-  const v = cfg.value as Record<string, string>
-  if (!v.url || !v.token) return null
-  const skip = v.skipTlsVerify === 'true' || v.skipTlsVerify === (true as unknown as string)
+  const { url, token, skipTlsVerify } = await resolveGitlabConfig()
+  if (!url || !token) return null
   return {
-    url: v.url,
-    token: v.token,
-    agent: skip ? new https.Agent({ rejectUnauthorized: false }) : undefined,
+    url,
+    token,
+    agent: skipTlsVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined,
   }
 }
 

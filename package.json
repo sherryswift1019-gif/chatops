@@ -7,8 +7,11 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "node --import tsx/esm src/server.ts",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
     "migrate": "tsx src/db/migrate.ts",
     "seed": "docker exec -i chatops-postgres-1 psql -U chatops -d chatops < src/db/seed.sql"
   },
@@ -33,17 +36,21 @@
     "fastify": "^5.8.4",
     "fastify-plugin": "^5.1.0",
     "node-cron": "^4.2.1",
+    "p-limit": "^7.3.0",
     "pg": "^8.20.0",
     "ssh2": "^1.17.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/archiver": "^7.0.0",
     "@types/bcryptjs": "^3.0.0",
+    "@types/express": "^5.0.6",
     "@types/node": "^25.6.0",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.20.0",
     "@types/ssh2": "^1.15.5",
+    "express": "^5.2.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.4"

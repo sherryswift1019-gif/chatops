@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import axios from 'axios'
 import https from 'https'
 import { getAllConfig, getConfig, setConfig } from '../../db/repositories/system-config.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { listProductLines, createProductLine } from '../../db/repositories/product-lines.js'
 import { listMembers, addMember } from '../../db/repositories/product-line-members.js'
 import { listEnvironments, createEnvironment } from '../../db/repositories/environments-repo.js'
@@ -108,17 +109,15 @@ export async function registerSystemConfigRoutes(
   // ── GitLab test connection ─────────────────────────────────────────────
 
   app.post('/system-config/gitlab/test', async (_req, reply) => {
-    const cfg = await getConfig('gitlab')
-    const v = (cfg?.value ?? {}) as Record<string, string>
-    if (!v.url || !v.token) {
+    const { url, token, skipTlsVerify } = await resolveGitlabConfig()
+    if (!url || !token) {
       return reply.send({ ok: false, error: 'GitLab URL 或 Token 未配置，请先保存后再测试' })
     }
-    const skip = v.skipTlsVerify === 'true' || v.skipTlsVerify === (true as unknown as string)
-    const httpsAgent = skip ? new https.Agent({ rejectUnauthorized: false }) : undefined
+    const httpsAgent = skipTlsVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined
     try {
       const res = await axios.get<{ id: number; username: string; name: string; email?: string }>(
-        `${v.url.replace(/\/$/, '')}/api/v4/user`,
-        { headers: { 'PRIVATE-TOKEN': v.token }, httpsAgent, timeout: 10000 }
+        `${url.replace(/\/$/, '')}/api/v4/user`,
+        { headers: { 'PRIVATE-TOKEN': token }, httpsAgent, timeout: 10000 }
       )
       return reply.send({
         ok: true,

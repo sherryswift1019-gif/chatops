@@ -51,6 +51,8 @@ export async function requireAuth(req: FastifyRequest, reply: FastifyReply): Pro
   const path = req.url.startsWith('/admin') ? req.url.slice('/admin'.length) : req.url
   const pathNoQuery = path.split('?')[0]
   if (WHITELIST.includes(pathNoQuery)) return
+  // E2E 测试控制端点（仅在 E2E_MODE=1 时由 adminPlugin 注册，本身就是开关）
+  if (process.env.E2E_MODE === '1' && pathNoQuery.startsWith('/_e2e/')) return
 
   const username = req.session.get('username')
   if (!username) {

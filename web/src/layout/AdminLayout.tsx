@@ -14,7 +14,6 @@ import {
   BugOutlined,
   BookOutlined,
   DashboardOutlined,
-  UserSwitchOutlined,
 } from '@ant-design/icons'
 import { me, logout, type MeResponse } from '../api/auth'
 
@@ -30,7 +29,6 @@ const PAGE_NAMES: Record<string, string> = {
   '/test-pipelines': '流水线管理',
   '/test-runs': '执行记录',
   '/bug-runs': 'Bug 修复实例',
-  '/module-owners': '模块负责人',
   '/product-knowledge': '知识库配置',
   '/metrics': '价值仪表盘',
 }
@@ -60,7 +58,6 @@ const menuItems = [
     label: '研发 AI 助手',
     children: [
       { key: '/bug-runs', icon: <BugOutlined />, label: 'Bug 修复实例' },
-      { key: '/module-owners', icon: <UserSwitchOutlined />, label: '模块负责人' },
       { key: '/product-knowledge', icon: <BookOutlined />, label: '知识库配置' },
       { key: '/metrics', icon: <DashboardOutlined />, label: '价值仪表盘' },
     ],

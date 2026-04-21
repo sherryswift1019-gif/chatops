@@ -20,7 +20,6 @@ const TestPipelinesPage      = lazy(() => import('./pages/TestPipelinesPage'))
 const TestRunsPage           = lazy(() => import('./pages/TestRunsPage'))
 // 研发 AI 助手页面
 const BugRunsPage            = lazy(() => import('./pages/BugRunsPage'))
-const ModuleOwnersPage       = lazy(() => import('./pages/ModuleOwnersPage'))
 const ProductKnowledgePage   = lazy(() => import('./pages/ProductKnowledgePage'))
 const MetricsPage            = lazy(() => import('./pages/MetricsPage'))
 
@@ -202,9 +201,6 @@ export default function App() {
             {/* 研发 AI 助手 */}
             <Route path="/bug-runs" element={
               <Suspense fallback={null}><BugRunsPage /></Suspense>
-            } />
-            <Route path="/module-owners" element={
-              <Suspense fallback={null}><ModuleOwnersPage /></Suspense>
             } />
             <Route path="/product-knowledge" element={
               <Suspense fallback={null}><ProductKnowledgePage /></Suspense>

@@ -120,16 +120,15 @@ export interface BugAnalysisReport {
   rootCauseSummary: string | null; solutionsJson: Solution[]
   affectedModules: string[] | null; analysisSteps: string[] | null
   metadata: Record<string, unknown> | null; status: string
+  pipelineRunId: number | null; primaryProjectPath: string | null
+  triggeredBy: string | null
   createdAt: string; updatedAt: string
+  productLineName?: string
+  completedAt: string | null
 }
 
 export interface Solution {
   id: string; summary: string; recommended: boolean; risk: string; effort: string
-}
-
-export interface ModuleOwner {
-  id: number; productLineId: number; modulePattern: string
-  ownerUserId: string; backupOwnerUserId: string | null; createdAt: string
 }
 
 export interface ProductKnowledgeRepo {

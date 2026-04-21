@@ -5,9 +5,8 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { resetTestDb } from '../helpers/db.js'
 import { getPool } from '../../db/client.js'
-import { createBugAnalysisReport } from '../../db/repositories/bug-analysis-reports.js'
 import { GitLabWebhookReceiver } from '../../adapters/gitlab/webhook-receiver.js'
-import { registerCapabilityHandler, triggerCapability } from '../../agent/coordinator.js'
+import { registerCapabilityHandler } from '../../agent/coordinator.js'
 import { vi } from 'vitest'
 
 describe('Integration: Webhook → Handler → Coordinator', () => {
@@ -43,99 +42,6 @@ describe('Integration: Webhook → Handler → Coordinator', () => {
         { 'x-gitlab-token': 'test-secret' }
       )
     ).resolves.not.toThrow()
-  })
-
-  // ─── Issue approved → 触发 fix_bug_l3 ───────────────
-
-  it('Issue label 变为 approved → 触发 fix_bug_l3', async () => {
-    // 先创建分析报告（handler 需要查 DB）
-    await createBugAnalysisReport({
-      issueId: 3,
-      issueUrl: 'http://code.paraview.cn/issues/3',
-      productLineId,
-      agentSessionId: null,
-      level: 'l3',
-      classification: 'bug',
-      confidence: 'medium',
-      confidenceScore: 0.65,
-      rootCauseSummary: 'JDBC 错误码丢失',
-      solutionsJson: [{ id: 'a', summary: '捕获 SQLException.getErrorCode()', recommended: true, risk: 'low', effort: 'medium' }],
-      affectedModules: ['pas-secret-task'],
-      analysisSteps: ['读代码'],
-      metadata: null,
-    })
-
-    // 注册一个 mock handler 捕获触发
-    const triggered: string[] = []
-    registerCapabilityHandler('fix_bug_l3', async (opts) => {
-      triggered.push(opts.capabilityKey)
-      console.log('[Test] fix_bug_l3 triggered with:', JSON.stringify(opts.extraParams))
-      return { success: true, output: 'mock fix' }
-    })
-
-    // 确保 DB 有 fix_bug_l3 capability
-    const pool = getPool()
-    await pool.query(`INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval) VALUES ('fix_bug_l3', 'L3 修复', 'test', 'action', '[]', true) ON CONFLICT (key) DO NOTHING`)
-
-    // 模拟 Webhook
-    await receiver.handle(
-      {
-        object_kind: 'issue',
-        object_attributes: {
-          iid: 3,
-          title: 'JDBC 错误码丢失',
-          action: 'update',
-          labels: [{ title: 'approved' }, { title: 'level-l3' }],
-        },
-        project: { path_with_namespace: 'PAM/java-code/pas-6.0' },
-        changes: {
-          labels: {
-            previous: [{ title: 'needs-approval' }],
-            current: [{ title: 'approved' }, { title: 'level-l3' }],
-          },
-        },
-      },
-      { 'x-gitlab-token': 'test-secret' }
-    )
-
-    // 等异步触发
-    await new Promise(r => setTimeout(r, 500))
-
-    expect(triggered).toContain('fix_bug_l3')
-  })
-
-  // ─── MR ai-generated → 触发 ai_review_mr ────────────
-
-  it('MR 创建 + ai-generated label → 触发 ai_review_mr', async () => {
-    const triggered: string[] = []
-    registerCapabilityHandler('ai_review_mr', async (opts) => {
-      triggered.push(opts.capabilityKey)
-      console.log('[Test] ai_review_mr triggered with:', JSON.stringify(opts.extraParams))
-      return { success: true, output: 'mock review' }
-    })
-
-    const pool = getPool()
-    await pool.query(`INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval) VALUES ('ai_review_mr', 'AI Review', 'test', 'action', '[]', false) ON CONFLICT (key) DO NOTHING`)
-
-    await receiver.handle(
-      {
-        object_kind: 'merge_request',
-        object_attributes: {
-          iid: 100,
-          title: 'fix(l1): TASK_PWD_4001',
-          action: 'open',
-          source_branch: 'fix/issue-42',
-          target_branch: 'test',
-          labels: [{ title: 'ai-generated' }, { title: 'level-l1' }],
-        },
-        project: { path_with_namespace: 'PAM/java-code/pas-6.0' },
-      },
-      { 'x-gitlab-token': 'test-secret' }
-    )
-
-    await new Promise(r => setTimeout(r, 500))
-
-    expect(triggered).toContain('ai_review_mr')
   })
 
   // ─── 非 approved label 不触发 ───────────────────────

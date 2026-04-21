@@ -17,7 +17,9 @@ import {
 import { createStat } from '../../db/repositories/bug-analysis-stats.js'
 import { } from '../../agent/coordinator.js'
 
-describe('Integration: 分析后续链路', () => {
+// 包含 create_issue 真实调 GitLab 等外部依赖。CI 默认 skip；
+// 本地 RUN_CLAUDE_TESTS=1 + 配置 GITLAB_URL/TOKEN 后可跑。
+describe.skipIf(!process.env.RUN_CLAUDE_TESTS)('Integration: 分析后续链路', () => {
   let productLineId: number
 
   beforeAll(async () => {

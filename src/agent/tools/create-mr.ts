@@ -1,6 +1,7 @@
 import { registerTool } from './index.js'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 import axios from 'axios'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 const createMrTool: AgentTool = {
   name: 'create_mr',
@@ -25,10 +26,9 @@ const createMrTool: AgentTool = {
       sourceBranch: string; targetBranch: string; labels?: string
     }
 
-    const gitlabUrl = process.env.GITLAB_URL
-    const gitlabToken = process.env.GITLAB_TOKEN
+    const { url: gitlabUrl, token: gitlabToken } = await resolveGitlabConfig()
     if (!gitlabUrl || !gitlabToken) {
-      return { success: false, output: '缺少 GITLAB_URL 或 GITLAB_TOKEN 环境变量' }
+      return { success: false, output: '缺少 GitLab 配置（请在 admin UI 或 .env 中设置 URL 和 Token）' }
     }
 
     try {

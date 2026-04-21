@@ -40,5 +40,21 @@ await pool.query(schemaV10)
 const schemaV11 = readFileSync(join(__dirname, 'schema-v11.sql'), 'utf8')
 await pool.query(schemaV11)
 
+const schemaV12 = readFileSync(join(__dirname, 'schema-v12.sql'), 'utf8')
+await pool.query(schemaV12)
+console.log('[migrate] schema-v12 applied')
+
+const schemaV13 = readFileSync(join(__dirname, 'schema-v13.sql'), 'utf8')
+await pool.query(schemaV13)
+console.log('[migrate] schema-v13 applied')
+
+const schemaV14 = readFileSync(join(__dirname, 'schema-v14.sql'), 'utf8')
+await pool.query(schemaV14)
+console.log('[migrate] schema-v14 applied')
+
+const schemaV15 = readFileSync(join(__dirname, 'schema-v15.sql'), 'utf8')
+await pool.query(schemaV15)
+console.log('[migrate] schema-v15 applied')
+
 await pool.end()
-console.log('✅ Database schema applied (v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11)')
+console.log('✅ Database schema applied (v1 ~ v15, 含 completed_at + triggered_by)')

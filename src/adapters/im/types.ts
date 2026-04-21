@@ -12,6 +12,11 @@ export interface InteractiveCard {
   body: string
   actions: CardAction[]
   callbackData: Record<string, string>
+  /**
+   * 可选：模板变量 map（用于钉钉 AI 卡片 / 互动卡片等带模板的场景）。
+   * 不填则 adapter 用 { title, body } 作默认 cardParamMap。
+   */
+  templateParams?: Record<string, string>
 }
 
 export interface CardAction {

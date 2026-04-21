@@ -49,6 +49,12 @@ export async function getProjectById(id: number): Promise<Project | null> {
   return rows[0] ? mapRow(rows[0]) : null
 }
 
+export async function getProjectByGitlabPath(gitlabPath: string): Promise<Project | null> {
+  const pool = getPool()
+  const { rows } = await pool.query('SELECT * FROM projects WHERE gitlab_path = $1 LIMIT 1', [gitlabPath])
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
 export async function createProject(
   data: Pick<Project, 'productLineId' | 'name' | 'displayName'> &
     Partial<Pick<Project, 'gitlabPath' | 'harborProject' | 'ownerId' | 'ownerName' | 'dockerContainerName' | 'k8sProjectName' | 'composePath' | 'description'>>

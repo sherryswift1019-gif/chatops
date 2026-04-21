@@ -19,7 +19,9 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-describe('Integration: Worktree + MCP 读代码链路', () => {
+// 需真实 git 二进制 + GitLab 网络 + Claude CLI。CI 容器默认无 git 可执行文件，
+// 且 Claude CLI 拒 root。本地带 RUN_CLAUDE_TESTS=1 可跑。
+describe.skipIf(!process.env.RUN_CLAUDE_TESTS)('Integration: Worktree + MCP 读代码链路', () => {
   let productLineId: number
 
   beforeAll(async () => {
