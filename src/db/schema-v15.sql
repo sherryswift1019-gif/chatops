@@ -1,5 +1,7 @@
 -- ============================================================
--- schema-v13: Bind a default pipeline to a capability (IM-triggered)
+-- schema-v15: Bind a default pipeline to a capability (IM-triggered)
+-- 原本命名为 schema-v13；因 upstream 在 main 上已占用 v13（handover），
+-- 合并 main 时挪号到 v15。
 -- ============================================================
 --
 -- 当 IM 消息触发某 capability 时，若 default_pipeline_id 非空，
@@ -40,7 +42,7 @@ BEGIN
   -- 选最小 id 的产线作为 demo 承载体；生产上应由运维显式指定
   SELECT id INTO v_pl_id FROM product_lines ORDER BY id LIMIT 1;
   IF v_pl_id IS NULL THEN
-    RAISE NOTICE 'schema-v13 seed: no product_lines, skipping deploy-im-demo';
+    RAISE NOTICE 'schema-v15 seed: no product_lines, skipping deploy-im-demo';
     RETURN;
   END IF;
 
@@ -110,9 +112,9 @@ BEGIN
       true
     )
     RETURNING id INTO v_pipeline_id;
-    RAISE NOTICE 'schema-v13 seed: deploy-im-demo pipeline created id=%', v_pipeline_id;
+    RAISE NOTICE 'schema-v15 seed: deploy-im-demo pipeline created id=%', v_pipeline_id;
   ELSE
-    RAISE NOTICE 'schema-v13 seed: deploy-im-demo pipeline already exists id=%', v_pipeline_id;
+    RAISE NOTICE 'schema-v15 seed: deploy-im-demo pipeline already exists id=%', v_pipeline_id;
   END IF;
 
   -- 把 deploy capability 绑到 deploy-im-demo（若未绑定）

@@ -7,3 +7,4 @@ web/dist/
 .agent/
 .claude/
 _bmad/
+web/tsconfig.tsbuildinfo
