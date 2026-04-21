@@ -32,8 +32,9 @@ import {
   type FinalizeMeta,
   type PipelineRunResult,
 } from './graph-runner.js'
+import { linearizeStages } from './graph-migration.js'
 import type { StageContextBase } from './graph-builder.js'
-import type { StageDefinition, ServerInfo, ArtifactInput } from './types.js'
+import type { StageDefinition, ServerInfo, ArtifactInput, PipelineGraph } from './types.js'
 
 const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
@@ -134,6 +135,7 @@ export async function runPipeline(
   if (serverIds.length > 0) await bulkSetServerStatus(serverIds, 'in_use')
 
   const stages = pipeline.stages as StageDefinition[]
+  const pipelineGraph: PipelineGraph = (pipeline.graph as PipelineGraph | null) ?? linearizeStages(stages)
 
   const stageContext: StageContextBase = {
     runId: run.id,
@@ -170,6 +172,7 @@ export async function runPipeline(
     runId: run.id,
     pipelineId: pipeline.id,
     stages,
+    pipelineGraph,
     stageContext,
     hooks,
     triggerParams,

@@ -19,6 +19,7 @@ import { Command } from '@langchain/langgraph'
 import { getCheckpointer } from './graph-runtime.js'
 import {
   buildGraphFromStages,
+  buildGraphFromPipeline,
   APPROVAL_INTERRUPT,
   WEBHOOK_INTERRUPT,
   type StageHooks,
@@ -26,7 +27,8 @@ import {
   type ApprovalInterruptValue,
   type WebhookInterruptValue,
 } from './graph-builder.js'
-import type { StageDefinition, ServerInfo } from './types.js'
+import { linearizeStages } from './graph-migration.js'
+import type { StageDefinition, ServerInfo, PipelineGraph } from './types.js'
 import type { StageResult } from '../db/repositories/test-runs.js'
 import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import {
@@ -53,6 +55,7 @@ export interface RunContext {
   pipelineId: number
   stageContext: StageContextBase
   stages: StageDefinition[]
+  pipelineGraph?: PipelineGraph
   hooks: StageHooks
   triggerParams?: Record<string, unknown>
 }
@@ -190,12 +193,19 @@ async function streamGraph(
   inputOrCommand: InitialInput | Command,
 ): Promise<void> {
   const saver = await getCheckpointer()
-  const graphBuilder = buildGraphFromStages({
-    stages: ctx.stages,
-    stageContext: ctx.stageContext,
-    hooks: ctx.hooks,
-    triggerParams: ctx.triggerParams,
-  })
+  const graphBuilder = ctx.pipelineGraph
+    ? buildGraphFromPipeline({
+        graph: ctx.pipelineGraph,
+        stageContext: ctx.stageContext,
+        hooks: ctx.hooks,
+        triggerParams: ctx.triggerParams,
+      })
+    : buildGraphFromStages({
+        stages: ctx.stages,
+        stageContext: ctx.stageContext,
+        hooks: ctx.hooks,
+        triggerParams: ctx.triggerParams,
+      })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const compiled = (graphBuilder as any).compile({ checkpointer: saver })
   const config = { configurable: { thread_id: String(ctx.runId) } }
@@ -465,12 +475,19 @@ export async function getPendingInterrupt(
   const ctx = await reloadContext(runId)
   if (!ctx) return null
   const saver = await getCheckpointer()
-  const graphBuilder = buildGraphFromStages({
-    stages: ctx.stages,
-    stageContext: ctx.stageContext,
-    hooks: ctx.hooks,
-    triggerParams: ctx.triggerParams,
-  })
+  const graphBuilder = ctx.pipelineGraph
+    ? buildGraphFromPipeline({
+        graph: ctx.pipelineGraph,
+        stageContext: ctx.stageContext,
+        hooks: ctx.hooks,
+        triggerParams: ctx.triggerParams,
+      })
+    : buildGraphFromStages({
+        stages: ctx.stages,
+        stageContext: ctx.stageContext,
+        hooks: ctx.hooks,
+        triggerParams: ctx.triggerParams,
+      })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const compiled = (graphBuilder as any).compile({ checkpointer: saver })
   const config = { configurable: { thread_id: String(runId) } }
@@ -531,6 +548,7 @@ async function reloadContext(runId: number): Promise<RunContext | null> {
 
   const logDir = join(DATA_DIR, String(runId))
   const stages = pipeline.stages as StageDefinition[]
+  const pipelineGraph = (pipeline.graph as PipelineGraph | null) ?? linearizeStages(stages)
   const hooks = buildDefaultHooks(logDir)
 
   const stageContext: StageContextBase = {
@@ -549,6 +567,7 @@ async function reloadContext(runId: number): Promise<RunContext | null> {
     runId,
     pipelineId: pipeline.id,
     stages,
+    pipelineGraph,
     stageContext,
     hooks,
     triggerParams: pipeline.triggerParams,
