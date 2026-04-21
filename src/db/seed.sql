@@ -475,9 +475,8 @@ ON CONFLICT (id) DO UPDATE SET
 INSERT INTO test_pipelines (id, product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
 VALUES (3,
   (SELECT id FROM product_lines WHERE name = 'pam'),
-  'L3-业务逻辑', '需要理解业务上下文才能判断对错。如流程判断错误、权限规则遗漏、状态机转换错误',
+  'L3-业务逻辑', '业务逻辑类 Bug。当前 approval-manager legacy API 废弃（main 的 LangGraph 改造后 requestApproval throws），L3 退化走 L2 流程（跳过方案审批，直接修复）。审批流程恢复需等接入 graph-runner approval stage（TODO §11）。',
   '[
-    {"name":"方案审批","stageType":"capability","capabilityKey":"approve_l3","timeoutSeconds":3600,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}","approvalTimeoutMs":3600000}},
     {"name":"L3 修复","stageType":"capability","capabilityKey":"fix_bug_l3","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
     {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
     {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},

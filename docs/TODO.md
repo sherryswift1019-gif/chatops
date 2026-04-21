@@ -413,3 +413,82 @@ app.post('/bug-reports/:id/retry', async (req, reply) => {
 **优先级**：中-高（fire-and-forget 暂时缓解了 UX，但语义错误 + 成本浪费都是硬伤）
 
 **实施时机**：当前 Porygon / ai_review_mr worktree / 强制终止按钮 / Issue 7 段模板 / retry 异步化 这一批改动 commit 并稳定 2-3 天后再做。
+
+---
+
+## 11. Handover 区块字段契约错配（接手人 / 修复分支 / 失败摘要 三字段常显 `—`）
+
+**背景**：2026-04-21 查看 BugRunDetailDrawer 的"Handover"区块（[BugRunDetailDrawer.tsx:361-395](../web/src/components/BugRunDetailDrawer.tsx#L361-L395)），发现**3 个字段常年为 `—`**：接手人 / 修复分支 / 失败摘要。根因是前端读的字段名 vs 后端 [request-handover-handler.ts:150-160](../src/agent/handover/request-handover-handler.ts#L150-L160) 写入的字段名**不对齐**，加上"失败摘要"源头根本没生产过。
+
+**现状**：
+
+| 前端读 | 后端 handover 事件写 | 状况 |
+|---|---|---|
+| `reason` | `reason` | ✅ |
+| `attemptCount` | `attemptCount` | ✅ |
+| `owner` | **没写** | ❌ 空 |
+| `fixBranchUrl` / `branchUrl` | 只写了 `fixBranch`（分支名，不是 URL） | ❌ 空 |
+| `failureSummary` | **没写**（只有 `failedAt`=stage 名） | ❌ 空 |
+
+**相关数据已有处**：
+- owner 实际**在同一 report 的 `notify` 事件 data 里**（HandoverBlock 没 fallback 过去拿）
+- fix-runner 每次失败的 error 在 `bug_fix_events.code='fix_bug_l1/l2/l3'.data` 里（没汇总给 handover）
+
+**待做**（3 个子决策，你定方向我改）：
+
+1. **接手人**
+   - A. 前端 HandoverBlock 从同 report 的 notify 事件 fallback 读 owner（改动小，UI 层对齐）
+   - B. 后端 handover 事件 data 也冗余写 owner（数据冗余但单事件自包含）
+
+2. **修复分支**
+   - A. 前端读 `fixBranch` + 前端自己拼 GitLab URL 展示（依赖前端知道 GitLab base URL）
+   - B. 后端同时写 `fixBranch`（分支名）+ `fixBranchUrl`（完整 URL）
+
+3. **失败摘要**
+   - 需要 fix-runner 失败时把最后一次 error 的摘要传给 `checkAndTriggerHandover(...)`，在 handover 事件 data 里落 `failureSummary`
+   - 改动范围：fix-runner 层聚合 + handover handler 参数扩展 + data schema 扩展
+   - 前端原样渲染 `data.failureSummary`
+
+**决策/阻塞点**：
+- 是否愿意后端做数据冗余（owner/fixBranchUrl）换取单事件自包含，还是保持前端 fallback 拼接
+- 失败摘要一项工作量最大，可以和 §6（Issue 7 段模板里的"补充材料"）并轨考虑——两者都要求更结构化的错误证据
+- 不影响主流程（只影响详情页可读性），无阻塞，排期看
+
+---
+
+## 11. L3 审批能力恢复（迁移到 graph-runner approval stage）
+
+**背景**：2026-04-21 合并 main 到 dev 时，main 的 LangGraph 改造把 `PipelineApprovalManager.requestApproval` / `tryHandleCommand` 等 legacy API 换成 `throw Error('legacy API removed')`，主线改走 graph-runner 的 approval interrupt + `requestCard`。dev 分支保留的 `approve-l3-handler.ts` 还在调用 legacy `requestApproval`，运行时必崩。
+
+**应急处理（已做）**：
+- seed.sql L3 pipeline stages 删除 `approve_l3` stage，退化为 L2 流程（fix_bug_l3 → create_mr → ai_review → notify，无审批）
+- `approve-l3-handler.ts` 内 `requestApproval` 调用从 4 参改 3 参，让编译过（运行时仍会 throw，但 L3 pipeline 不再调此路径）
+- `claude-runner.ts` Step 0 的群内命令 fallback 整块删除（tryHandleCommand 已移除）
+- `_e2e.ts` 两个审批测试 endpoint 返回 `deprecated: true` 占位
+
+**效果**：L1/L2/L3/L4 流程都能跑，但 L3 失去"方案审批"环节，与 L2 同构。
+
+**待恢复（完整 L3 审批）**：
+
+主线 main 的审批机制：
+- pipeline stage 用 `stageType:'approval'` + `approverIds`（不是 capability）
+- graph-runner 跑到此 stage 触发 `interrupt(APPROVAL_INTERRUPT, { approverIds, description })`
+- `initGraphRunnerDispatchers` 里监听 interrupt → 调 `PipelineApprovalManager.requestCard` 发钉钉互动卡片
+- 用户点卡片按钮 → Stream TOPIC_CARD → server.ts onCardAction → `mgr.handleCallback` → Command.resume 恢复 graph
+
+**主要挑战**：`approverIds` 在 approval stage 定义时要求**静态列表**，而 approve_l3 原设计是**运行时动态查 primary owner**（先 `projects.owner_id` 再 fallback `module_owners`）。
+
+**迁移方案**（草案）：
+
+1. **pipeline stage 加 shim 变量**：seed.sql L3 pipeline 加回一条 approval stage，`approverIds: ["{{variables.primaryOwnerId}}"]`
+2. **coordinator 预计算 owner**：触发 L3 pipeline 时，`handleAnalysisComplete` 先查 primary project owner，写入 `triggerParams.primaryOwnerId` 或 `variables.primaryOwnerId`
+3. **graph-builder 模板解析**：如果当前 graph-builder 不支持 `approverIds` 模板展开，加一段 substitution 逻辑
+4. **多 project FYI DM**：原 approve-l3-handler 还发 FYI DM 给非主 owner 让他们知情。迁移时需要在 approval stage 前补一个 capability stage（或扩展 graph-runner 的 interrupt payload）发 FYI
+5. **删除 approve-l3-handler.ts + register 调用 + e2e 占位 endpoint**
+6. **seed.sql 恢复 L3 pipeline 的"方案审批"stage**（用 stageType:'approval' 新语义）
+
+**改动规模**：~1-2 天（含多 project FYI DM 迁移、端到端测试）
+
+**优先级**：**高**（L3 审批是产品核心能力，不能长期缺失）
+
+**阻塞点**：等 merge 的这一批改动上线稳定后立刻做；在稳定前优先保证 L1/L2/L4 可用。
