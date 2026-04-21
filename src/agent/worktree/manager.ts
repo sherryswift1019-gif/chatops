@@ -81,15 +81,22 @@ async function ensureMainRepo(product: string, repoUrl: string): Promise<string>
 
   if (existsSync(join(cachePath, '.git')) || existsSync(join(cachePath, 'HEAD'))) {
     await runGit('git worktree prune', cachePath).catch(() => {})
-    await runGit('git fetch --all --prune', cachePath)
+    // 幂等校正 refspec（老 cache / 被手改过的情况均能自动升级到 remotes/origin 模式）
+    await runGit('git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"', cachePath)
+    await runGit('git fetch origin --prune', cachePath)
     return cachePath
   }
 
   mkdirSync(cachePath, { recursive: true })
   await runGit(`git clone --bare ${repoUrl} ${cachePath}`)
   // git clone --bare 默认不写 fetch refspec，后续 git fetch --all 拉不到新分支。
-  // 手动补上标准 refspec，保证 ensureMainRepo 复用分支能走 fetch 路径同步远端最新分支。
-  await runGit('git config remote.origin.fetch "+refs/heads/*:refs/heads/*"', cachePath)
+  // 用 refs/remotes/origin/* 命名空间（不是 refs/heads/*）：
+  // - fetch 永远写入 remotes/origin/，不会尝试更新本地 heads——避免
+  //   "refusing to fetch into branch checked out at worktree" 错误；
+  // - worktree add 改用 origin/<branch> 从 remotes/origin 创建 detached HEAD。
+  await runGit('git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"', cachePath)
+  // 初次 clone 时 heads 已建好但 remotes/ 还空，做一次 fetch 建立镜像
+  await runGit('git fetch origin', cachePath)
   return cachePath
 }
 
@@ -130,8 +137,8 @@ export async function acquire(opts: AcquireOptions): Promise<Worktree> {
     })
   }
 
-  // 使用 --detach 避免锁定分支名，允许多个会话并行分析同一分支
-  await runGit(`git worktree add --detach ${wtPath} ${opts.version}`, mainRepoPath)
+  // 使用 --detach + origin/<branch> 从 remotes/origin ref 创建；不锁定分支名，支持并行会话
+  await runGit(`git worktree add --detach ${wtPath} origin/${opts.version}`, mainRepoPath)
 
   const worktree: Worktree = {
     id,
