@@ -1,5 +1,6 @@
 import { StateGraph, START, END, interrupt } from '@langchain/langgraph'
 import { PipelineStateAnnotation, type StageResult } from './graph-state.js'
+import { consultImInputAgent } from './im-input-agent.js'
 import type {
   StageDefinition,
   StageContext,
@@ -40,8 +41,13 @@ export interface BuildGraphInput {
 // lets TypeScript catch typos at compile time instead of at runtime.
 export const APPROVAL_INTERRUPT = 'approval' as const
 export const WEBHOOK_INTERRUPT = 'webhook' as const
+export const IM_INPUT_INTERRUPT = 'im_input' as const
 export const APPROVAL_APPROVED = 'approved' as const
 export const APPROVAL_REJECTED = 'rejected' as const
+/** graph-runner 侧注入以示超时结束（handler 捕获后把 stage 标为 failed）。 */
+export const IM_INPUT_TIMEOUT_SENTINEL = '__im_input_timeout__' as const
+/** graph-runner 侧注入以示用户显式取消。 */
+export const IM_INPUT_CANCEL_SENTINEL = '__im_input_cancel__' as const
 // NOTE: webhook timeout is expressed as `{ timeout: true }` on the resume
 // value (see `WebhookResume`), not as an extra constant here.
 
@@ -82,6 +88,28 @@ export interface WebhookInterruptValue {
  * `timeout` key can use `{ data: ... }` to disambiguate.
  */
 export type WebhookResume = { data: unknown } | { timeout: true }
+
+/**
+ * im_input stage interrupt payload. graph-runner 根据 kind 路由到 im-router
+ * 注册 waiter 并把 prompt 推到 IM 群，等待用户消息作为 resume value（string）。
+ */
+export interface ImInputInterruptValue {
+  type: typeof IM_INPUT_INTERRUPT
+  stageIndex: number
+  stageName: string
+  platform: string
+  groupId: string
+  prompt: string
+  paramSchema: Record<string, unknown>
+  collectedSoFar: Record<string, unknown>
+  timeoutSeconds: number
+}
+
+/**
+ * im_input resume value：正常情况下是用户 IM 消息（string）；
+ * 超时/取消时 graph-runner 注入 sentinel 常量。
+ */
+export type ImInputResume = string
 
 function nodeName(index: number, stage: StageDefinition): string {
   return `stage_${index}_${stage.stageType}`
@@ -279,6 +307,140 @@ function buildWaitWebhookNode(stage: StageDefinition, index: number) {
   }
 }
 
+/**
+ * im_input 节点：对话式采集参数。
+ *
+ * 工作流程：
+ *   1. 进入时从 runtimeVars 读回已采集参数（用于 resume 场景）；
+ *   2. interrupt() 挂起，等 IM 消息作 resume value；
+ *   3. 消息交 consultImInputAgent 判定：done/aborted/continue；
+ *   4. continue → 回到第 2 步继续 interrupt（下一轮用更新后的 prompt）；
+ *   5. done → 返回 success StageResult + 参数合入 runtimeVars；
+ *      aborted/timeout → 返回 failed StageResult。
+ *
+ * resume value 约定：
+ *   - string：用户 IM 消息（正常路径）
+ *   - IM_INPUT_TIMEOUT_SENTINEL：graph-runner 超时定时器触发
+ *   - IM_INPUT_CANCEL_SENTINEL：系统显式取消
+ */
+function buildImInputNode(
+  stage: StageDefinition,
+  index: number,
+  ctxBase: StageContextBase,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const cfg = stage.imInputConfig
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+
+    if (!cfg) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'imInputConfig missing on im_input stage',
+        error: 'imInputConfig missing',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      }
+    }
+
+    const platform = ctxBase.triggerPlatform ?? ''
+    const groupId = ctxBase.triggerGroupId ?? ''
+    const timeoutSeconds = cfg.timeoutSeconds ?? 600
+
+    // 从 runtimeVars 读回上一轮 resume 前保存的参数快照（支持多轮 interrupt）。
+    // 以 `__im_input_collected_<index>` 为 key，避免污染业务 runtimeVars。
+    const collectedKey = `__im_input_collected_${index}`
+    let collected: Record<string, unknown> =
+      (state.runtimeVars?.[collectedKey] as Record<string, unknown> | undefined) ?? {}
+    let nextPrompt = cfg.prompt
+
+    // 多轮 interrupt 循环：每轮等一条 IM 消息
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const payload: ImInputInterruptValue = {
+        type: IM_INPUT_INTERRUPT,
+        stageIndex: index,
+        stageName: stage.name,
+        platform,
+        groupId,
+        prompt: nextPrompt,
+        paramSchema: cfg.paramSchema,
+        collectedSoFar: collected,
+        timeoutSeconds,
+      }
+      const resume = interrupt(payload) as ImInputResume
+
+      // 系统注入的 sentinel：超时/取消
+      if (resume === IM_INPUT_TIMEOUT_SENTINEL) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `IM 输入超时（${timeoutSeconds}s 未回复）`,
+          error: 'im_input_timeout',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+        }
+      }
+      if (resume === IM_INPUT_CANCEL_SENTINEL) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: '系统取消 IM 输入',
+          error: 'im_input_cancelled',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+        }
+      }
+
+      const r = await consultImInputAgent({
+        userMessage: String(resume),
+        currentParams: collected,
+        paramSchema: cfg.paramSchema,
+      })
+
+      if (r.aborted) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: '用户取消',
+          error: 'user_cancelled',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+        }
+      }
+
+      collected = r.params
+      if (r.done) {
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: JSON.stringify(collected),
+        }
+        // 参数进入 runtimeVars 供下游 stage 变量解析使用；同时保留快照
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+          runtimeVars: {
+            ...collected,
+            [collectedKey]: collected,
+          },
+        }
+      }
+
+      // 还缺参数：更新 prompt，同时把当前快照落盘，下次 interrupt 入参时能读回
+      nextPrompt = r.nextPrompt ?? cfg.prompt
+      // NOTE: 由于 handler 只有在 return 时写入 state，while loop 内的
+      // collected 变量本身会跨 interrupt 保留（闭包），无需显式写 state。
+      // collectedKey 快照仅在"handler 异常中断后恢复"时起作用，此处由
+      // 最终 return 覆盖。
+    }
+  }
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === 'object' &&
@@ -421,8 +583,7 @@ export function buildGraphFromPipeline(
       case 'wait_webhook':
         builder = builder.addNode(name, buildWaitWebhookNode(node, i)); break
       case 'im_input':
-        // Handler 在 Task 6 实现。此处占位避免 exhaustive check 报错。
-        throw new Error('im_input stage not yet implemented (Task 6)')
+        builder = builder.addNode(name, buildImInputNode(node, i, stageContext)); break
       default: {
         const unknown: never = node.stageType
         throw new Error(`Unsupported stage type: ${String(unknown)}`)

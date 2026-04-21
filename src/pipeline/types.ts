@@ -54,6 +54,10 @@ export interface StageContext {
   pipeline?: { id: number; name: string }
   run?: { id: number; triggeredBy: string; triggerType: string }
   variables?: Record<string, string>
+  // IM 触发时的上下文（im_input stage 需要；其他 stage 可忽略）
+  triggerPlatform?: string
+  triggerGroupId?: string
+  triggerUserId?: string
 }
 
 export interface StageExecutionResult {
