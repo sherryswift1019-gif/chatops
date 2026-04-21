@@ -5,7 +5,7 @@
  * 阶段 A（runFilterStage）：让 Claude 从候选 project 列表中筛选涉及的 project。
  * 阶段 B（runDetailStage）：对单个 project 做根因详细分析。
  */
-import { runClaudeCli } from '../claude-cli.js'
+import { getClaudeExecutor } from '../claude-executor.js'
 import type { Worktree } from '../worktree/manager.js'
 import type { BugClassification, BugLevel, ConfidenceLevel, Solution } from '../../db/repositories/bug-analysis-reports.js'
 import { isClaudeMock, popMockResponse, popMockResponseValidated } from '../mocks/e2e-store.js'
@@ -200,7 +200,7 @@ ${input.userMessage}
 }
 `
 
-  const rawOutput = await runClaudeCli({
+  const rawOutput = await getClaudeExecutor().run({
     prompt,
     allowedTools: 'Read,Glob,Grep',
     timeoutMs: 10 * 60_000,
@@ -275,7 +275,7 @@ export async function runDetailStage(input: DetailStageInput): Promise<DetailSta
 
 请按系统提示中的四阶段方法论进行根因分析，并在分析报告（中文 Markdown）之后，**在输出末尾追加一段严格的 JSON 结果**（见系统提示中的格式）。
 `
-  const rawOutput = await runClaudeCli({
+  const rawOutput = await getClaudeExecutor().run({
     prompt,
     allowedTools: 'Read,Glob,Grep',
     timeoutMs: 20 * 60_000,

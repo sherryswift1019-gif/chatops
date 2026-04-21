@@ -11,7 +11,7 @@
 import axios from 'axios'
 import { mask } from '../masking/sensitive-info.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
-import { runClaudeCli } from '../claude-cli.js'
+import { getClaudeExecutor } from '../claude-executor.js'
 import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
 
 export interface RunClaudeReviewInput {
@@ -66,7 +66,7 @@ export async function runClaudeReview(input: RunClaudeReviewInput): Promise<Clau
 
   const prompt = `${capabilityRow.systemPrompt}\n\nMR !${mrIid}（项目 ${projectPath}）的 diff：\n\n${diffText}`
 
-  const rawOutput = await runClaudeCli({
+  const rawOutput = await getClaudeExecutor().run({
     prompt,
     allowedTools: 'Read,Glob,Grep',
     timeoutMs: 5 * 60_000,

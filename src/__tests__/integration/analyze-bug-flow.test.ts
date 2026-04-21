@@ -12,7 +12,6 @@ import { ClaudeRunner } from '../../agent/claude-runner.js'
 import { buildClaudeAuthEnv } from '../../agent/claude-auth.js'
 import { parseAnalysisOutput, buildMarkdownReport } from '../../agent/analysis/analyzer.js'
 import { listCapabilities } from '../../db/repositories/capabilities.js'
-import { ANALYZE_BUG_SYSTEM_PROMPT } from '../../agent/analysis/prompts.js'
 
 describe('Integration: analyze_bug 完整链路', () => {
   let porygon: any

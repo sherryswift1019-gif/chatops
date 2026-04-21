@@ -9,7 +9,7 @@ import { join } from 'path'
 import { acquire, release, makeWorktreeKey } from '../worktree/manager.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { createFixBranch, commitChanges, pushBranch, rebaseOnTarget } from './branch-manager.js'
-import { runClaudeCli } from '../claude-cli.js'
+import { getClaudeExecutor } from '../claude-executor.js'
 import { gitlabGetIssue } from '../analysis/gitlab-issue.js'
 import { mask } from '../masking/sensitive-info.js'
 import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
@@ -128,7 +128,7 @@ Issue 详情: \`.issue.md\`（位于代码仓库根目录；含根因分析、�
 修复 Bug（report=${input.reportId}, issue=#${input.issueId}, attempt=${input.attempt}, 等级 ${input.level}）
 `
 
-    const rawOutput = await runClaudeCli({
+    const rawOutput = await getClaudeExecutor().run({
       prompt,
       allowedTools: 'Read,Glob,Grep,Bash,Write,Edit',
       timeoutMs: 20 * 60_000,
