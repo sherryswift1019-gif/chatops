@@ -48,8 +48,10 @@ export const getBugAnalysisReport = (id: number) =>
   client.get<{ data: BugAnalysisReport }>(`/bug-analysis-reports/${id}`).then(r => r.data.data)
 
 export interface RetryBugReportResult {
-  newReportId: number
-  newRunId?: number
+  /** 原 report id（本次重试的源头）；不是新 report，新 report 由后台异步创建 */
+  reportId: number
+  /** 人类可读的受理文案 */
+  message: string
   issueId: number
   issueUrl: string
 }
@@ -91,6 +93,33 @@ export async function handoverBugReport(
   }>(`/bug-reports/${id}/handover`, body)
   if (!data.success || !data.data) {
     throw new Error(data.message ?? data.error ?? 'handover failed')
+  }
+  return data.data
+}
+
+export interface ForceAbortBugReportResult {
+  reportId: number
+  status: string
+}
+
+/**
+ * 管理员强制把 report 标记为 aborted，用于卡死状态（Pipeline stage 进程中断、无自动超时等）。
+ * 允许状态：published / pipeline_success / aborted（幂等）。
+ * 标记后前端"重试"按钮会显示，让用户重新走整条 Pipeline。
+ */
+export async function forceAbortBugReport(
+  id: number,
+  reason?: string,
+): Promise<ForceAbortBugReportResult> {
+  const body = reason && reason.trim().length > 0 ? { reason: reason.trim() } : {}
+  const { data } = await client.post<{
+    success: boolean
+    error?: string
+    message?: string
+    data?: ForceAbortBugReportResult
+  }>(`/bug-reports/${id}/force-abort`, body)
+  if (!data.success || !data.data) {
+    throw new Error(data.message ?? data.error ?? 'force-abort failed')
   }
   return data.data
 }

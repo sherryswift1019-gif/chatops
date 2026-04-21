@@ -6,6 +6,7 @@ import {
   listBugReports,
   retryBugReport,
   handoverBugReport,
+  forceAbortBugReport,
 } from '../api/bug-analysis-reports'
 import { getProductLines } from '../api/product-lines'
 import { getDingTalkUsers } from '../api/dingtalk-users'
@@ -156,18 +157,17 @@ export default function BugRunsPage() {
   async function handleRetry(record: BugAnalysisReport) {
     Modal.confirm({
       title: '确认重新开始处理吗？',
-      content: '将产生新一轮分析和新 Pipeline 实例（消耗 Claude token）。',
+      content: '后台会启动新一轮分析 + Pipeline（耗时 3-6 分钟），完成后新 report 会出现在列表里。',
       okText: '确认重试',
       cancelText: '取消',
       onOk: async () => {
         try {
-          const r = await retryBugReport(record.id)
-          message.success(
-            `已启动新一轮：报告 #${r.newReportId}${r.newRunId ? ` / 执行 #${r.newRunId}` : ''}`,
-          )
+          await retryBugReport(record.id)
+          message.success('已受理，后台分析中。请过几分钟刷新查看新 report')
           load()
         } catch (err) {
-          message.error(`重试失败: ${(err as Error).message}`)
+          const serverMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+          message.error(`重试失败: ${serverMsg ?? (err as Error).message}`)
         }
       },
     })
@@ -185,7 +185,28 @@ export default function BugRunsPage() {
           message.success(`已转人工接手（status=${r.status}）`)
           load()
         } catch (err) {
-          message.error(`转人工失败: ${(err as Error).message}`)
+          const serverMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+          message.error(`转人工失败: ${serverMsg ?? (err as Error).message}`)
+        }
+      },
+    })
+  }
+
+  async function handleForceAbort(record: BugAnalysisReport) {
+    Modal.confirm({
+      title: '强制终止这条处理？',
+      content: `当前 status=${record.status}。用于 Pipeline 卡死场景（进程中断、stage 无超时等）。标记为 aborted 后会显示"重试"按钮。`,
+      okText: '确认强制终止',
+      cancelText: '取消',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          const r = await forceAbortBugReport(record.id, '管理员前端强制终止')
+          message.success(`已强制终止（status=${r.status}）`)
+          load()
+        } catch (err) {
+          const serverMsg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+          message.error(`强制终止失败: ${serverMsg ?? (err as Error).message}`)
         }
       },
     })
@@ -263,6 +284,11 @@ export default function BugRunsPage() {
                 转人工
               </Button>
             </>
+          )}
+          {(record.status === 'published' || record.status === 'pipeline_success') && (
+            <Button type="link" size="small" danger onClick={() => handleForceAbort(record)}>
+              强制终止
+            </Button>
           )}
         </Space>
       ),

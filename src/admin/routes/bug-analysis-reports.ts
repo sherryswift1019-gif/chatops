@@ -2,10 +2,11 @@ import type { FastifyInstance } from 'fastify'
 import {
   getBugAnalysisReportById,
   listReportsByProductLinePaged,
+  updateReportStatus,
   type BugLevel,
   type ReportStatus,
 } from '../../db/repositories/bug-analysis-reports.js'
-import { findByReport } from '../../db/repositories/bug-fix-events.js'
+import { createEvent, findByReport } from '../../db/repositories/bug-fix-events.js'
 import { handleAnalyzeBug } from '../../agent/analysis/analyzer.js'
 import { handleAnalysisComplete, checkAndTriggerHandover } from '../../agent/coordinator.js'
 
@@ -106,47 +107,50 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
 
     try {
       const initiatorId = (req as any).user?.id ?? 'admin'
-      const analyzerResult = await handleAnalyzeBug({
-        capabilityKey: 'analyze_bug',
-        context: {
-          taskId: `retry-${reportId}`,
-          groupId: 'admin',
-          platform: 'admin',
-          initiatorId,
-          initiatorRole: 'admin',
-        },
-        extraParams: {
-          productLineId: report.productLineId,
-          reuseIssueId: report.issueId,
-          message: `[重试] 基于 Issue #${report.issueId} 的历史内容重新分析`,
-        },
-      })
 
-      if (!analyzerResult.success) {
-        return reply.code(502).send({
-          success: false,
-          error: 'GITLAB_API_ERROR',
-          message: analyzerResult.output ?? analyzerResult.error ?? 'analyzer 调用失败',
-        })
-      }
+      // Fire-and-forget：立即返回"已受理"，后台跑 handleAnalyzeBug（3-6 分钟）+ Pipeline。
+      // 用户刷新 BugRunsPage 会看到新 report 逐步出现；同步等会 HTTP 超时。
+      void (async () => {
+        try {
+          const analyzerResult = await handleAnalyzeBug({
+            capabilityKey: 'analyze_bug',
+            context: {
+              taskId: `retry-${reportId}`,
+              groupId: 'admin',
+              platform: 'admin',
+              initiatorId,
+              initiatorRole: 'admin',
+            },
+            extraParams: {
+              productLineId: report.productLineId,
+              reuseIssueId: report.issueId,
+              message: `[重试] 基于 Issue #${report.issueId} 的历史内容重新分析`,
+            },
+          })
 
-      const data = (analyzerResult.data ?? {}) as Record<string, unknown>
-      const newReportId = data.reportId as number
-      const newLevel = data.level as string
-      const newClass = data.classification as string
+          if (!analyzerResult.success) {
+            console.error(`[admin] retry async analyze failed reportId=${reportId}:`, analyzerResult.output ?? analyzerResult.error)
+            return
+          }
 
-      let newRunId: number | undefined
-      if (newClass === 'bug') {
-        await handleAnalysisComplete(newReportId, newLevel, newClass, 'admin')
-        const reloaded = await getBugAnalysisReportById(newReportId)
-        newRunId = reloaded?.pipelineRunId ?? undefined
-      }
+          const data = (analyzerResult.data ?? {}) as Record<string, unknown>
+          const newReportId = data.reportId as number
+          const newLevel = data.level as string
+          const newClass = data.classification as string
+
+          if (newClass === 'bug') {
+            await handleAnalysisComplete(newReportId, newLevel, newClass, 'admin')
+          }
+        } catch (err) {
+          console.error(`[admin] retry async pipeline error reportId=${reportId}:`, (err as Error).message ?? err)
+        }
+      })()
 
       return reply.send({
         success: true,
         data: {
-          newReportId,
-          newRunId,
+          reportId,
+          message: '已受理，后台分析中。3-6 分钟后请刷新列表查看新 report（复用原 Issue）',
           issueId: report.issueId,
           issueUrl: report.issueUrl,
         },
@@ -162,9 +166,9 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
    * POST /bug-reports/:id/handover
    * 用户主动把 Bug 转人工接手（V2 MVP 触发源：user_requested）。
    * Body: { comment?: string } — 可选，用户说明转人工原因
-   * 状态要求：status in (draft, published, pipeline_success)
+   * 状态要求：status in (draft, published, pipeline_success, aborted)
    * - pending_manual：已在 handover 中 → 409
-   * - completed / aborted：终态 → 409（如需重新处理用 /retry）
+   * - completed：修复已合并，无需转人工 → 409（如需重新处理用 /retry）
    */
   app.post<{ Params: { id: string }; Body: { comment?: string } }>(
     '/bug-reports/:id/handover',
@@ -179,12 +183,12 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
         return reply.code(404).send({ success: false, error: 'REPORT_NOT_FOUND', message: '报告不存在' })
       }
 
-      const allowed: ReportStatus[] = ['draft', 'published', 'pipeline_success']
+      const allowed: ReportStatus[] = ['draft', 'published', 'pipeline_success', 'aborted']
       if (!allowed.includes(report.status)) {
         return reply.code(409).send({
           success: false,
           error: 'INVALID_STATUS',
-          message: `当前 status=${report.status}，不允许转人工（仅 draft/published/pipeline_success 可触发）`,
+          message: `当前 status=${report.status}，不允许转人工（仅 draft/published/pipeline_success/aborted 可触发）`,
         })
       }
 
@@ -212,6 +216,75 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
       } catch (err) {
         const msg = (err as Error)?.message ?? String(err)
         console.error('[admin] handover endpoint error:', msg)
+        return reply.code(500).send({ success: false, error: 'INTERNAL_ERROR', message: msg })
+      }
+    },
+  )
+
+  /**
+   * POST /bug-reports/:id/force-abort
+   * 管理员强制把 report 标记为 aborted，打破卡死状态（如 Pipeline 进程中途被 kill、stage 无自动超时等场景）。
+   *
+   * 允许状态：published / pipeline_success（卡住的两种非终态）+ aborted（幂等）。
+   * - completed（MR 已合并）拒绝 409
+   * - draft / pending_manual 拒绝 409（各有专属流程）
+   *
+   * 标记后前端"重试"按钮会显示，让用户走整条 Pipeline 重跑路径。
+   */
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    '/bug-reports/:id/force-abort',
+    async (req, reply) => {
+      const reportId = Number(req.params.id)
+      if (!Number.isFinite(reportId)) {
+        return reply.code(400).send({ success: false, error: 'INVALID_ID', message: '非法的报告 ID' })
+      }
+
+      const report = await getBugAnalysisReportById(reportId)
+      if (!report) {
+        return reply.code(404).send({ success: false, error: 'REPORT_NOT_FOUND', message: '报告不存在' })
+      }
+
+      const allowed: ReportStatus[] = ['published', 'pipeline_success', 'aborted']
+      if (!allowed.includes(report.status)) {
+        return reply.code(409).send({
+          success: false,
+          error: 'INVALID_STATUS',
+          message: `当前 status=${report.status}，不允许强制终止（仅 published/pipeline_success/aborted 可强制终止）`,
+        })
+      }
+
+      const body = (req.body ?? {}) as { reason?: string }
+      const reason = typeof body.reason === 'string' && body.reason.trim().length > 0
+        ? body.reason.trim()
+        : '管理员手动强制终止'
+
+      try {
+        const initiatorId = (req as any).user?.id ?? 'admin'
+        await updateReportStatus(reportId, 'aborted')
+        await createEvent({
+          reportId,
+          projectPath: null,
+          code: 'lifecycle_sync',
+          status: 'success',
+          data: {
+            targetStatus: 'aborted',
+            source: 'force_abort',
+            initiatorId,
+            reason,
+            previousStatus: report.status,
+          },
+        })
+        const reloaded = await getBugAnalysisReportById(reportId)
+        return reply.send({
+          success: true,
+          data: {
+            reportId,
+            status: reloaded?.status ?? 'aborted',
+          },
+        })
+      } catch (err) {
+        const msg = (err as Error)?.message ?? String(err)
+        console.error('[admin] force-abort endpoint error:', msg)
         return reply.code(500).send({ success: false, error: 'INTERNAL_ERROR', message: msg })
       }
     },
