@@ -87,6 +87,9 @@ async function ensureMainRepo(product: string, repoUrl: string): Promise<string>
 
   mkdirSync(cachePath, { recursive: true })
   await runGit(`git clone --bare ${repoUrl} ${cachePath}`)
+  // git clone --bare 默认不写 fetch refspec，后续 git fetch --all 拉不到新分支。
+  // 手动补上标准 refspec，保证 ensureMainRepo 复用分支能走 fetch 路径同步远端最新分支。
+  await runGit('git config remote.origin.fetch "+refs/heads/*:refs/heads/*"', cachePath)
   return cachePath
 }
 
