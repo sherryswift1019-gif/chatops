@@ -5,6 +5,9 @@ import type {
   StageContext,
   StageExecutionResult,
   ServerInfo,
+  PipelineGraph,
+  PipelineEdge,
+  ConditionSpec,
 } from './types.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
@@ -315,23 +318,6 @@ function skipRestName(index: number): string {
   return `skip_rest_after_${index}`
 }
 
-// Router for stage i: reads the matching StageResult from state and decides
-// success|continue → next stage (or END), failed+stop → skip_rest sink.
-function buildRouter(stages: StageDefinition[], index: number) {
-  const stage = stages[index]
-  const isLast = index === stages.length - 1
-  const nextNode = isLast ? END : nodeName(index + 1, stages[index + 1])
-  const skipNode = skipRestName(index)
-  return (state: typeof PipelineStateAnnotation.State): string => {
-    const result = state.stageResults.find((r) => r.name === stage.name)
-    // Missing result falls through to the next node — stage nodes always
-    // write a result on exit, so this branch is purely defensive.
-    if (!result) return nextNode
-    if (shouldStopAfter(stage, result)) return skipNode
-    return nextNode
-  }
-}
-
 /**
  * Compile a StageDefinition[] into an uncompiled LangGraph StateGraph.
  *
@@ -341,64 +327,155 @@ function buildRouter(stages: StageDefinition[], index: number) {
  * Node naming: `stage_<index>_<type>`. Each stage also gets a paired
  * `skip_rest_after_<index>` node that marks downstream stages as skipped
  * when `onFailure === 'stop'` takes effect.
+ *
+ * Legacy wrapper: delegates to buildGraphFromPipeline after internal
+ * linearization so the two code paths never diverge.
  */
 export function buildGraphFromStages(
   input: BuildGraphInput,
-): ReturnType<typeof makeBuilder> {
-  return makeBuilder(input)
+): StateGraph<typeof PipelineStateAnnotation.State> {
+  return buildGraphFromPipeline({
+    graph: linearizeStagesForBuilder(input.stages),
+    stageContext: input.stageContext,
+    hooks: input.hooks,
+    triggerParams: input.triggerParams,
+  })
 }
 
-// makeBuilder keeps the dynamic node union hidden from the public signature:
-// addNode widens N step by step, so we cast at the boundary.
-function makeBuilder(input: BuildGraphInput) {
-  const { stages, stageContext, hooks, triggerParams } = input
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let graph: any = new StateGraph(PipelineStateAnnotation)
+// Internal fallback: build a linear PipelineGraph from legacy stages.
+// Distinct from graph-migration.linearizeStages — that one uses ULIDs and
+// x/y coordinates for the canvas; this one uses deterministic n<i> ids
+// so legacy tests/fixtures stay stable.
+function linearizeStagesForBuilder(stages: StageDefinition[]): PipelineGraph {
+  const nodes = stages.map((s, i) => ({
+    ...s, id: `n${i}`, position: { x: 0, y: i * 100 },
+  }))
+  const edges: PipelineEdge[] = []
+  for (let i = 0; i < nodes.length - 1; i++) {
+    edges.push({ id: `e${i}`, source: nodes[i].id, target: nodes[i + 1].id })
+  }
+  return { nodes, edges }
+}
 
-  if (stages.length === 0) {
-    graph = graph.addEdge(START, END)
-    return graph as StateGraph<typeof PipelineStateAnnotation.State>
+// ---- PipelineGraph-based builder with conditional edges -----------------
+
+export interface BuildPipelineGraphInput {
+  graph: PipelineGraph
+  stageContext: StageContextBase
+  hooks: StageHooks
+  triggerParams?: Record<string, unknown>
+}
+
+// Safe expression evaluator. Only two templates are accepted:
+//   - status === 'success' | 'failed' | 'skipped'
+//   - output.includes('...')
+// Anything else returns false, avoiding eval / new Function.
+function conditionMatches(cond: ConditionSpec | undefined, result: StageResult): boolean {
+  if (!cond) return true
+  if (cond.kind === 'onSuccess') return result.status === 'success'
+  if (cond.kind === 'onFailure') return result.status === 'failed'
+  // expression
+  const expr = cond.expression.trim()
+  const statusMatch = expr.match(/^status\s*===\s*'(success|failed|skipped)'$/)
+  if (statusMatch) return result.status === statusMatch[1]
+  const outputMatch = expr.match(/^output\.includes\(['"]([^'"]+)['"]\)$/)
+  if (outputMatch) return (result.output ?? '').includes(outputMatch[1])
+  return false
+}
+
+/**
+ * Compile a PipelineGraph into an uncompiled LangGraph StateGraph.
+ *
+ * For each node, registers the appropriate stage action + a paired
+ * skip_rest sink. Out-edges are assembled via addConditionalEdges with
+ * a router that:
+ *   1. Respects stage-level onFailure: 'stop' (→ skip sink)
+ *   2. Picks the first out-edge whose condition matches
+ *   3. Falls through to END if no condition matches
+ */
+export function buildGraphFromPipeline(
+  input: BuildPipelineGraphInput,
+): StateGraph<typeof PipelineStateAnnotation.State> {
+  const { graph, stageContext, hooks, triggerParams } = input
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let builder: any = new StateGraph(PipelineStateAnnotation)
+
+  if (graph.nodes.length === 0) {
+    builder = builder.addEdge(START, END)
+    return builder as StateGraph<typeof PipelineStateAnnotation.State>
   }
 
-  for (let i = 0; i < stages.length; i++) {
-    const stage = stages[i]
-    const name = nodeName(i, stage)
-    switch (stage.stageType) {
+  const idToName = new Map(graph.nodes.map((n, i) => [n.id, nodeName(i, n)]))
+
+  // addNode
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const node = graph.nodes[i]
+    const name = idToName.get(node.id)!
+    switch (node.stageType) {
       case 'script':
-        graph = graph.addNode(name, buildScriptNode(stage, i, stageContext, hooks))
-        break
+        builder = builder.addNode(name, buildScriptNode(node, i, stageContext, hooks)); break
       case 'capability':
-        graph = graph.addNode(
-          name,
-          buildCapabilityNode(stage, i, stageContext, hooks, triggerParams),
-        )
-        break
+        builder = builder.addNode(name, buildCapabilityNode(node, i, stageContext, hooks, triggerParams)); break
       case 'approval':
-        graph = graph.addNode(name, buildApprovalNode(stage, i))
-        break
+        builder = builder.addNode(name, buildApprovalNode(node, i)); break
       case 'wait_webhook':
-        graph = graph.addNode(name, buildWaitWebhookNode(stage, i))
-        break
+        builder = builder.addNode(name, buildWaitWebhookNode(node, i)); break
       default: {
-        const unknown: never = stage.stageType
+        const unknown: never = node.stageType
         throw new Error(`Unsupported stage type: ${String(unknown)}`)
       }
     }
-    graph = graph.addNode(skipRestName(i), buildSkipRestNode(stages, i + 1))
+    builder = builder.addNode(skipRestName(i), buildSkipRestNode(graph.nodes, i + 1))
   }
 
-  graph = graph.addEdge(START, nodeName(0, stages[0]))
-  for (let i = 0; i < stages.length; i++) {
-    const name = nodeName(i, stages[i])
-    const isLast = i === stages.length - 1
-    const nextName = isLast ? END : nodeName(i + 1, stages[i + 1])
+  // Entry: first node without an incoming edge; fallback to node[0].
+  const hasIncoming = new Set(graph.edges.map(e => e.target))
+  const entry = graph.nodes.find(n => !hasIncoming.has(n.id)) ?? graph.nodes[0]
+  builder = builder.addEdge(START, idToName.get(entry.id)!)
+
+  // Group out-edges by source.
+  const outBySource = new Map<string, PipelineEdge[]>()
+  for (const e of graph.edges) {
+    const arr = outBySource.get(e.source) ?? []
+    arr.push(e)
+    outBySource.set(e.source, arr)
+  }
+
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const node = graph.nodes[i]
+    const name = idToName.get(node.id)!
     const skipName = skipRestName(i)
-    graph = graph.addConditionalEdges(name, buildRouter(stages, i), {
-      [nextName]: nextName,
-      [skipName]: skipName,
-    })
-    graph = graph.addEdge(skipName, END)
+    const outs = outBySource.get(node.id) ?? []
+
+    if (outs.length === 0) {
+      // Terminal node → END (with skip_rest guard for onFailure=stop).
+      builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
+        const result = state.stageResults.find((r) => r.name === node.name)
+        if (result && shouldStopAfter(node, result)) return skipName
+        return END
+      }, { [END]: END, [skipName]: skipName })
+      builder = builder.addEdge(skipName, END)
+      continue
+    }
+
+    const routeMap: Record<string, string> = { [skipName]: skipName, [END]: END }
+    for (const e of outs) {
+      const targetName = idToName.get(e.target)!
+      routeMap[targetName] = targetName
+    }
+
+    builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
+      const result = state.stageResults.find((r) => r.name === node.name)
+      if (!result) return idToName.get(outs[0].target) ?? END
+      if (shouldStopAfter(node, result)) return skipName
+      for (const e of outs) {
+        if (conditionMatches(e.condition, result)) return idToName.get(e.target)!
+      }
+      return END
+    }, routeMap)
+
+    builder = builder.addEdge(skipName, END)
   }
 
-  return graph as StateGraph<typeof PipelineStateAnnotation.State>
+  return builder as StateGraph<typeof PipelineStateAnnotation.State>
 }
