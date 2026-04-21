@@ -7,7 +7,8 @@ import { resetTestDb, getTestPool } from '../helpers/db.js'
 import { ClaudeRunner } from '../../agent/claude-runner.js'
 import { listCapabilities, getCapabilityByKey } from '../../db/repositories/capabilities.js'
 
-describe('Integration: 意图识别 + Capability 路由', () => {
+// 需真实 Claude CLI + 非 root。CI 默认 skip；本地 RUN_CLAUDE_TESTS=1 开启。
+describe.skipIf(!process.env.RUN_CLAUDE_TESTS)('Integration: 意图识别 + Capability 路由', () => {
   let runner: ClaudeRunner
 
   beforeAll(async () => {

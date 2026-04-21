@@ -10,7 +10,9 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-describe('Integration: Porygon + Claude CLI 调用', () => {
+// 需真实 Claude CLI + 非 root 环境，CI（以 root 跑 docker）无法运行。
+// 本地验证时：RUN_CLAUDE_TESTS=1 pnpm test
+describe.skipIf(!process.env.RUN_CLAUDE_TESTS)('Integration: Porygon + Claude CLI 调用', () => {
   let porygon: Porygon
   let authEnv: Record<string, string>
 

@@ -13,7 +13,9 @@ import { buildClaudeAuthEnv } from '../../agent/claude-auth.js'
 import { parseAnalysisOutput, buildMarkdownReport } from '../../agent/analysis/analyzer.js'
 import { listCapabilities } from '../../db/repositories/capabilities.js'
 
-describe('Integration: analyze_bug 完整链路', () => {
+// beforeAll 里就用 porygon.run 真调 Claude，意图识别 it 也真调——整组都走 Claude。
+// CI 默认 skip（root + 无凭证）。本地 RUN_CLAUDE_TESTS=1 开启。
+describe.skipIf(!process.env.RUN_CLAUDE_TESTS)('Integration: analyze_bug 完整链路', () => {
   let porygon: any
   let authEnv: Record<string, string>
 

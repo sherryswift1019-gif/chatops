@@ -24,7 +24,10 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-describe('Integration: 完整 Bug 分析链路（非钉钉）', () => {
+// Step 1/2/3/4 都依赖真实 Claude CLI + git clone + GitLab 网络。
+// 原先只在 Step 3/4 加 skipIf，导致 Step 1/2 在 CI 也跑崩。
+// 整组 describe.skipIf 统一：CI 默认 skip，本地 RUN_CLAUDE_TESTS=1 开启。
+describe.skipIf(!process.env.RUN_CLAUDE_TESTS)('Integration: 完整 Bug 分析链路（非钉钉）', () => {
   let runner: ClaudeRunner
   let authEnv: Record<string, string>
   let productLineId: number
