@@ -285,7 +285,7 @@ export default function BugRunsPage() {
               </Button>
             </>
           )}
-          {(record.status === 'published' || record.status === 'pipeline_success') && (
+          {record.status === 'published' && (
             <Button type="link" size="small" danger onClick={() => handleForceAbort(record)}>
               强制终止
             </Button>

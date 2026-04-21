@@ -23,6 +23,46 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+/**
+ * 把 capability handler 返回的内部 error code（见 analyzer.classifyError / fix-runner /
+ * approve-l3-handler 等）翻译成面向终端用户的中文友好提示。
+ *
+ * 为什么不直接暴露 error：钉钉群内提问者看到"claude_invalid_json"这类技术码无法行动，
+ * 也让产品感观不好。底层 error 仍然 console.error 到日志，内部排查用。
+ *
+ * 未收录的 error code 走保底："<Capability> 未完成，请稍后重试"——即使字典漏更新，
+ * 用户侧体验不会退回到技术码泄露。
+ */
+const FAILURE_MSGS: Record<string, string> = {
+  claude_invalid_json: '分析用时过长，未能输出完整结论。建议补充具体模块/类名或异常堆栈后重发',
+  claude_timeout: '分析超时，请稍后重试（或补充更聚焦的信息让排查更快）',
+  report_not_found: '找不到对应的分析报告，可能已被清理',
+  no_scope: '分析结果不完整（缺少涉及代码范围），请补充上下文后重发',
+  fix_failed: '自动修复未通过（编译或测试失败）',
+  handler_error: '系统内部错误，已记录日志',
+  no_primary_owner: '主仓库未配置负责人，无法继续',
+  missing_reportId: '缺少报告 ID，无法定位分析结果',
+  invalid_timeout: '审批超时配置异常，请联系管理员',
+}
+
+const CAP_NAMES: Record<string, string> = {
+  analyze_bug: 'Bug 分析',
+  fix_bug_l1: '自动修复',
+  fix_bug_l2: '自动修复',
+  fix_bug_l3: '自动修复',
+  create_mr: 'MR 创建',
+  ai_review_mr: 'AI Review',
+  approve_l3: 'L3 审批',
+  notify_bug: '通知',
+  request_handover: '转人工',
+}
+
+function buildFailureReply(capability: string, errorCode?: string): string {
+  const cap = CAP_NAMES[capability] ?? '处理'
+  const detail = FAILURE_MSGS[errorCode ?? '']
+  return detail ? `${cap}未完成：${detail}` : `${cap}未完成，请稍后重试`
+}
+
 export interface RunOptions {
   prompt: string
   context: TaskContext
@@ -325,7 +365,7 @@ export class ClaudeRunner {
         // 回复结果
         const replyText = result.success
           ? (result.output ?? '处理完成')
-          : `处理失败：${result.error ?? '未知错误'}`
+          : buildFailureReply(intent.capability, result.error)
         await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: replyText, atDingtalkIds: atIds } as any)
 
         // analyze_bug 完成后：若 result 含 (reportId, level, classification)，触发 Pipeline（后台跑，不阻塞 IM 响应）
