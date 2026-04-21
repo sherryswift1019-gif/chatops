@@ -131,11 +131,6 @@ export interface Solution {
   id: string; summary: string; recommended: boolean; risk: string; effort: string
 }
 
-export interface ModuleOwner {
-  id: number; productLineId: number; modulePattern: string
-  ownerUserId: string; backupOwnerUserId: string | null; createdAt: string
-}
-
 export interface ProductKnowledgeRepo {
   id: number; productLineId: number; codeRepoUrl: string; codeDefaultBranch: string
   knowledgeRepoUrl: string; aiSummaryPath: string
