@@ -103,7 +103,6 @@ export class DingTalkAdapter implements IMAdapter {
         void this.handleRobotMessage(res)
       })
       .registerCallbackListener(TOPIC_CARD, (res: DWClientDownStream) => {
-        console.log('[DingTalk] Card callback received:', res.headers.messageId)
         void this.handleCardCallback(res)
       })
   }
@@ -220,8 +219,10 @@ export class DingTalkAdapter implements IMAdapter {
   /**
    * 发送钉钉互动卡片（基于已在钉钉 OA 后台创建的 cardTemplateId）。
    *
-   * 依赖环境变量 `DINGTALK_L3_CARD_TEMPLATE_ID`（或通过子类/注入方式传入）。
+   * 依赖环境变量 `DINGTALK_L3_CARD_TEMPLATE_ID`。
+   * 用卡片 2.0 API：`/v1.0/card/instances/createAndDeliver`（需权限 `Card.Instance.Write`）。
    * outTrackId 用 content.callbackData.taskId（保证同一 approval 幂等 + 回调能映射回）。
+   * openSpaceId 用 `dtv1.card//IM_ROBOT.<userId>` 维度投放到机器人 1v1 会话。
    * cardParamMap 优先用 content.templateParams；未提供则用默认 { title, body }。
    */
   private async sendInteractiveCard(userId: string, card: InteractiveCard): Promise<void> {
@@ -242,14 +243,22 @@ export class DingTalkAdapter implements IMAdapter {
     }
     const token = await this.getAccessToken()
     await axios.post(
-      'https://api.dingtalk.com/v1.0/im/interactiveCards/send',
+      'https://api.dingtalk.com/v1.0/card/instances/createAndDeliver',
       {
-        outTrackId,
-        robotCode: this.cfg.clientId,
-        conversationType: 1, // 1=单聊, 2=群聊
-        receiverUserIdList: [userId],
+        userIdType: 1, // 1=企业 userId（默认）；2=unionId
         cardTemplateId: templateId,
+        outTrackId,
+        callbackType: 'STREAM', // 按钮点击通过 Stream 回传（复用现有 WSS 通道）
         cardData: { cardParamMap },
+        openSpaceId: `dtv1.card//IM_ROBOT.${userId}`,
+        imRobotOpenSpaceModel: {
+          lastMessageI18n: { ZH_CN: card.title },
+          supportForward: false,
+        },
+        imRobotOpenDeliverModel: {
+          spaceType: 'IM_ROBOT',
+          robotCode: this.cfg.clientId,
+        },
       },
       { headers: { 'x-acs-dingtalk-access-token': token } }
     )
@@ -426,27 +435,51 @@ export class DingTalkAdapter implements IMAdapter {
     // ACK
     this.client.send(res.headers.messageId, { status: 'SUCCESS' })
 
-    // 钉钉 AI 卡片回传字段：outTrackId（我们发送时的 taskId）+ action.id/key（按钮 Action ID）
-    //   旧互动卡片格式：callbackData.taskId + callbackData.action
-    // 两种兼容解析。
-    const callbackData = (data.callbackData ?? data) as Record<string, unknown>
+    // 钉钉 AI 卡片 2.0 回传实测格式（/v1.0/card/instances/callback）：
+    //   {
+    //     outTrackId: "...",                                 ← top-level
+    //     userId: "...",                                     ← top-level
+    //     type: "actionCallback",
+    //     content: "{\"cardPrivateData\":{\"actionIds\":[\"agree\"],\"params\":{\"action\":\"agree\"}}}"
+    //           ↑ 双层 JSON：content 本身是字符串，parse 后 cardPrivateData.actionIds[0] 是按钮 Action ID
+    //   }
+    //
+    // 兼容旧互动卡片格式：callbackData.{taskId, action} 仍解析。
+
     const taskId =
-      (callbackData.taskId as string) ??
-      (callbackData.outTrackId as string) ??
-      (data.outTrackId as string)
-    const actionObj = (data.action ?? callbackData.action) as unknown
-    const action =
-      (typeof actionObj === 'object' && actionObj !== null
-        ? (actionObj as Record<string, string>).id ??
-          (actionObj as Record<string, string>).key ??
-          (actionObj as Record<string, string>).value
-        : (actionObj as string)) ??
-      (callbackData.actionId as string) ??
-      (callbackData.actionKey as string) ??
-      (callbackData.action as string)
-    const userId = (data.userId ?? data.operatorUserId ?? callbackData.userId) as string
+      (data.outTrackId as string) ??
+      ((data.callbackData as Record<string, string> | undefined)?.taskId) ??
+      ((data.callbackData as Record<string, string> | undefined)?.outTrackId)
+
+    const userId = (data.userId ?? data.operatorUserId) as string
+
+    // 解析 action：先试新版 content JSON，再 fallback 旧 callbackData
+    let action: string | undefined
+    if (typeof data.content === 'string') {
+      try {
+        const content = JSON.parse(data.content) as {
+          cardPrivateData?: { actionIds?: string[]; params?: Record<string, string> }
+        }
+        action = content.cardPrivateData?.actionIds?.[0] ?? content.cardPrivateData?.params?.action
+      } catch {
+        /* content 不是合法 JSON，忽略 */
+      }
+    }
+    if (!action) {
+      const cb = (data.callbackData ?? {}) as Record<string, unknown>
+      const actionObj = (data.action ?? cb.action) as unknown
+      action =
+        (typeof actionObj === 'object' && actionObj !== null
+          ? (actionObj as Record<string, string>).id ??
+            (actionObj as Record<string, string>).key ??
+            (actionObj as Record<string, string>).value
+          : (actionObj as string)) ??
+        (cb.actionId as string) ??
+        (cb.actionKey as string)
+    }
 
     if (taskId && action && userId) {
+      console.log(`[DingTalk] Card callback parsed OK: outTrackId=${taskId} action=${action} userId=${userId}`)
       await this.cardActionHandler?.(taskId, action, userId)
     } else {
       console.warn('[DingTalk] handleCardCallback: missing fields', {

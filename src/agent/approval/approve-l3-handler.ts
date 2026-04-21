@@ -140,6 +140,8 @@ export async function handleApproveL3(opts: TriggerOptions): Promise<TriggerResu
       },
     })
 
+    console.log(`[approve_l3] 审批事件已落库: reportId=${reportId} decision=${decision} approver=${primaryOwnerId}`)
+
     if (decision === 'approved') {
       return { success: true, output: '审批通过' }
     }

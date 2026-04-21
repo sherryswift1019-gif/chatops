@@ -3,8 +3,8 @@
  *
  * 背景：dingtalk.ts 现有测试（dingtalk-adapter.test.ts）不 mock axios，
  * 覆盖不到 sendDirectMessage HTTP 路径。本文件专门测互动卡片相关两件事：
- *   1. sendDirectMessage(content=InteractiveCard) → POST /v1.0/im/interactiveCards/send
- *      - URL / outTrackId / cardTemplateId / cardParamMap / receiverUserIdList 正确
+ *   1. sendDirectMessage(content=InteractiveCard) → POST /v1.0/card/instances/createAndDeliver
+ *      - URL / outTrackId / cardTemplateId / cardParamMap / openSpaceId 正确
  *      - 未配 DINGTALK_L3_CARD_TEMPLATE_ID 时降级为文字
  *   2. handleCardCallback 解析新格式（action: { id: 'agree' } / outTrackId）和旧格式（callbackData.{taskId, action}）
  *      双向兼容
@@ -72,7 +72,7 @@ describe('DingTalk InteractiveCard send', () => {
     }
   })
 
-  it('InteractiveCard → POST /v1.0/im/interactiveCards/send，cardParamMap 用 templateParams', async () => {
+  it('InteractiveCard → POST /v1.0/card/instances/createAndDeliver，cardParamMap 用 templateParams', async () => {
     process.env.DINGTALK_L3_CARD_TEMPLATE_ID = 'test-template.schema'
 
     await adapter.sendDirectMessage('user-42', {
@@ -91,17 +91,21 @@ describe('DingTalk InteractiveCard send', () => {
       },
     })
 
-    // 第 1 次是 gettoken，第 2 次才是 interactiveCards/send
+    // 第 1 次是 gettoken，第 2 次才是 createAndDeliver
     const calls = vi.mocked(axios.post).mock.calls
-    const cardCall = calls.find(c => (c[0] as string).includes('/interactiveCards/send'))
+    const cardCall = calls.find(c => (c[0] as string).includes('/card/instances/createAndDeliver'))
     expect(cardCall).toBeTruthy()
-    expect(cardCall![0]).toBe('https://api.dingtalk.com/v1.0/im/interactiveCards/send')
+    expect(cardCall![0]).toBe('https://api.dingtalk.com/v1.0/card/instances/createAndDeliver')
     expect(cardCall![1]).toMatchObject({
+      userIdType: 1,
       outTrackId: 'l3-fix-120',
-      robotCode: 'app1',
       cardTemplateId: 'test-template.schema',
-      conversationType: 1,
-      receiverUserIdList: ['user-42'],
+      callbackType: 'STREAM',
+      openSpaceId: 'dtv1.card//IM_ROBOT.user-42',
+      imRobotOpenDeliverModel: {
+        spaceType: 'IM_ROBOT',
+        robotCode: 'app1',
+      },
       cardData: {
         cardParamMap: {
           title: 'L3 修复方案审批',
@@ -124,8 +128,8 @@ describe('DingTalk InteractiveCard send', () => {
     })
 
     const calls = vi.mocked(axios.post).mock.calls
-    // 不调 interactiveCards/send
-    expect(calls.some(c => (c[0] as string).includes('/interactiveCards/send'))).toBe(false)
+    // 不调 card/instances/createAndDeliver
+    expect(calls.some(c => (c[0] as string).includes('/card/instances/createAndDeliver'))).toBe(false)
     // 改走 oToMessages/batchSend
     const textCall = calls.find(c => (c[0] as string).includes('/oToMessages/batchSend'))
     expect(textCall).toBeTruthy()
@@ -170,14 +174,17 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     }
   }
 
-  it('新格式：outTrackId + action.id=agree → handler 收到 agree', async () => {
+  it('新格式（钉钉 AI 卡片 2.0）：outTrackId + content.cardPrivateData.actionIds[0]=agree → handler 收到 agree', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
     mockClient._trigger(TOPIC_CARD, buildCallbackEvent({
       outTrackId: 'l3-fix-120',
-      action: { id: 'agree', key: 'agree' },
       userId: 'u-primary',
+      type: 'actionCallback',
+      content: JSON.stringify({
+        cardPrivateData: { actionIds: ['agree'], params: { action: 'agree' } },
+      }),
     }))
     await Promise.resolve()
 
@@ -185,18 +192,38 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     expect(handler).toHaveBeenCalledWith('l3-fix-120', 'agree', 'u-primary')
   })
 
-  it('新格式：action.id=reject → handler 收到 reject', async () => {
+  it('新格式：actionIds[0]=reject → handler 收到 reject', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
     mockClient._trigger(TOPIC_CARD, buildCallbackEvent({
       outTrackId: 'l3-fix-121',
-      action: { id: 'reject' },
       userId: 'u-primary',
+      type: 'actionCallback',
+      content: JSON.stringify({
+        cardPrivateData: { actionIds: ['reject'], params: { action: 'reject' } },
+      }),
     }))
     await Promise.resolve()
 
     expect(handler).toHaveBeenCalledWith('l3-fix-121', 'reject', 'u-primary')
+  })
+
+  it('新格式：content 解析失败时仍回落到 params.action', async () => {
+    const handler = vi.fn()
+    adapter.onCardAction(handler)
+
+    // actionIds 缺失，只有 params.action
+    mockClient._trigger(TOPIC_CARD, buildCallbackEvent({
+      outTrackId: 'l3-fix-122',
+      userId: 'u-primary',
+      content: JSON.stringify({
+        cardPrivateData: { params: { action: 'agree' } },
+      }),
+    }))
+    await Promise.resolve()
+
+    expect(handler).toHaveBeenCalledWith('l3-fix-122', 'agree', 'u-primary')
   })
 
   it('旧格式：callbackData.{taskId,action} 仍兼容', async () => {
@@ -217,8 +244,8 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     adapter.onCardAction(handler)
 
     mockClient._trigger(TOPIC_CARD, buildCallbackEvent({
-      // 没 taskId / outTrackId
-      action: { id: 'agree' },
+      // 没 taskId / outTrackId，也没 action
+      content: JSON.stringify({ cardPrivateData: {} }),
       userId: 'u-x',
     }))
     await Promise.resolve()
