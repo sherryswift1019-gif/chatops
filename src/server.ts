@@ -235,15 +235,24 @@ async function main(): Promise<void> {
   // Card action (approval responses)
   for (const adapter of adapters) {
     adapter.onCardAction(async (taskId, action, approverId) => {
+      // 钉钉互动卡片的 Action ID 是自定义的（我们用 agree/reject）；
+      // 旧路径也可能直接传 approved/rejected。这里统一映射到 approval-manager 期待的决策词。
+      const decision: 'approved' | 'rejected' | null =
+        action === 'agree' || action === 'approved' ? 'approved' :
+        action === 'reject' || action === 'rejected' ? 'rejected' :
+        null
+      if (!decision) {
+        console.warn('[Card] unknown action from card callback:', action)
+        return
+      }
+
       // Route pipeline approval callbacks
       try {
         const mgr = PipelineApprovalManager.getInstance()
-        mgr.handleCallback(taskId, action as 'approved' | 'rejected', approverId)
+        mgr.handleCallback(taskId, decision, approverId)
       } catch { /* not a pipeline approval */ }
 
-      if (action === 'approved' || action === 'rejected') {
-        await gate.respond(taskId, approverId, action)
-      }
+      await gate.respond(taskId, approverId, decision)
     })
   }
 

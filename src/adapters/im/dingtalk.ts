@@ -197,10 +197,12 @@ export class DingTalkAdapter implements IMAdapter {
   }
 
   async sendDirectMessage(userId: string, content: TextContent | InteractiveCard): Promise<void> {
+    // 互动卡片分支：走 /v1.0/im/interactiveCards/send
+    if ('actions' in content) {
+      return this.sendInteractiveCard(userId, content as InteractiveCard)
+    }
     const token = await this.getAccessToken()
-    const text = 'actions' in content
-      ? `${(content as InteractiveCard).title}\n\n${(content as InteractiveCard).body}`
-      : (content as TextContent).text
+    const text = (content as TextContent).text
 
     await axios.post(
       'https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend',
@@ -213,6 +215,45 @@ export class DingTalkAdapter implements IMAdapter {
       { headers: { 'x-acs-dingtalk-access-token': token } }
     )
     console.log(`[DingTalk] DM sent to ${userId}`)
+  }
+
+  /**
+   * 发送钉钉互动卡片（基于已在钉钉 OA 后台创建的 cardTemplateId）。
+   *
+   * 依赖环境变量 `DINGTALK_L3_CARD_TEMPLATE_ID`（或通过子类/注入方式传入）。
+   * outTrackId 用 content.callbackData.taskId（保证同一 approval 幂等 + 回调能映射回）。
+   * cardParamMap 优先用 content.templateParams；未提供则用默认 { title, body }。
+   */
+  private async sendInteractiveCard(userId: string, card: InteractiveCard): Promise<void> {
+    const templateId = process.env.DINGTALK_L3_CARD_TEMPLATE_ID
+    if (!templateId) {
+      // 未配置模板时降级为文字（fallback）
+      console.warn('[DingTalk] DINGTALK_L3_CARD_TEMPLATE_ID 未配置，InteractiveCard 降级为文字')
+      const text = `${card.title}\n\n${card.body}`
+      return this.sendDirectMessage(userId, { text })
+    }
+    const outTrackId = card.callbackData.taskId
+    if (!outTrackId) {
+      throw new Error('[DingTalk] InteractiveCard.callbackData.taskId is required (used as outTrackId)')
+    }
+    const cardParamMap: Record<string, string> = card.templateParams ?? {
+      title: card.title,
+      body: card.body,
+    }
+    const token = await this.getAccessToken()
+    await axios.post(
+      'https://api.dingtalk.com/v1.0/im/interactiveCards/send',
+      {
+        outTrackId,
+        robotCode: this.cfg.clientId,
+        conversationType: 1, // 1=单聊, 2=群聊
+        receiverUserIdList: [userId],
+        cardTemplateId: templateId,
+        cardData: { cardParamMap },
+      },
+      { headers: { 'x-acs-dingtalk-access-token': token } }
+    )
+    console.log(`[DingTalk] InteractiveCard sent to ${userId}, outTrackId=${outTrackId}`)
   }
 
   async getUserInfo(userId: string): Promise<UserInfo> {
@@ -385,13 +426,34 @@ export class DingTalkAdapter implements IMAdapter {
     // ACK
     this.client.send(res.headers.messageId, { status: 'SUCCESS' })
 
-    const callbackData = (data.callbackData ?? data) as Record<string, string>
-    const taskId = callbackData.taskId ?? (data.taskId as string)
-    const action = callbackData.action ?? (data.action as string)
-    const userId = (data.userId ?? data.operatorUserId) as string
+    // 钉钉 AI 卡片回传字段：outTrackId（我们发送时的 taskId）+ action.id/key（按钮 Action ID）
+    //   旧互动卡片格式：callbackData.taskId + callbackData.action
+    // 两种兼容解析。
+    const callbackData = (data.callbackData ?? data) as Record<string, unknown>
+    const taskId =
+      (callbackData.taskId as string) ??
+      (callbackData.outTrackId as string) ??
+      (data.outTrackId as string)
+    const actionObj = (data.action ?? callbackData.action) as unknown
+    const action =
+      (typeof actionObj === 'object' && actionObj !== null
+        ? (actionObj as Record<string, string>).id ??
+          (actionObj as Record<string, string>).key ??
+          (actionObj as Record<string, string>).value
+        : (actionObj as string)) ??
+      (callbackData.actionId as string) ??
+      (callbackData.actionKey as string) ??
+      (callbackData.action as string)
+    const userId = (data.userId ?? data.operatorUserId ?? callbackData.userId) as string
 
     if (taskId && action && userId) {
       await this.cardActionHandler?.(taskId, action, userId)
+    } else {
+      console.warn('[DingTalk] handleCardCallback: missing fields', {
+        taskId: !!taskId,
+        action: !!action,
+        userId: !!userId,
+      })
     }
   }
 

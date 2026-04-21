@@ -92,6 +92,34 @@ export async function handleApproveL3(opts: TriggerOptions): Promise<TriggerResu
         output: 'approvalTimeoutMs 未配置或非法（必须由 stage.capabilityParams 显式传入）',
       }
     }
+
+    // ── 给主 owner 发互动卡片（按钮批准/拒绝）──
+    // 注：approval-manager 内部还会发一条纯文本 DM（群命令 fallback），所以 owner 会看到 2 条。
+    // 卡片是主 UX，文本作为 fallback（若模板渲染失败，命令仍可用）。
+    if (adapter) {
+      const approvalKey = `l3-fix-${report.issueId}`
+      await adapter
+        .sendDirectMessage(primaryOwnerId, {
+          title: 'L3 修复方案审批',
+          body: description,
+          actions: [
+            { label: '同意', value: 'agree', style: 'primary' },
+            { label: '拒绝', value: 'reject', style: 'danger' },
+          ],
+          callbackData: { taskId: approvalKey },
+          templateParams: {
+            title: 'L3 修复方案审批',
+            Issue_link: report.issueUrl,
+            remark: description,
+            created_at: formatNow(),
+          },
+        })
+        .catch((err: unknown) => {
+          // 卡片发送失败不阻塞主流程，approval-manager 的文字 DM 兜底（群命令仍可审批）
+          console.error('[approve_l3] 互动卡片发送失败（降级为文字命令审批）:', err)
+        })
+    }
+
     const decision = await mgr.requestApproval(
       [primaryOwnerId],
       description,
@@ -143,6 +171,13 @@ function getFirstAdapter(mgr: PipelineApprovalManager): IMAdapter | undefined {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n) + '...' : s
+}
+
+/** 格式化当前时间为 yyyy-mm-dd HH:MM:SS（供钉钉卡片 created_at 变量用） */
+function formatNow(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 function buildFyiMessage(p: {
