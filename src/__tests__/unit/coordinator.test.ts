@@ -156,7 +156,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
       {},
       'api',
       'u-trigger',
-      {},  // runtimeVarsInput（artifact-inputs 功能引入的新参数）
+      { reportId: String(fakeReport.id) },  // runtimeVars: reportId 塞进 runtime 变量以便 resume 时 reloadContext 恢复 triggerParams
       expect.any(Function),
       { reportId: fakeReport.id },
     )

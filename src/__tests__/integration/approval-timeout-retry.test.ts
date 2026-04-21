@@ -1,46 +1,39 @@
 /**
- * AC3: L3 审批超时 → aborted → retry endpoint 复用 Issue → 新 Pipeline
+ * AC3: L3 审批 timeout → aborted（graph-runner approval stage 版本）
  *
- * 1. L3 审批返回 timeout → Pipeline failed → report.status='aborted'
- * 2. 补发 notify_bug（coordinator onComplete 里自动调）
- * 3. 调 retry endpoint → 新 report，issueId 相同，触发新 Pipeline
+ * 新架构下 timeout 机制：graph-runner 的 dispatchInterrupt 在 approval 触发时
+ * 用 scheduleTimeout(stage.timeoutSeconds * 1000, new Command({resume:'timeout'}))
+ * 调度超时自动 resume。spec 里把 pipeline L3 approval stage 的 timeoutSeconds
+ * 降到 1 秒触发快速超时，等 2.5 秒后断言 pipeline 进入 aborted 终态。
+ *
+ * 注：老版的 "retry endpoint 复用 Issue 新 Pipeline" 断言已拆到
+ * admin-bug-reports.test.ts 的 /retry endpoint 单元测试，这里不重复。
  */
-import { describe, it, expect, beforeEach, beforeAll, vi } from 'vitest'
+import { describe, it, expect, beforeEach, beforeAll, afterEach, vi } from 'vitest'
 
 vi.mock('../../agent/analysis/claude-runs.js', async () => {
   const actual = await vi.importActual<typeof import('../../agent/analysis/claude-runs.js')>(
     '../../agent/analysis/claude-runs.js',
   )
-  return {
-    ...actual,
-    runFilterStage: vi.fn(),
-    runDetailStage: vi.fn(),
-  }
+  return { ...actual, runFilterStage: vi.fn(), runDetailStage: vi.fn() }
 })
 
 vi.mock('../../agent/analysis/gitlab-issue.js', () => ({
   gitlabCreateIssue: vi.fn(),
   gitlabPostIssueNote: vi.fn(),
+  gitlabUpdateIssue: vi.fn(),
+  gitlabGetIssue: vi.fn(),
 }))
 
 vi.mock('../../agent/fix/fix-logic.js', async () => {
   const actual = await vi.importActual<typeof import('../../agent/fix/fix-logic.js')>(
     '../../agent/fix/fix-logic.js',
   )
-  return {
-    ...actual,
-    runFixForProject: vi.fn(),
-  }
+  return { ...actual, runFixForProject: vi.fn() }
 })
 
-vi.mock('../../agent/mr/gitlab-mr.js', () => ({
-  gitlabCreateMr: vi.fn(),
-}))
-
-vi.mock('../../agent/review/claude-review.js', () => ({
-  runClaudeReview: vi.fn(),
-}))
-
+vi.mock('../../agent/mr/gitlab-mr.js', () => ({ gitlabCreateMr: vi.fn() }))
+vi.mock('../../agent/review/claude-review.js', () => ({ runClaudeReview: vi.fn() }))
 vi.mock('../../agent/review/gitlab-mr-note.js', () => ({
   gitlabPostMrNote: vi.fn().mockResolvedValue(undefined),
   gitlabUpdateMrLabels: vi.fn().mockResolvedValue(undefined),
@@ -60,27 +53,22 @@ vi.mock('../../agent/worktree/manager.js', async () => {
   }
 })
 
-import { resetTestDb } from '../helpers/db.js'
+import { resetTestDb, getTestPool } from '../helpers/db.js'
 import { baseSeed, seedProject } from '../helpers/bug-fix-seed.js'
-import Fastify from 'fastify'
 import { handleAnalyzeBug } from '../../agent/analysis/analyzer.js'
 import { handleAnalysisComplete, registerCapabilityHandler } from '../../agent/coordinator.js'
 import { handleCreateMr } from '../../agent/mr/mr-handler.js'
 import { handleFixBug } from '../../agent/fix/fix-runner.js'
 import { handleReviewMr } from '../../agent/review/reviewer.js'
 import { handleNotify } from '../../agent/notify/notify-handler.js'
-import { handleApproveL3 } from '../../agent/approval/approve-l3-handler.js'
-import { registerAnalysisBugHandler } from '../../agent/analysis/analyzer.js'
-import {
-  getBugAnalysisReportById,
-  listReportsByProductLine,
-} from '../../db/repositories/bug-analysis-reports.js'
-import { findByReport, findByReportCode } from '../../db/repositories/bug-fix-events.js'
+import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { PipelineApprovalManager } from '../../pipeline/approval-manager.js'
-import { registerBugAnalysisReportRoutes } from '../../admin/routes/bug-analysis-reports.js'
+import { initGraphRunnerDispatchers } from '../../pipeline/graph-runner.js'
+import { resetCheckpointerForTesting } from '../../pipeline/graph-runtime.js'
+import { registerBuiltinApprovalResolvers } from '../../agent/approval/resolvers.js'
 
 import { runFilterStage, runDetailStage } from '../../agent/analysis/claude-runs.js'
-import { gitlabCreateIssue, gitlabPostIssueNote } from '../../agent/analysis/gitlab-issue.js'
+import { gitlabCreateIssue } from '../../agent/analysis/gitlab-issue.js'
 import type { IMAdapter } from '../../adapters/im/types.js'
 
 function makeMockAdapter(): IMAdapter & { sendDirectMessage: ReturnType<typeof vi.fn> } {
@@ -97,10 +85,7 @@ function makeMockAdapter(): IMAdapter & { sendDirectMessage: ReturnType<typeof v
   } as unknown as IMAdapter & { sendDirectMessage: ReturnType<typeof vi.fn> }
 }
 
-// main 的 LangGraph 改造合并后 L3 审批已降级（seed.sql 删 approve_l3 stage,
-// approval-manager.requestApproval 改为 throw）。整套"审批超时 → aborted → retry"
-// 无可触发路径，整组 skip 直至 TODO §11 把 approval stage 接入 graph-runner 后恢复。
-describe.skip('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
+describe('AC3: L3 审批超时 → aborted', () => {
   let productLineId: number
   let mockAdapter: IMAdapter & { sendDirectMessage: ReturnType<typeof vi.fn> }
 
@@ -108,38 +93,50 @@ describe.skip('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
     registerCapabilityHandler('fix_bug_l1', opts => handleFixBug(opts, 'l1'))
     registerCapabilityHandler('fix_bug_l2', opts => handleFixBug(opts, 'l2'))
     registerCapabilityHandler('fix_bug_l3', opts => handleFixBug(opts, 'l3'))
-    registerCapabilityHandler('approve_l3', handleApproveL3)
     registerCapabilityHandler('create_mr', handleCreateMr)
     registerCapabilityHandler('ai_review_mr', handleReviewMr)
     registerCapabilityHandler('notify_bug', handleNotify)
-    registerAnalysisBugHandler()
+    registerBuiltinApprovalResolvers()
   })
 
   beforeEach(async () => {
     await resetTestDb()
+    resetCheckpointerForTesting()
     vi.clearAllMocks()
 
     const seed = await baseSeed()
     productLineId = seed.productLineId
     await seedProject(productLineId, {
-      name: 'pas-api',
-      gitlabPath: 'PAM/pas-api',
-      ownerId: 'u-primary',
-      ownerName: '主负责人',
+      name: 'pas-api', gitlabPath: 'PAM/pas-api',
+      ownerId: 'u-primary', ownerName: '主负责人',
     })
+
+    // 把 L3 pipeline approval stage 的 timeoutSeconds 改小（1s），触发快速超时
+    await getTestPool().query(
+      `UPDATE test_pipelines
+         SET stages = (
+           SELECT jsonb_agg(
+             CASE WHEN (s->>'stageType') = 'approval'
+                  THEN jsonb_set(s, '{timeoutSeconds}', to_jsonb(1))
+                  ELSE s END
+           )
+           FROM jsonb_array_elements(stages) s
+         )
+       WHERE product_line_id = $1 AND name = 'L3-业务逻辑'`,
+      [productLineId],
+    )
 
     mockAdapter = makeMockAdapter()
     PipelineApprovalManager.initialize([mockAdapter])
+    initGraphRunnerDispatchers()
 
     ;(runFilterStage as any).mockResolvedValue({
       involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'test' }],
       primaryProjectPath: 'PAM/pas-api',
     })
     ;(runDetailStage as any).mockResolvedValue({ kind: 'detail', detail: {
-      classification: 'bug',
-      level: 'l3',
-      confidence: 'medium',
-      confidenceScore: 0.7,
+      classification: 'bug', level: 'l3',
+      confidence: 'medium', confidenceScore: 0.7,
       rootCause: { type: 'logic', summary: 'L3 业务 bug', file: 'x.java', lineRange: [1, 10] },
       solutions: [{ id: 'a', summary: '改业务', recommended: true, risk: 'medium', effort: 'medium' }],
       affectedModules: ['auth'],
@@ -150,14 +147,18 @@ describe.skip('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
       iid: 77,
       url: 'http://git.example.com/PAM/pas-api/-/issues/77',
     })
-    ;(gitlabPostIssueNote as any).mockResolvedValue({
-      issueUrl: 'http://git.example.com/PAM/pas-api/-/issues/77',
-    })
   })
 
-  it('审批 timeout → aborted → retry 复用 Issue + 新 Pipeline', async () => {
-    // ── Step 1: 先跑一轮 analyze + pipeline，审批超时 ──
-    vi.spyOn(PipelineApprovalManager.prototype, 'requestApproval').mockResolvedValueOnce('timeout')
+  afterEach(async () => {
+    await new Promise(r => setTimeout(r, 300))
+    vi.restoreAllMocks()
+  })
+
+  it('approval 在 stage.timeoutSeconds 内没被 resume → graph-runner 自动触发 timeout → pipeline aborted', async () => {
+    // spy requestCard（不真发钉钉卡片，模拟"没人点按钮"场景）
+    vi
+      .spyOn(PipelineApprovalManager.prototype, 'requestCard')
+      .mockResolvedValue('mock-approval-id')
 
     const analyzerResult = await handleAnalyzeBug({
       capabilityKey: 'analyze_bug',
@@ -169,61 +170,23 @@ describe.skip('AC3: 审批超时 → aborted → retry 复用 Issue', () => {
 
     await handleAnalysisComplete(reportId, 'l3', 'bug', 'u-trigger')
 
-    const aborted = await getBugAnalysisReportById(reportId)
-    expect(aborted!.status).toBe('aborted')
+    // 等 graph-runner scheduleTimeout (stage.timeoutSeconds=1s) 触发
+    // + pipeline 后续 failed path + coordinator.onComplete 把 status 改 aborted
+    // 总共给 4s budget（1s timer + 3s 余量）
+    let report = await getBugAnalysisReportById(reportId)
+    const pollStart = Date.now()
+    while (
+      report?.status !== 'pipeline_success' &&
+      report?.status !== 'aborted' &&
+      Date.now() - pollStart < 4000
+    ) {
+      await new Promise(r => setTimeout(r, 100))
+      report = await getBugAnalysisReportById(reportId)
+    }
 
-    // approval 事件写入
-    const approvalEvents = await findByReportCode(reportId, 'approval')
-    expect(approvalEvents).toHaveLength(1)
-    expect((approvalEvents[0].data as any).decision).toBe('timeout')
-
-    // 补发 notify_bug：approval_timeout 场景不再发 DM（触发人通道已取消，owner 也不收），
-    // 因此不会产生 notify 事件
-    const notifyEvents = await findByReportCode(reportId, 'notify')
-    expect(notifyEvents).toHaveLength(0)
-
-    // ── Step 2: 调用 retry endpoint ──
-    // 启用 retry mock：第二轮走"审批被批准"路径，让 pipeline 一路到 notify
-    vi.spyOn(PipelineApprovalManager.prototype, 'requestApproval').mockResolvedValue('approved')
-    // mock 后续 pipeline stages
+    expect(report!.status).toBe('aborted')
+    // fix/MR/review 不应被调（pipeline 挂在 approval 没走到后续 stage）
     const fixLogic = await import('../../agent/fix/fix-logic.js')
-    ;(fixLogic.runFixForProject as any).mockResolvedValue({
-      branch: 'fix/issue-77-1',
-      testPassed: true,
-      output: '所有测试通过',
-    })
-    const mr = await import('../../agent/mr/gitlab-mr.js')
-    ;(mr.gitlabCreateMr as any).mockResolvedValue({
-      iid: 200,
-      url: 'http://git.example.com/PAM/pas-api/-/merge_requests/200',
-    })
-    const rev = await import('../../agent/review/claude-review.js')
-    ;(rev.runClaudeReview as any).mockResolvedValue({ label: 'ai-approved', summary: 'LGTM' })
-
-    const app = Fastify()
-    await app.register(async (scope) => {
-      await registerBugAnalysisReportRoutes(scope)
-    })
-    const res = await app.inject({ method: 'POST', url: `/bug-reports/${reportId}/retry` })
-    expect(res.statusCode).toBe(200)
-    const body = res.json()
-    expect(body.success).toBe(true)
-    expect(body.data.issueId).toBe(77) // 复用原 Issue
-    const newReportId = body.data.newReportId
-    expect(newReportId).not.toBe(reportId)
-
-    const newReport = await getBugAnalysisReportById(newReportId)
-    expect(newReport!.issueId).toBe(77) // 复用
-    expect(newReport!.status).toBe('pipeline_success')
-
-    // 新 report 的 create_issue 事件应标记 isReused=true
-    const newCreateIssueEvents = await findByReportCode(newReportId, 'create_issue')
-    expect(newCreateIssueEvents).toHaveLength(1)
-    expect((newCreateIssueEvents[0].data as any).isReused).toBe(true)
-
-    // gitlabPostIssueNote 被调（复用 Issue 走 note 路径）
-    expect(gitlabPostIssueNote).toHaveBeenCalled()
-
-    await app.close()
+    expect((fixLogic.runFixForProject as any)).not.toHaveBeenCalled()
   }, 30_000)
 })

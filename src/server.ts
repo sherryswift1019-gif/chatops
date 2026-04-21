@@ -49,7 +49,7 @@ import './agent/tools/review-mr-diff.js'
 import { registerAnalysisBugHandler } from './agent/analysis/analyzer.js'
 import { registerFixHandlers } from './agent/fix/fix-runner.js'
 import { registerReviewHandler } from './agent/review/reviewer.js'
-import { registerApproveL3Handler } from './agent/approval/approve-l3-handler.js'
+import { registerBuiltinApprovalResolvers } from './agent/approval/resolvers.js'
 import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
 import { registerNotifyHandler } from './agent/notify/notify-handler.js'
 import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
@@ -188,10 +188,13 @@ async function main(): Promise<void> {
   registerAnalysisBugHandler()
   registerFixHandlers()
   registerReviewHandler()
-  registerApproveL3Handler()
   registerCreateMrHandler()
   registerNotifyHandler()
   registerRequestHandoverHandler()
+
+  // 注册 pipeline approval resolver（审批人动态查询策略）
+  // L3 "方案审批" stage 通过 approverIdsResolver='primary_project_owner' 路由到这里
+  registerBuiltinApprovalResolvers()
 
   // 启动 worktree 清理调度器
   startCleanupScheduler()

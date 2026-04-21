@@ -34,7 +34,7 @@ import { runClaudeCli } from '../../agent/claude-cli.js'
 import { acquire, release } from '../../agent/worktree/manager.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { gitlabGetIssue } from '../../agent/analysis/gitlab-issue.js'
-import { createFixBranch } from '../../agent/fix/branch-manager.js'
+import { createFixBranch, rebaseOnTarget, pushBranch, commitChanges } from '../../agent/fix/branch-manager.js'
 
 const baseInput = {
   reportId: 1,
@@ -116,5 +116,77 @@ describe('runFixForProject: preload + prompt 集成行为', () => {
     expect(result.error).toContain('#42')
     expect(result.error).toContain('GitLab 500')
     expect(vi.mocked(runClaudeCli)).not.toHaveBeenCalled()
+  })
+})
+
+/**
+ * TODO §7 fix-logic rebase 失败被当 success 通过的 bug
+ *
+ * branchManager.rebaseOnTarget 返回 3 种状态：
+ *   { success: true,  conflict: false }  → 正常走 push
+ *   { success: false, conflict: true  }  → 冲突，返 testPassed:false + "存在冲突"
+ *   { success: false, conflict: false }  → 其他失败（fetch/网络/分支不存在）
+ *
+ * 原实现只判 `conflict` 一个 flag，第 3 种会 fall through 到 push，MR 被开但
+ * 分支未 rebase 到 target → 踩过 2 次坑（L2/test + L2/ai-chatops-dev）。
+ * 修复后：改判 `!success`，两类失败都正确返 testPassed:false。
+ */
+describe('runFixForProject: rebase 失败的三种状态（TODO §7）', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    tmpDir = await mkdtemp(join(tmpdir(), 'fixlogic-rebase-test-'))
+    vi.mocked(acquire).mockResolvedValue({
+      path: tmpDir,
+      userId: 'u', product: 'pl-1', version: 'main',
+      sessionId: 's', expiresAt: new Date(),
+    } as any)
+    vi.mocked(release).mockResolvedValue(undefined as any)
+    vi.mocked(createFixBranch).mockResolvedValue('fix/issue-42-1')
+    vi.mocked(commitChanges).mockResolvedValue(undefined as any)
+    vi.mocked(pushBranch).mockResolvedValue(undefined as any)
+    vi.mocked(getCapabilityByKey).mockResolvedValue({
+      id: 10, key: 'fix_bug_l2', toolNames: [], systemPrompt: 'stub',
+    } as any)
+    vi.mocked(gitlabGetIssue).mockResolvedValue({ description: 'x' })
+    // Claude 输出带"测试通过"触发 isFixSuccessful → true，流程走到 rebase
+    vi.mocked(runClaudeCli).mockResolvedValue('所有测试通过')
+  })
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('rebase 成功 → push + testPassed:true', async () => {
+    vi.mocked(rebaseOnTarget).mockResolvedValue({ success: true, conflict: false })
+
+    const result = await runFixForProject(baseInput)
+
+    expect(result.testPassed).toBe(true)
+    expect(result.error).toBeUndefined()
+    expect(vi.mocked(pushBranch)).toHaveBeenCalled()
+  })
+
+  it('rebase conflict → testPassed:false + error 含 "存在冲突"，不 push', async () => {
+    vi.mocked(rebaseOnTarget).mockResolvedValue({ success: false, conflict: true })
+
+    const result = await runFixForProject(baseInput)
+
+    expect(result.testPassed).toBe(false)
+    expect(result.error).toMatch(/存在冲突/)
+    expect(vi.mocked(pushBranch)).not.toHaveBeenCalled()
+  })
+
+  it('rebase 非 conflict 失败（如 fetch/网络/分支不存在）→ testPassed:false + error 含 "rebase 失败（非冲突）"，不 push', async () => {
+    // ⚠️ 这是 TODO §7 修复前的回归 case：原代码只判 conflict，这种返回会 fall
+    // through 到 push，MR 被错误创建。修复后必须返 testPassed:false。
+    vi.mocked(rebaseOnTarget).mockResolvedValue({ success: false, conflict: false })
+
+    const result = await runFixForProject(baseInput)
+
+    expect(result.testPassed).toBe(false)
+    expect(result.error).toMatch(/rebase 失败（非冲突）/)
+    expect(vi.mocked(pushBranch)).not.toHaveBeenCalled()
   })
 })

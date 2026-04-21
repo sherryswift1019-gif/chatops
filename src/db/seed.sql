@@ -471,12 +471,15 @@ ON CONFLICT (id) DO UPDATE SET
   description = EXCLUDED.description,
   updated_at = now();
 
--- L3 业务逻辑 Bug 修复（capability 化审批 + 修复，approvalTimeoutMs 必须显式配置）
+-- L3 业务逻辑 Bug 修复（方案审批 + 修复）
+-- approval stage 用 approverIdsResolver='primary_project_owner' 运行时动态查主仓库 owner
+-- (见 src/pipeline/approval-resolvers.ts 和 src/agent/approval/resolvers.ts)
 INSERT INTO test_pipelines (id, product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
 VALUES (3,
   (SELECT id FROM product_lines WHERE name = 'pam'),
-  'L3-业务逻辑', '业务逻辑类 Bug。当前 approval-manager legacy API 废弃（main 的 LangGraph 改造后 requestApproval throws），L3 退化走 L2 流程（跳过方案审批，直接修复）。审批流程恢复需等接入 graph-runner approval stage（TODO §11）。',
+  'L3-业务逻辑', '业务逻辑类 Bug。第一步"方案审批"发钉钉卡片给主仓库 owner 等同意/拒绝（resolver 动态查，不需在配置里硬编码审批人），同意后才开始 fix → MR → Review → 通知。从仓库 owner 在 pipeline 启动时会收到 FYI 知情 DM（由 coordinator 发送，非审批）。',
   '[
+    {"name":"方案审批","stageType":"approval","approverIdsResolver":"primary_project_owner","approvalDescription":"L3 Bug 修复方案审批","timeoutSeconds":3600,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false},
     {"name":"L3 修复","stageType":"capability","capabilityKey":"fix_bug_l3","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
     {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
     {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
