@@ -125,6 +125,12 @@ function get<T = unknown>(data: Record<string, unknown>, key: string): T | undef
   return data[key] as T | undefined
 }
 
+/** 钉钉 staffId → 姓名；查不到降级为原 id */
+function renderUserName(id: string | undefined, map?: Record<string, string>): string {
+  if (!id) return '—'
+  return map?.[id] ?? id
+}
+
 // 事件分组：按 code 聚合
 function groupEventsByCode(events: BugFixEvent[]): Record<string, BugFixEvent[]> {
   const out: Record<string, BugFixEvent[]> = {}
@@ -315,7 +321,7 @@ function AIReviewBlock({ events }: { events: BugFixEvent[] }) {
   )
 }
 
-function NotifyBlock({ events }: { events: BugFixEvent[] }) {
+function NotifyBlock({ events, userNameMap }: { events: BugFixEvent[]; userNameMap?: Record<string, string> }) {
   if (events.length === 0) return null
   return (
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
@@ -336,7 +342,7 @@ function NotifyBlock({ events }: { events: BugFixEvent[] }) {
             <Descriptions.Item label="对象">
               {userId ? (
                 <Space wrap>
-                  <Tag>{role ? `${role}: ${userId}` : userId}</Tag>
+                  <Tag>{role ? `${role}: ${renderUserName(userId, userNameMap)}` : renderUserName(userId, userNameMap)}</Tag>
                   {mrIids.map((m, i) => (
                     <Tag key={`mr-${i}`} color="blue">MR !{String(m)}</Tag>
                   ))}
@@ -358,7 +364,7 @@ function NotifyBlock({ events }: { events: BugFixEvent[] }) {
   )
 }
 
-function HandoverBlock({ events }: { events: BugFixEvent[] }) {
+function HandoverBlock({ events, userNameMap }: { events: BugFixEvent[]; userNameMap?: Record<string, string> }) {
   if (events.length === 0) return null
   return (
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
@@ -371,7 +377,7 @@ function HandoverBlock({ events }: { events: BugFixEvent[] }) {
         return (
           <Descriptions key={e.id} size="small" column={2} bordered>
             <Descriptions.Item label="原因">{reason ?? '—'}</Descriptions.Item>
-            <Descriptions.Item label="接手人">{owner ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="接手人">{renderUserName(owner, userNameMap)}</Descriptions.Item>
             <Descriptions.Item label="尝试次数">{attemptCount ?? '—'}</Descriptions.Item>
             <Descriptions.Item label="修复分支">
               {branchUrl ? (
@@ -396,7 +402,7 @@ function HandoverBlock({ events }: { events: BugFixEvent[] }) {
   )
 }
 
-function ApprovalBlock({ events }: { events: BugFixEvent[] }) {
+function ApprovalBlock({ events, userNameMap }: { events: BugFixEvent[]; userNameMap?: Record<string, string> }) {
   if (events.length === 0) return null
   return (
     <Space direction="vertical" size="small" style={{ width: '100%' }}>
@@ -410,7 +416,7 @@ function ApprovalBlock({ events }: { events: BugFixEvent[] }) {
             <Descriptions.Item label="决策">
               {decision ? <Tag color={color}>{decision}</Tag> : '—'}
             </Descriptions.Item>
-            <Descriptions.Item label="审批人">{approver ?? '—'}</Descriptions.Item>
+            <Descriptions.Item label="审批人">{renderUserName(approver, userNameMap)}</Descriptions.Item>
             <Descriptions.Item label="备注" span={2}>
               {comment ?? '—'}
             </Descriptions.Item>
@@ -591,7 +597,7 @@ function AnalysisSection({
 
 // ─── Section 3：执行结果 ─────────────────────────────────────────
 
-function ExecutionSection({ events }: { events: BugFixEvent[] }) {
+function ExecutionSection({ events, userNameMap }: { events: BugFixEvent[]; userNameMap?: Record<string, string> }) {
   const grouped = useMemo(() => groupEventsByCode(events), [events])
   const order: Array<[string, string]> = [
     ['create_issue', 'Issue 信息'],
@@ -618,9 +624,9 @@ function ExecutionSection({ events }: { events: BugFixEvent[] }) {
             {code === 'fix_attempt' && <FixAttemptBlock events={list} />}
             {code === 'create_mr' && <MRBlock events={list} />}
             {code === 'ai_review' && <AIReviewBlock events={list} />}
-            {code === 'approval' && <ApprovalBlock events={list} />}
-            {code === 'notify' && <NotifyBlock events={list} />}
-            {code === 'handover' && <HandoverBlock events={list} />}
+            {code === 'approval' && <ApprovalBlock events={list} userNameMap={userNameMap} />}
+            {code === 'notify' && <NotifyBlock events={list} userNameMap={userNameMap} />}
+            {code === 'handover' && <HandoverBlock events={list} userNameMap={userNameMap} />}
           </div>
         )
       })}
@@ -853,20 +859,38 @@ export default function BugRunDetailDrawer({ open, report, onClose, userNameMap 
 
           <Divider style={{ margin: 0 }} />
 
-          <div>
-            <Title level={4} style={{ marginTop: 0 }}>分析内容</Title>
-            <AnalysisSection
-              report={report}
-              markdown={markdown}
-              markdownLoading={markdownLoading}
-            />
-          </div>
+          <Collapse size="small" ghost>
+            <Collapse.Panel
+              key="analysis"
+              header={
+                <Space>
+                  <Title level={4} style={{ margin: 0 }}>分析内容</Title>
+                  {report.issueUrl && (
+                    <a
+                      href={report.issueUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <LinkOutlined /> 查看 Issue
+                    </a>
+                  )}
+                </Space>
+              }
+            >
+              <AnalysisSection
+                report={report}
+                markdown={markdown}
+                markdownLoading={markdownLoading}
+              />
+            </Collapse.Panel>
+          </Collapse>
 
           <Divider style={{ margin: 0 }} />
 
           <div>
             <Title level={4} style={{ marginTop: 0 }}>执行结果</Title>
-            <ExecutionSection events={events} />
+            <ExecutionSection events={events} userNameMap={userNameMap} />
           </div>
 
           {rounds.length >= 2 && (
