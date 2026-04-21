@@ -69,7 +69,7 @@ export interface FinalizeMeta {
   runId: number
   pipelineId: number
   pipelineName: string
-  triggerType: 'manual' | 'api' | 'scheduled'
+  triggerType: 'manual' | 'api' | 'scheduled' | 'im'
   triggeredBy: string
   serverAssignment: Record<string, string[]>
   serverIds: number[]

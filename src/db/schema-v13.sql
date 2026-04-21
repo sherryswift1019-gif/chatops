@@ -15,3 +15,10 @@ ALTER TABLE capabilities
 CREATE INDEX IF NOT EXISTS idx_capabilities_default_pipeline
   ON capabilities(default_pipeline_id)
   WHERE default_pipeline_id IS NOT NULL;
+
+-- 扩展 test_runs.trigger_type CHECK 以容纳 IM 触发。
+-- schema-v3 定义的 constraint 名字是 test_runs_trigger_type_check（Postgres 默认命名）。
+ALTER TABLE test_runs DROP CONSTRAINT IF EXISTS test_runs_trigger_type_check;
+ALTER TABLE test_runs
+  ADD CONSTRAINT test_runs_trigger_type_check
+  CHECK (trigger_type IN ('manual', 'api', 'scheduled', 'im'));

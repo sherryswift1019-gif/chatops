@@ -3,7 +3,7 @@ import { getPool } from '../client.js'
 export interface TestRun {
   id: number
   pipelineId: number
-  triggerType: 'manual' | 'api' | 'scheduled'
+  triggerType: 'manual' | 'api' | 'scheduled' | 'im'
   triggeredBy: string
   status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
   servers: Record<string, string[]>

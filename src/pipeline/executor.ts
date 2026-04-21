@@ -40,6 +40,12 @@ const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
 export type { PipelineRunResult } from './graph-runner.js'
 
+export interface ImTriggerContext {
+  platform: string
+  groupId: string
+  userId: string
+}
+
 /**
  * Kick off a pipeline run. Returns the run id as soon as the initial invoke
  * has either completed or hit its first interrupt. The run continues
@@ -49,11 +55,12 @@ export type { PipelineRunResult } from './graph-runner.js'
 export async function runPipeline(
   pipelineId: number,
   serverAssignment: Record<string, string[]>,
-  triggerType: 'manual' | 'api' | 'scheduled',
+  triggerType: 'manual' | 'api' | 'scheduled' | 'im',
   triggeredBy: string,
   runtimeVarsInput: Record<string, string> = {},
   onComplete?: (result: PipelineRunResult) => void,
   triggerParams?: Record<string, unknown>,
+  imContext?: ImTriggerContext,
 ): Promise<number> {
   // Legacy fallback for rollback scenarios.
   if (process.env.PIPELINE_ENGINE === 'legacy') {
@@ -147,6 +154,9 @@ export async function runPipeline(
     pipeline: { id: pipeline.id, name: pipeline.name },
     run: { id: run.id, triggeredBy, triggerType },
     variables: { ...(pipeline.variables ?? {}), ...runtimeVars },
+    triggerPlatform: imContext?.platform,
+    triggerGroupId: imContext?.groupId,
+    triggerUserId: imContext?.userId,
   }
 
   const hooks = buildDefaultHooks(logDir)
