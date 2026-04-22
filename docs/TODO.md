@@ -31,26 +31,6 @@
 
 ---
 
-## 3. 测试数据隔离 — 已做和未做的
-
-**背景**：2026-04-20 发现 `chatops` 开发库曾被 e2e/integration 测试污染（mock project `PAM/pas-api`、stub prompt 残留）。污染的直接原因是 `DATABASE_URL` 被误设到生产库。
-
-**已做（2026-04-20 同日）**：
-- `helpers/db.ts:assertTestDbSafeToReset` 双重防御
-  - B2：`NODE_ENV==='test'`——vitest 自动设置，非测试进程调 resetTestDb 立即 throw
-  - B3：DB 里必须存在 `chatops_test_db_marker` 表（生产库绝无此表）
-- 每次 DROP 重建 schema 后自动重种 marker 供下次校验
-- 补 `mock-e2e/README.md` "测试库 bootstrap" 小节，含 psql 命令
-- 详见 commit `ccb4c7d`
-
-**未做**：
-- **Claude agent 在 Bash 工具里的磁盘副作用未隔离**：`/tmp/analysis/fix-agent-*` / `/tmp/analysis/<uid>-detail-*` 累积；改 `~/.m2`；`mvn test` 起本地端口等——`cleanup-scheduler.ts` 覆盖有限
-- **生产库被污染后的数据恢复**：开发库 `projects` / `dingtalk_users` / `product_line_members` 等被覆盖/清空，需要手工重 seed（本次事故的残留）
-- **AI 运行态数据与真数据的"可丢弃标记"**：`bug_analysis_reports.run_mode='test'|'trial'|'prod'`，BugRunsPage 能按此过滤——目前真假混杂
-- **Claude Bash tool 沙箱化**：container/chroot 避免污染本机开发环境——长期性
-
----
-
 ## 4. 通知人区分"owner 审批人"vs"owner 非审批人"的 DM 文案（可选）
 
 **背景**：单 project 场景下 owner 和审批人是同一人，会收到两条 DM：
