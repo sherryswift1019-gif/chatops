@@ -143,6 +143,24 @@ function resolveCapabilityParams(
 
 > `{{vars.xxx}}` 在 script 与 capability 两处语义统一：读取 `state.runtimeVars`（由 im_input / wait_webhook 节点写入）与 `pipeline.variables`（流水线配置的自定义变量）的合并值。
 
+#### 4.5 设计决策：为什么保留单一 `runtimeVars` 袋（非 LangGraph 标准做法）
+
+LangGraph 官方推荐将 state 按业务语义拆分为多个命名 channel（`messages` / `searchResults` / `validationStatus` 等），每个 channel 有独立类型和 reducer。本项目 `graph-state.ts` 里的 `runtimeVars: Record<string, unknown>`（shallow-merge）是一个万能袋，im_input / wait_webhook 都向同一 keyspace 写入，**不符合 LangGraph 官方推荐模式**。
+
+明知偏离标准仍保留，是出于产品侧的一致性权衡：
+
+- 用户在画布上、在 `pipeline.variables` 配置里、在 script 模板里统一使用 `{{vars.xxx}}`，单一袋让心智模型保持一致
+- 现有 checkpoint 数据都基于此模型，重构需要兼容层
+- 本次修复的范围聚焦于"打通 capability 节点的读取路径"，规范化是独立重构话题
+
+已知不足（后续若演进可参考）：
+
+1. **命名冲突**：im_input 采集的 `branch` 与 webhook payload 里的 `branch` 会相互覆盖
+2. **内部 state 与业务 vars 混杂**：`__im_input_collected_<index>` 这类内部 key 与业务 vars 同袋（见 `graph-builder.ts:354`），用 `__` 前缀避开但不彻底
+3. **模板来源不透明**：`{{vars.x}}` 可能来自 pipeline.variables / im_input / webhook，用户在画布上无法判断
+
+这些不在本 spec 的修复目标内。如果未来命名冲突或来源歧义成为实际痛点，再按"拆 namespace / 拆 channel"做独立重构。
+
 ### 5. 其它 UX 修复
 
 #### 5.1 targetRoles 条件显示
