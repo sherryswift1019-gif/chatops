@@ -18,10 +18,13 @@ const CapabilitiesPage       = lazy(() => import('./pages/CapabilitiesPage'))
 const TestServersPage        = lazy(() => import('./pages/TestServersPage'))
 const TestPipelinesPage      = lazy(() => import('./pages/TestPipelinesPage'))
 const TestRunsPage           = lazy(() => import('./pages/TestRunsPage'))
+const PipelineCanvasPage     = lazy(() => import('./pipeline-canvas/PipelineCanvasPage'))
 // 研发 AI 助手页面
 const BugRunsPage            = lazy(() => import('./pages/BugRunsPage'))
 const ProductKnowledgePage   = lazy(() => import('./pages/ProductKnowledgePage'))
 const MetricsPage            = lazy(() => import('./pages/MetricsPage'))
+const PrdDocumentsPage       = lazy(() => import('./pages/PrdDocumentsPage'))
+const PrdChatPage            = lazy(() => import('./pages/PrdChatPage'))
 
 const FONT = "'Urbanist', -apple-system, BlinkMacSystemFont, sans-serif"
 
@@ -195,6 +198,9 @@ export default function App() {
             <Route path="/test-pipelines" element={
               <Suspense fallback={null}><TestPipelinesPage /></Suspense>
             } />
+            <Route path="/test-pipelines/:id/canvas" element={
+              <Suspense fallback={null}><PipelineCanvasPage /></Suspense>
+            } />
             <Route path="/test-runs" element={
               <Suspense fallback={null}><TestRunsPage /></Suspense>
             } />
@@ -207,6 +213,12 @@ export default function App() {
             } />
             <Route path="/metrics" element={
               <Suspense fallback={null}><MetricsPage /></Suspense>
+            } />
+            <Route path="/prd-documents" element={
+              <Suspense fallback={null}><PrdDocumentsPage /></Suspense>
+            } />
+            <Route path="/prd-chat/:sessionKey" element={
+              <Suspense fallback={null}><PrdChatPage /></Suspense>
             } />
           </Route>
         </Routes>

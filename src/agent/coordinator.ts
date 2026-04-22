@@ -134,6 +134,42 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     return { success: false, error: msg }
   }
 
+  // 如果该 capability 绑定了默认 pipeline，走 pipeline 驱动路径
+  // （通常首节点为 im_input 参数澄清，比裸跑 Agent 具备更强的容错/审批能力）。
+  if (capability.defaultPipelineId) {
+    try {
+      // 动态 import 避免 coordinator ↔ executor-hooks ↔ coordinator 循环依赖。
+      const { runPipeline } = await import('../pipeline/executor.js')
+      const runId = await runPipeline(
+        capability.defaultPipelineId,
+        {},  // IM 触发场景通常不预分配服务器，由 pipeline 内部按需处理
+        'im',
+        opts.context.initiatorId,
+        {},  // runtimeVars 走 triggerParams 通道
+        undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
+        opts.extraParams ?? {},
+        {
+          platform: opts.context.platform,
+          groupId: opts.context.groupId,
+          userId: opts.context.initiatorId,
+        },
+      )
+      console.log(
+        `[AgentCoordinator] pipeline run #${runId} started for capability "${opts.capabilityKey}"`,
+      )
+      return {
+        success: true,
+        output: `Pipeline run #${runId} started`,
+        data: { runId, pipelineId: capability.defaultPipelineId },
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[AgentCoordinator] pipeline start failed for ${opts.capabilityKey}:`, msg)
+      return { success: false, error: `启动 pipeline 失败: ${msg}` }
+    }
+  }
+
+  // 降级：走原 handler 路径（capability 未绑定 pipeline）
   const handler = handlers.get(opts.capabilityKey)
   if (!handler) {
     const msg = `no handler registered for: ${opts.capabilityKey}`
@@ -177,6 +213,7 @@ async function findPipelineByLevel(productLineId: number, level: string): Promis
     name: r.name as string,
     description: (r.description ?? '') as string,
     stages: (r.stages ?? []) as unknown[],
+    graph: (r.graph ?? null) as TestPipeline['graph'],
     serverRoles: (r.server_roles ?? {}) as Record<string, { count: number }>,
     artifactInputs: (r.artifact_inputs ?? []) as unknown[],
     schedule: (r.schedule ?? '') as string,

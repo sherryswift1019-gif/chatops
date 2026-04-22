@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, Checkbox, message } from 'antd'
-import { PlusOutlined, DeleteOutlined, PlayCircleOutlined, RobotOutlined } from '@ant-design/icons'
+import { PlusOutlined, DeleteOutlined, PlayCircleOutlined, RobotOutlined, PartitionOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
 import { getProductLines } from '../api/product-lines'
 import { getTestServers } from '../api/test-servers'
@@ -13,6 +14,7 @@ import type { TestPipeline, ProductLine, TestServer, ArtifactInput } from '../ty
 
 
 export default function TestPipelinesPage() {
+  const nav = useNavigate()
   const [data, setData] = useState<TestPipeline[]>([])
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [dingtalkUsers, setDingtalkUsers] = useState<{userId: string; name: string}[]>([])
@@ -28,6 +30,8 @@ export default function TestPipelinesPage() {
   const [triggerServerMap, setTriggerServerMap] = useState<Record<string, string[]>>({})
   const [triggerRuntimeVars, setTriggerRuntimeVars] = useState<Record<string, string>>({})
   const [form] = Form.useForm()
+  const [canvasModalOpen, setCanvasModalOpen] = useState(false)
+  const [canvasForm] = Form.useForm()
 
   useEffect(() => { load(); loadProductLines(); loadDingtalkUsers(); loadVariableCatalog() }, [])
 
@@ -156,6 +160,35 @@ export default function TestPipelinesPage() {
     await deleteTestPipeline(id); message.success('删除成功'); await load()
   }
 
+  function openCanvasCreate() {
+    canvasForm.resetFields()
+    canvasForm.setFieldsValue({ enabled: true })
+    setCanvasModalOpen(true)
+  }
+
+  async function handleCanvasCreate() {
+    const values = await canvasForm.validateFields()
+    try {
+      const created = await createTestPipeline({
+        productLineId: values.productLineId,
+        name: values.name,
+        description: values.description ?? '',
+        stages: [],
+        serverRoles: {},
+        variables: {},
+        artifactInputs: [],
+        enabled: values.enabled ?? true,
+        schedule: '',
+        triggerParams: {},
+      })
+      message.success('已创建，进入画布编辑')
+      setCanvasModalOpen(false)
+      nav(`/test-pipelines/${created.id}/canvas`)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error ?? '创建失败')
+    }
+  }
+
   async function openTrigger(r: TestPipeline) {
     setTriggerPipeline(r)
     setTriggerServerMap({})
@@ -208,6 +241,7 @@ export default function TestPipelinesPage() {
       render: (_: unknown, r: TestPipeline) => (
         <Space>
           <a onClick={() => openTrigger(r)}><PlayCircleOutlined /> 执行</a>
+          <a onClick={() => nav(`/test-pipelines/${r.id}/canvas`)}>画布编辑</a>
           <a onClick={() => openEdit(r)}>编辑</a>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}><a style={{ color: 'red' }}>删除</a></Popconfirm>
         </Space>
@@ -216,7 +250,12 @@ export default function TestPipelinesPage() {
   ]
 
   return (
-    <Card title="流水线管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增流水线</Button>}>
+    <Card title="流水线管理" extra={
+      <Space>
+        <Button icon={<PartitionOutlined />} onClick={openCanvasCreate}>画布新建</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增流水线</Button>
+      </Space>
+    }>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal title={editing ? '编辑流水线' : '新增流水线'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} destroyOnClose width={900}>
         <Form form={form} layout="vertical">
@@ -404,6 +443,33 @@ export default function TestPipelinesPage() {
         {triggerPipeline && Object.keys(triggerPipeline.serverRoles ?? {}).length === 0 && (
           <div style={{ color: '#999' }}>此流水线未配置服务器角色</div>
         )}
+      </Modal>
+      <Modal
+        title="画布新建流水线"
+        open={canvasModalOpen}
+        onOk={handleCanvasCreate}
+        onCancel={() => setCanvasModalOpen(false)}
+        destroyOnClose
+        okText="创建并进入画布"
+        width={520}
+      >
+        <Form form={canvasForm} layout="vertical">
+          <Form.Item name="productLineId" label="所属产线" rules={[{ required: true }]}>
+            <Select options={productLines.map(p => ({ value: p.id, label: p.displayName }))} placeholder="选择产线" />
+          </Form.Item>
+          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+            <Input placeholder="如: 回归测试" />
+          </Form.Item>
+          <Form.Item name="description" label="描述">
+            <Input.TextArea rows={2} placeholder="可选" />
+          </Form.Item>
+          <Form.Item name="enabled" label="启用" valuePropName="checked" initialValue>
+            <Switch />
+          </Form.Item>
+          <div style={{ color: '#999', fontSize: 12 }}>
+            阶段与服务器角色将在画布中配置；保存后在列表页可继续通过"编辑"补充变量与制品输入。
+          </div>
+        </Form>
       </Modal>
     </Card>
   )

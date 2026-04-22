@@ -96,3 +96,48 @@ docker exec -it chatops-postgres-1 psql -U chatops -d chatops -c \
 - 卡片不弹出：检查 `DINGTALK_*` 配置、审批人 userId 是否正确，后端日志关键字 `approval-manager`。
 - 点完批准后 run 仍 pending：检查后端进程是否被重启过（内存里的 graph 实例在进程重启时丢失，但 PostgresSaver 里的 checkpoint 还在，可以通过 `POST /admin/test-runs/:id/resume` 手动驱动一次）。
 - `checkpoints` 表没被建出：确认至少跑过一条 **含 approval/webhook** 的流水线；纯 script 流水线也会走 graph-runner，但 checkpoint 在首次写入时才触发建表。
+
+---
+
+## 可视化画布（2026-04-21）
+
+### 前提
+
+- `pnpm migrate` 已执行，`test_pipelines.graph` 列存在
+- 后端 `pnpm dev` 运行，前端 `cd web && pnpm dev` 运行
+
+### 用例 1：现有线性 pipeline 打开画布
+
+1. 列表页点击任意一条现有 pipeline 的「画布编辑」
+2. 预期：画布显示为线性链（由 `linearizeStages` 自动生成），节点数与旧 stages 一致，每个节点按 stage type 着色（蓝/黄/紫/灰）
+3. 点击某个节点，右侧 Drawer 出现字段，修改名称后顶栏出现 "● 未保存"
+4. 点"保存" → Toast "已保存"，dirty 清除
+5. 刷新页面，修改持久化
+
+### 用例 2：条件分支 pipeline
+
+1. 新建一条只有一个 script stage 的 pipeline（列表页旧表单）
+2. 进入画布，"添加节点 → 运行脚本" 2 次，共 3 个节点 A / B / C
+3. A 拖拽连线到 B（默认无条件边）；A 再连到 C
+4. 点击 A→B 的边 → Popover 弹出 → 选"上游成功时" → 确定，边上出现"成功时"标签
+5. 点击 A→C 的边 → 选"上游失败时"
+6. "自动排版" → dagre 重新布局
+7. 保存；打开 PG `select graph from test_pipelines where id = ...` → 能看到 3 nodes + 2 edges + condition
+8. 列表页「执行」这条 pipeline，A 成功路径预期走 B；若 A 失败（可把脚本改成 `exit 1`）走 C
+
+### 用例 3：校验失败
+
+1. 画布上删除 B 节点（保留指向它的 edge）→ 保存
+2. 预期：Toast 错误，details 列出 "edge ... target references missing node"
+3. 前端不崩溃，dirty 仍保留
+
+### 观察点
+
+- 保存后，`test_pipelines.stages` 列不变；`graph` 列被更新
+- runtime 读取：`pipeline.graph IS NOT NULL` 时走新路径，否则 fallback linearize stages
+- 条件 expression 首版仅支持两种模板：`status === 'success'|'failed'|'skipped'` 或 `output.includes('...')`，其它一律返回 false
+
+### 排查
+
+- 画布打开一片空白：检查 `GET /admin/test-pipelines/:id/graph` 返回、`getTestServers` 是否有 role
+- 保存一直失败：看 Response body.details；常见原因是删节点没删 edge，或连出了 cycle

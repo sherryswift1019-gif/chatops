@@ -44,6 +44,10 @@ import './tools/run-tests.js'
 import './tools/create-mr.js'
 import './tools/update-ai-summary.js'
 import './tools/review-mr-diff.js'
+import './tools/save-prd.js'
+import './tools/read-prd.js'
+import './tools/update-prd-context.js'
+import './tools/search-existing-prds.js'
 
 const server = new Server(
   { name: 'chatops-tools', version: '1.0.0' },

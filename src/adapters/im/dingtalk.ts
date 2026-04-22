@@ -316,7 +316,7 @@ export class DingTalkAdapter implements IMAdapter {
       if (first) this.processedMsgIds.delete(first)
     }
 
-    console.log('[DingTalk] 原始消息:', JSON.stringify(msg, null, 2))
+    console.log('[DingTalk] Message from:', msg.senderNick, '| staffId:', msg.senderStaffId, '| conversationId:', msg.conversationId, '| msgtype:', msg.msgtype)
 
     // Cache sessionWebhook so we can reply to this conversation later
     if (msg.sessionWebhook) {

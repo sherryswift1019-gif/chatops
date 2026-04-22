@@ -57,4 +57,10 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
 
   // Review Agent 工具
   review_mr_diff: ['developer', 'tester', 'ops', 'admin'],
+
+  // PRD Agent 工具
+  save_prd: ['developer', 'tester', 'ops', 'admin'],
+  read_prd: ['developer', 'tester', 'ops', 'admin'],
+  update_prd_context: ['developer', 'tester', 'ops', 'admin'],
+  search_existing_prds: ['developer', 'tester', 'ops', 'admin'],
 }

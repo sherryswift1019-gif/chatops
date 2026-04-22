@@ -1,6 +1,17 @@
+export interface ImInputConfig {
+  /** 首次引导语；支持 {{triggerParams.xxx}}。 */
+  prompt: string
+  /** 需要采集的参数 JSON Schema（至少 properties+required）。 */
+  paramSchema: Record<string, unknown>
+  /** 可选：用于加载 system_prompt / 工具白名单增强 Agent 判定（预留，v1 未用）。 */
+  capabilityKey?: string
+  /** 收集超时（秒），超过则 stage 失败。 */
+  timeoutSeconds?: number
+}
+
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook'
+  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
@@ -26,9 +37,11 @@ export interface StageDefinition {
   capabilityParams?: Record<string, unknown>
   // wait_webhook stage（等待外部 Webhook 恢复）
   webhookTag?: string
+  // im_input stage（IM 对话式参数采集）
+  imInputConfig?: ImInputConfig
 }
 
-export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'capability' | 'wait_webhook' {
+export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input' {
   return stage.stageType ?? 'script'
 }
 
@@ -51,6 +64,10 @@ export interface StageContext {
   pipeline?: { id: number; name: string }
   run?: { id: number; triggeredBy: string; triggerType: string }
   variables?: Record<string, string>
+  // IM 触发时的上下文（im_input stage 需要；其他 stage 可忽略）
+  triggerPlatform?: string
+  triggerGroupId?: string
+  triggerUserId?: string
 }
 
 export interface StageExecutionResult {
@@ -69,4 +86,32 @@ export interface ArtifactInput {
   default?: string
   defaultStrategy?: 'latest-by-mtime' | 'first-match'
   authHeaders?: Record<string, string>
+}
+
+// ---- Visual canvas DAG model ---------------------------------------------
+// StageDefinition 字段在节点内部复用；画布仅增加 id / position / edges。
+
+export type ConditionSpec =
+  | { kind: 'onSuccess' }
+  | { kind: 'onFailure' }
+  | { kind: 'expression'; expression: string }
+// expression 首版只支持两种模板（详见 graph-builder conditionMatches）：
+//   1. status === 'success' | 'failed' | 'skipped'
+//   2. output.includes('...')
+
+export interface PipelineNode extends StageDefinition {
+  id: string                        // ULID
+  position: { x: number; y: number }
+}
+
+export interface PipelineEdge {
+  id: string                        // ULID
+  source: string                    // PipelineNode.id
+  target: string                    // PipelineNode.id
+  condition?: ConditionSpec
+}
+
+export interface PipelineGraph {
+  nodes: PipelineNode[]
+  edges: PipelineEdge[]
 }

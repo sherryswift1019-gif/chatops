@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { IMAdapter } from '../adapters/im/types.js'
+import type { ClaudeRunner } from '../agent/claude-runner.js'
 import { sessionPlugin, requireAuth } from './auth/session-plugin.js'
 import { registerAuthRoutes } from './routes/auth.js'
 import { registerSystemConfigRoutes } from './routes/system-config.js'
@@ -25,8 +26,13 @@ import { registerBugAnalysisReportRoutes } from './routes/bug-analysis-reports.j
 import { registerMetricsRoutes } from './routes/metrics.js'
 import { registerAuditLogRoutes } from './routes/audit-log.js'
 import { registerOnboardingRoutes } from './routes/onboarding.js'
+import { registerPrdDocumentRoutes } from './routes/prd-documents.js'
+import { registerPrdChatRoutes } from './routes/prd-chat.js'
 
-export async function adminPlugin(app: FastifyInstance, opts: { adapters?: IMAdapter[] } = {}): Promise<void> {
+export async function adminPlugin(
+  app: FastifyInstance,
+  opts: { adapters?: IMAdapter[]; runner?: ClaudeRunner } = {}
+): Promise<void> {
   // Session middleware — must be registered before any route definition
   await app.register(sessionPlugin)
 
@@ -66,4 +72,8 @@ export async function adminPlugin(app: FastifyInstance, opts: { adapters?: IMAda
   await registerMetricsRoutes(app)
   await registerAuditLogRoutes(app)
   await registerOnboardingRoutes(app)
+  await registerPrdDocumentRoutes(app)
+  if (opts.runner) {
+    await registerPrdChatRoutes(app, { runner: opts.runner })
+  }
 }
