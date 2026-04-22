@@ -1,7 +1,7 @@
 import cron from 'node-cron'
 import { listScheduledPipelines } from '../db/repositories/test-pipelines.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
-import { runPipeline } from './executor.js'
+import { runPipeline, scheduledTrigger } from './executor.js'
 
 const jobs = new Map<number, cron.ScheduledTask>()
 
@@ -26,7 +26,7 @@ export async function startScheduler(): Promise<void> {
           assignment[role] = roleServers.map(s => s.host)
         }
 
-        await runPipeline(pipeline.id, assignment, 'scheduled', 'scheduler')
+        await runPipeline(pipeline.id, assignment, scheduledTrigger({ triggeredBy: 'scheduler' }))
         console.log(`[scheduler] Pipeline ${pipeline.id} "${pipeline.name}" triggered successfully`)
       } catch (err) {
         console.error(`[scheduler] Pipeline ${pipeline.id} error:`, err)

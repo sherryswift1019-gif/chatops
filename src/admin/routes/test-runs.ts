@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import { Command } from '@langchain/langgraph'
 import { listTestRuns, getTestRunById } from '../../db/repositories/test-runs.js'
 import { getDingTalkUserById, getDingTalkUsersByIds } from '../../db/repositories/dingtalk-users.js'
-import { runPipeline } from '../../pipeline/executor.js'
+import { runPipeline, manualTrigger, apiTrigger } from '../../pipeline/executor.js'
 import { getPendingInterrupt, resumeRun } from '../../pipeline/graph-runner.js'
 import { APPROVAL_INTERRUPT, WEBHOOK_INTERRUPT } from '../../pipeline/graph-builder.js'
 import { readFile, stat } from 'fs/promises'
@@ -75,7 +75,10 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
       ? (sessionUser ?? 'admin')
       : (triggeredBy ?? sessionUser ?? 'api')
     try {
-      const runId = await runPipeline(pipelineId, servers, effectiveType, effectiveUser, runtimeVars ?? {})
+      const trigger = effectiveType === 'manual'
+        ? manualTrigger({ triggeredBy: effectiveUser })
+        : apiTrigger({ triggeredBy: effectiveUser })
+      const runId = await runPipeline(pipelineId, servers, trigger, runtimeVars ?? {})
       return reply.status(201).send({ runId, message: 'Pipeline started' })
     } catch (e) {
       return reply.status(400).send({ error: (e as Error).message })

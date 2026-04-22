@@ -7,7 +7,7 @@ import {
 import type { TestPipeline } from '../db/repositories/test-pipelines.js'
 import { findByReportCode } from '../db/repositories/bug-fix-events.js'
 import { getPool } from '../db/client.js'
-import { runPipeline } from '../pipeline/executor.js'
+import { runPipeline, apiTrigger } from '../pipeline/executor.js'
 import type { TaskContext } from './tools/types.js'
 import type { ApprovalGate } from '../approval/gate.js'
 
@@ -55,20 +55,19 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
   if (capability.defaultPipelineId) {
     try {
       // 动态 import 避免 coordinator ↔ executor-hooks ↔ coordinator 循环依赖。
-      const { runPipeline } = await import('../pipeline/executor.js')
+      const { runPipeline, imTrigger } = await import('../pipeline/executor.js')
       const runId = await runPipeline(
         capability.defaultPipelineId,
         {},  // IM 触发场景通常不预分配服务器，由 pipeline 内部按需处理
-        'im',
-        opts.context.initiatorId,
-        {},  // runtimeVars 走 triggerParams 通道
-        undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
-        opts.extraParams ?? {},
-        {
+        imTrigger({
+          triggeredBy: opts.context.initiatorId,
           platform: opts.context.platform,
           groupId: opts.context.groupId,
           userId: opts.context.initiatorId,
-        },
+          params: opts.extraParams ?? {},
+        }),
+        {},  // runtimeVars 走 trigger.params 通道
+        undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
       )
       console.log(
         `[AgentCoordinator] pipeline run #${runId} started for capability "${opts.capabilityKey}"`,
@@ -320,11 +319,9 @@ export async function handleAnalysisComplete(
   const runId = await runPipeline(
     pipeline.id,
     {},  // capability-only pipeline，无需服务器
-    'api',
-    triggeredBy,
+    apiTrigger({ triggeredBy, params: { reportId } }),
     {},  // runtimeVarsInput（合并 main 新签名：artifact-inputs 功能引入）
     onComplete,
-    { reportId },
   )
 
   await setPipelineRunId(reportId, runId)

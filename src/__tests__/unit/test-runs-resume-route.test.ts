@@ -28,6 +28,8 @@ vi.mock('../../db/repositories/dingtalk-users.js', () => ({
 
 vi.mock('../../pipeline/executor.js', () => ({
   runPipeline: vi.fn(async () => 1),
+  manualTrigger: (args: any) => ({ type: 'manual', ...args }),
+  apiTrigger: (args: any) => ({ type: 'api', ...args }),
 }))
 
 vi.mock('../../pipeline/graph-runner.js', () => ({
