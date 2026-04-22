@@ -31,7 +31,6 @@ import {
 import { createEvent, findByReportCode } from '../../db/repositories/bug-fix-events.js'
 import { gitlabAddIssueLabel } from './gitlab-label.js'
 import { getProjectByGitlabPath } from '../../db/repositories/projects-repo.js'
-import { findOwner } from '../../db/repositories/module-owners.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 export type HandoverReason =
@@ -113,6 +112,10 @@ export async function handleRequestHandover(opts: TriggerOptions): Promise<Trigg
       typeof ctx.attemptCount === 'number' && Number.isFinite(ctx.attemptCount)
         ? ctx.attemptCount
         : null
+    const failureSummary =
+      typeof ctx.failureSummary === 'string' && ctx.failureSummary.length > 0
+        ? ctx.failureSummary
+        : null
 
     // 1. GitLab Issue 打 needs-manual label（失败降级，不阻断 handover 主流程）
     // 优先用 report.primaryProjectPath（analyzer 写入时已规整）；仅在该字段为空时回退到 issueUrl 正则解析
@@ -152,7 +155,6 @@ export async function handleRequestHandover(opts: TriggerOptions): Promise<Trigg
       const proj = await getProjectByGitlabPath(issueProjectPath)
       owner =
         (proj?.ownerId && proj.ownerId !== '' ? proj.ownerId : null)
-        ?? (await findOwner(report.productLineId, issueProjectPath))?.ownerUserId
         ?? null
     }
 
@@ -179,6 +181,7 @@ export async function handleRequestHandover(opts: TriggerOptions): Promise<Trigg
         failedAt: failedStage,
         attemptCount,
         comment,
+        failureSummary,
         nextAction: 'await_owner',
         labelAdded,
         ...(labelError ? { labelError } : {}),

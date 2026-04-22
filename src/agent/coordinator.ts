@@ -7,7 +7,6 @@ import {
 import type { TestPipeline } from '../db/repositories/test-pipelines.js'
 import { findByReportCode } from '../db/repositories/bug-fix-events.js'
 import { getProjectByGitlabPath } from '../db/repositories/projects-repo.js'
-import { findOwner } from '../db/repositories/module-owners.js'
 import { getPool } from '../db/client.js'
 import { runPipeline } from '../pipeline/executor.js'
 import { PipelineApprovalManager } from '../pipeline/approval-manager.js'
@@ -58,7 +57,6 @@ async function sendL3FyiToSecondaryOwners(report: {
     (primaryProject?.ownerId && primaryProject.ownerId !== ''
       ? primaryProject.ownerId
       : null)
-    ?? (await findOwner(report.productLineId, report.primaryProjectPath))?.ownerUserId
     ?? ''
   const primaryOwnerName = primaryProject?.ownerName || primaryOwnerId || '未知'
 
@@ -69,7 +67,6 @@ async function sendL3FyiToSecondaryOwners(report: {
     const proj = await getProjectByGitlabPath(s.projectPath)
     const oid =
       (proj?.ownerId && proj.ownerId !== '' ? proj.ownerId : null)
-      ?? (await findOwner(report.productLineId, s.projectPath))?.ownerUserId
       ?? null
     if (oid && oid !== primaryOwnerId) otherOwnerIds.add(oid)
   }
@@ -355,13 +352,29 @@ export async function handleAnalysisComplete(
             !fixAttempts.some(e => e.projectPath === path && e.status === 'success'),
         )
       if (fixExhausted) {
-        const failedCount = fixAttempts.filter(e => e.status === 'failed').length
+        const failedAttempts = fixAttempts.filter(e => e.status === 'failed')
+        const failedCount = failedAttempts.length
+        // 聚合每个 project 最后一次 failed 的 error，作为 handover 事件的 failureSummary。
+        // 按 projectPath 分组取最后一条（fix-runner 顺序写入，数组末尾 = 最新 attempt）。
+        const lastErrByProject = new Map<string, string>()
+        for (const ev of failedAttempts) {
+          const path = ev.projectPath ?? '(unknown)'
+          const err = (ev.data as Record<string, unknown> | null)?.error
+          if (typeof err === 'string' && err.length > 0) {
+            lastErrByProject.set(path, err)
+          }
+        }
+        const failureSummary = Array.from(lastErrByProject.entries())
+          .map(([path, err]) => `${path}: ${err.slice(0, 200)}`)
+          .join('\n')
+          .slice(0, 1000) || undefined
         console.log(
           `[AgentCoordinator] report=${reportId} fix 阶段失败（${failedCount} 次，存在 project 全部 attempt 失败）→ 触发 handover(fix_exhausted)`,
         )
         await checkAndTriggerHandover(reportId, 'fix_exhausted', triggeredBy, {
           failedStage: `fix_bug_${level}`,
           attemptCount: failedCount,
+          failureSummary,
         })
         return
       }
@@ -443,7 +456,7 @@ export async function checkAndTriggerHandover(
   reportId: number,
   reason: 'fix_exhausted' | 'l4_manual' | 'user_requested' | string,
   triggeredBy: string,
-  context?: { failedStage?: string; comment?: string; attemptCount?: number },
+  context?: { failedStage?: string; comment?: string; attemptCount?: number; failureSummary?: string },
 ): Promise<void> {
   // 幂等（handler 本身也有幂等；这里先查避免多次 triggerCapability 的日志噪音）
   const existing = await findByReportCode(reportId, 'handover')
