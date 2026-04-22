@@ -12,8 +12,8 @@ import {
 } from '../../pipeline/approval-resolvers.js'
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { getProjectByGitlabPath } from '../../db/repositories/projects-repo.js'
+import { getProductLineById } from '../../db/repositories/product-lines.js'
 import { findOwner } from '../../db/repositories/module-owners.js'
-import { findByReportCode } from '../../db/repositories/bug-fix-events.js'
 
 /**
  * L3 Bug 修复方案审批 resolver：
@@ -50,23 +50,14 @@ async function primaryProjectOwnerResolver(
     )
   }
 
-  // 构造审批卡片 description——带涉及 project 列表让 owner 更容易决策
-  const scopes = await findByReportCode(reportId, 'scope_identified')
-  const projectsBlock = scopes.length > 0
-    ? scopes.map(s => {
-        const isPrimary = (s.data as Record<string, unknown>)?.isPrimary === true
-        return `- ${s.projectPath}${isPrimary ? '（主仓库）' : ''}`
-      }).join('\n')
-    : `- ${report.primaryProjectPath}（主仓库）`
+  // 构造审批卡片 body（富文本 markdown）——先走验证流程，只保留核心 3 行
+  const productLine = await getProductLineById(report.productLineId)
   const description = [
-    '## L3 Bug 修复方案审批',
+    `**Issue**：[#${report.issueId}](${report.issueUrl})`,
     '',
-    `Issue: ${report.issueUrl}`,
+    `**产线**：${productLine?.name ?? `#${report.productLineId}`}`,
     '',
-    '涉及 project:',
-    projectsBlock,
-    '',
-    `根因摘要: ${report.rootCauseSummary ?? ''}`,
+    `**等级**：${report.level.toUpperCase()}`,
   ].join('\n')
 
   return { approverIds: [ownerId], description }
