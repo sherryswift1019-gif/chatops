@@ -84,6 +84,11 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
   if (!node) return null
 
   function handleValuesChange(_: unknown, all: Partial<StageFields>) {
+    // stageType 的变更由 handleStageTypeChange 独占处理（含 Modal.confirm + prune），
+    // 这里跳过以避免双写与 Cancel 路径漏回滚。
+    if (all.stageType !== undefined && all.stageType !== node!.data.stageType) {
+      return
+    }
     // im_input 的 paramSchema 不在 Form 里，Form 触发变化时需要把本地 paramSchema
     // 合并回 imInputConfig，否则 updateNodeData 浅合并会丢掉 paramSchema。
     if (node!.data.stageType === 'im_input' && all.imInputConfig) {

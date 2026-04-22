@@ -19,18 +19,29 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
     retryCount: prev.retryCount,
     onFailure: prev.onFailure,
   }
+  // 所有独占字段先显式置 undefined，让浅合并能覆盖旧值；再按新 stageType 注入默认值
+  const cleared: Partial<StageFields> = {
+    script: undefined,
+    approverIds: undefined,
+    approvalDescription: undefined,
+    capabilityKey: undefined,
+    capabilityParams: undefined,
+    webhookTag: undefined,
+    imInputConfig: undefined,
+  }
   switch (newType) {
     case 'script':
-      return { ...base, script: '' }
+      return { ...base, ...cleared, script: '' }
     case 'approval':
-      return { ...base, approverIds: [], approvalDescription: '' }
+      return { ...base, ...cleared, approverIds: [], approvalDescription: '' }
     case 'capability':
-      return { ...base, capabilityKey: '', capabilityParams: {} }
+      return { ...base, ...cleared, capabilityKey: '', capabilityParams: {} }
     case 'wait_webhook':
-      return { ...base, webhookTag: '' }
+      return { ...base, ...cleared, webhookTag: '' }
     case 'im_input':
       return {
         ...base,
+        ...cleared,
         imInputConfig: {
           prompt: '请提供以下参数：',
           paramSchema: { type: 'object', properties: {}, required: [] },

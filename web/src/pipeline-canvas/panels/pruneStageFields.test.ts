@@ -34,6 +34,25 @@ describe('pruneStageFields', () => {
     expect(next.approvalDescription).toBeUndefined()
     expect(next.imInputConfig?.prompt).toBe('请提供以下参数：')
   })
+
+  it('所有独占字段在切换后都存在于返回对象中（undefined 或新默认值），浅合并可覆盖旧值', () => {
+    const prev = base('script', {
+      script: 'echo hi',
+      approverIds: ['u1'],
+      capabilityKey: 'old',
+      webhookTag: 'old-tag',
+    })
+    const next = pruneStageFields(prev, 'capability')
+    // 独占字段都应该在返回对象里（无论值是 undefined 还是新默认值），这样浅合并才能覆盖
+    expect(Object.keys(next)).toEqual(
+      expect.arrayContaining(['script', 'approverIds', 'approvalDescription', 'webhookTag', 'imInputConfig'])
+    )
+    expect(next.script).toBeUndefined()
+    expect(next.approverIds).toBeUndefined()
+    expect(next.webhookTag).toBeUndefined()
+    expect(next.imInputConfig).toBeUndefined()
+    expect(next.capabilityKey).toBe('')
+  })
 })
 
 describe('obsoleteFieldsOnSwitch', () => {
