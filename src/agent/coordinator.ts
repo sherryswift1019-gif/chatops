@@ -39,7 +39,7 @@ export function setApprovalGate(gate: ApprovalGate): void { approvalGate = gate 
  * 给从仓库 owner 发 L3 审批 FYI 知情消息（非审批，纯通知）。
  *
  * 从仓库 owner 列表来源：scope_identified 事件里 `projectPath !== primaryProjectPath`
- * 的条目，反查 project.ownerId（→ fallback module_owners），去重，排除主 owner。
+ * 的条目，反查 project.ownerId，去重，排除主 owner。
  *
  * 副作用隔离：失败不抛——调用方用 `.catch(...)` 包，不阻塞主 pipeline 启动。
  */

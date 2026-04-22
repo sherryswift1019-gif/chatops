@@ -13,12 +13,11 @@ import {
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { getProjectByGitlabPath } from '../../db/repositories/projects-repo.js'
 import { getProductLineById } from '../../db/repositories/product-lines.js'
-import { findOwner } from '../../db/repositories/module-owners.js'
 
 /**
  * L3 Bug 修复方案审批 resolver：
  *   输入: triggerParams.reportId
- *   查询: report → primaryProjectPath → project.owner_id → fallback module_owners
+ *   查询: report → primaryProjectPath → project.owner_id
  *   输出: { approverIds: [主仓库 owner 的钉钉 id], description: 含涉及 project 列表的审批文案 }
  */
 async function primaryProjectOwnerResolver(
@@ -42,7 +41,6 @@ async function primaryProjectOwnerResolver(
   const proj = await getProjectByGitlabPath(report.primaryProjectPath)
   const ownerId =
     (proj?.ownerId && proj.ownerId !== '' ? proj.ownerId : null)
-    ?? (await findOwner(report.productLineId, report.primaryProjectPath))?.ownerUserId
     ?? null
   if (!ownerId) {
     throw new Error(
