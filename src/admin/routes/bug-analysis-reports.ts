@@ -48,6 +48,9 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
       : NaN
     const issueId = Number.isFinite(rawIssueId) && rawIssueId > 0 ? rawIssueId : undefined
 
+    const rawKeyword = typeof query.keyword === 'string' ? query.keyword.trim() : ''
+    const keyword = rawKeyword.length > 0 ? rawKeyword.slice(0, 200) : undefined
+
     const statuses = parseCsvEnum(query.status, VALID_STATUSES)
     const levels = parseCsvEnum(query.level, VALID_LEVELS)
     const page = Math.max(1, Number(query.page) || 1)
@@ -56,6 +59,7 @@ export async function registerBugAnalysisReportRoutes(app: FastifyInstance): Pro
     const result = await listReportsByProductLinePaged({
       productLineId,
       issueId,
+      keyword,
       statuses,
       levels,
       page,

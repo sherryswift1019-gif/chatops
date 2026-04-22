@@ -388,13 +388,11 @@ function HandoverBlock({ events, userNameMap }: { events: BugFixEvent[]; userNam
                 '—'
               )}
             </Descriptions.Item>
-            <Descriptions.Item label="失败摘要" span={2}>
-              {failureSummary ? (
+            {failureSummary && (
+              <Descriptions.Item label="失败摘要" span={2}>
                 <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{failureSummary}</pre>
-              ) : (
-                '—'
-              )}
-            </Descriptions.Item>
+              </Descriptions.Item>
+            )}
           </Descriptions>
         )
       })}
@@ -447,7 +445,7 @@ function BasicMetaSection({
           #{report.issueId}
         </a>
       </Descriptions.Item>
-      <Descriptions.Item label="产品线">
+      <Descriptions.Item label="产线">
         <Tag>{report.productLineName || '—'}</Tag>
       </Descriptions.Item>
       <Descriptions.Item label="等级">

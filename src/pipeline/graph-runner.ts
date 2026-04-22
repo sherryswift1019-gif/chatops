@@ -641,6 +641,12 @@ async function reloadContext(runId: number): Promise<RunContext | null> {
     pipelineGraph,
     stageContext,
     hooks,
-    triggerParams: pipeline.triggerParams,
+    // reload triggerParams 合并策略：
+    //   1. pipeline.triggerParams（pipeline 模板级默认，seed.sql 定义）
+    //   2. run.runtimeVars（本次 run 启动时塞入的运行时变量，用于业务动态参数
+    //      跨 resume 持久化；见 coordinator.ts handleAnalysisComplete）
+    // 对 approval/capability node 的模板展开 / resolver 调用，runtime 参数
+    // （如 reportId）必须在 resume 时仍可用。
+    triggerParams: { ...(pipeline.triggerParams ?? {}), ...(run.runtimeVars ?? {}) },
   }
 }

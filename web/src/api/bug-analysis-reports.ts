@@ -9,12 +9,14 @@ export const getBugAnalysisReports = (productLineId: number, limit = 50) =>
 
 /**
  * 按条件拉取 Bug 分析报告列表（服务端分页）。
- * 支持按 productLineId / issueId / status / level 过滤。
+ * 支持按 productLineId / issueId / keyword / status / level 过滤。
  * status / level 为单值字符串（沿用后端多值 CSV 协议的单项用法）。
+ * keyword 对 root_cause_summary 做 ILIKE '%keyword%' 模糊匹配。
  */
 export interface ListReportsParams {
   productLineId?: number
   issueId?: number
+  keyword?: string
   status?: string
   level?: string
   page?: number
@@ -31,6 +33,7 @@ export async function listBugReports(params: ListReportsParams = {}): Promise<{
   const qs = new URLSearchParams()
   if (params.productLineId != null) qs.set('product_line_id', String(params.productLineId))
   if (params.issueId != null) qs.set('issueId', String(params.issueId))
+  if (params.keyword) qs.set('keyword', params.keyword)
   if (params.status) qs.set('status', params.status)
   if (params.level) qs.set('level', params.level)
   if (params.page != null) qs.set('page', String(params.page))

@@ -30,6 +30,9 @@ import {
 } from '../../db/repositories/bug-analysis-reports.js'
 import { createEvent, findByReportCode } from '../../db/repositories/bug-fix-events.js'
 import { gitlabAddIssueLabel } from './gitlab-label.js'
+import { getProjectByGitlabPath } from '../../db/repositories/projects-repo.js'
+import { findOwner } from '../../db/repositories/module-owners.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 export type HandoverReason =
   | 'fix_exhausted'
@@ -142,6 +145,26 @@ export async function handleRequestHandover(opts: TriggerOptions): Promise<Trigg
 
     // 3. 写 handover 事件（V2 data 结构）
     const fixBranch = `fix/issue-${report.issueId}`
+
+    // 补充字段 owner / fixBranchUrl：让 handover 事件自包含，前端无需跨事件反查
+    let owner: string | null = null
+    if (issueProjectPath) {
+      const proj = await getProjectByGitlabPath(issueProjectPath)
+      owner =
+        (proj?.ownerId && proj.ownerId !== '' ? proj.ownerId : null)
+        ?? (await findOwner(report.productLineId, issueProjectPath))?.ownerUserId
+        ?? null
+    }
+
+    let fixBranchUrl: string | null = null
+    if (issueProjectPath) {
+      const gitlab = await resolveGitlabConfig().catch(() => null)
+      if (gitlab?.url) {
+        const base = gitlab.url.replace(/\/+$/, '')
+        fixBranchUrl = `${base}/${issueProjectPath}/-/tree/${fixBranch}`
+      }
+    }
+
     await createEvent({
       reportId,
       projectPath: null,
@@ -151,6 +174,8 @@ export async function handleRequestHandover(opts: TriggerOptions): Promise<Trigg
         reason,
         projectPaths,
         fixBranch,
+        fixBranchUrl,
+        owner,
         failedAt: failedStage,
         attemptCount,
         comment,

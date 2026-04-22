@@ -85,15 +85,24 @@ export interface ArtifactInput {
 
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval'
+  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
   retryCount: number
   onFailure: 'stop' | 'continue'
+  // script stage
   script?: string
+  // approval stage
   approverIds?: string[]
   approvalDescription?: string
+  /** 动态审批人 resolver 名（如 primary_project_owner），详见后端 approval-resolvers.ts */
+  approverIdsResolver?: string
+  // capability stage（研发 AI 助手）
+  capabilityKey?: string
+  capabilityParams?: Record<string, unknown>
+  // wait_webhook stage
+  webhookTag?: string
 }
 
 export interface TestRun {
