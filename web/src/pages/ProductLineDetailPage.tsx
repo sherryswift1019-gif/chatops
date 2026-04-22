@@ -747,7 +747,7 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
   const [plCaps, setPlCaps] = useState<ProductLineCapability[]>([])
   const [loading, setLoading] = useState(false)
   const [editingCap, setEditingCap] = useState<Capability | null>(null)
-  const [editConfigs, setEditConfigs] = useState<Record<string, { enabled: boolean; allowedRoles: string[] }>>({})
+  const [editConfigs, setEditConfigs] = useState<Record<string, { enabled: boolean; allowedRoles: string[]; triggerSources: string[] }>>({})
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { loadData() }, [productLineId])
@@ -769,19 +769,23 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
 
   function openEdit(cap: Capability) {
     setEditingCap(cap)
-    const configs: Record<string, { enabled: boolean; allowedRoles: string[] }> = {}
+    const configs: Record<string, { enabled: boolean; allowedRoles: string[]; triggerSources: string[] }> = {}
     const capConfigs = plCaps.filter(c => c.capabilityKey === cap.key)
     for (const c of capConfigs) {
-      configs[c.envName] = { enabled: c.enabled, allowedRoles: [...c.allowedRoles] }
+      configs[c.envName] = {
+        enabled: c.enabled,
+        allowedRoles: [...c.allowedRoles],
+        triggerSources: c.triggerSources ? [...c.triggerSources] : ['im', 'web'],
+      }
     }
     setEditConfigs(configs)
   }
 
-  function handleConfigChange(envName: string, field: 'enabled' | 'allowedRoles', value: unknown) {
+  function handleConfigChange(envName: string, field: 'enabled' | 'allowedRoles' | 'triggerSources', value: unknown) {
     setEditConfigs(prev => ({
       ...prev,
       [envName]: {
-        ...(prev[envName] ?? { enabled: true, allowedRoles: ['developer', 'tester', 'ops', 'admin'] }),
+        ...(prev[envName] ?? { enabled: true, allowedRoles: ['developer', 'tester', 'ops', 'admin'], triggerSources: ['im', 'web'] }),
         [field]: value,
       },
     }))
@@ -791,14 +795,25 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     if (!editingCap) return
     setSaving(true)
     try {
-      // Keep other capabilities' configs
       const otherConfigs = plCaps
         .filter(c => c.capabilityKey !== editingCap.key)
-        .map(c => ({ capabilityKey: c.capabilityKey, envName: c.envName, enabled: c.enabled, allowedRoles: c.allowedRoles }))
+        .map(c => ({
+          capabilityKey: c.capabilityKey,
+          envName: c.envName,
+          enabled: c.enabled,
+          allowedRoles: c.allowedRoles,
+          triggerSources: c.triggerSources ?? ['im', 'web'],
+        }))
 
       const thisConfigs = Object.entries(editConfigs)
         .filter(([_, v]) => v.enabled || v.allowedRoles.length > 0)
-        .map(([envName, v]) => ({ capabilityKey: editingCap.key, envName, enabled: v.enabled, allowedRoles: v.allowedRoles }))
+        .map(([envName, v]) => ({
+          capabilityKey: editingCap.key,
+          envName,
+          enabled: v.enabled,
+          allowedRoles: v.allowedRoles,
+          triggerSources: v.triggerSources,
+        }))
 
       await setProductLineCapabilities(productLineId, [...otherConfigs, ...thisConfigs])
       message.success('能力配置已保存')
