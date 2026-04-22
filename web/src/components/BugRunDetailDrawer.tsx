@@ -445,7 +445,7 @@ function BasicMetaSection({
           #{report.issueId}
         </a>
       </Descriptions.Item>
-      <Descriptions.Item label="产品线">
+      <Descriptions.Item label="产线">
         <Tag>{report.productLineName || '—'}</Tag>
       </Descriptions.Item>
       <Descriptions.Item label="等级">

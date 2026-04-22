@@ -60,12 +60,12 @@ export default function MetricsPage() {
       title="价值量化仪表盘"
       extra={
         <Space>
-          <Select style={{ width: 200 }} placeholder="选择产品线" value={selectedPL} onChange={setSelectedPL}
+          <Select style={{ width: 200 }} placeholder="选择产线" value={selectedPL} onChange={setSelectedPL}
             options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))} />
         </Space>
       }
     >
-      {!selectedPL ? <Empty description="请先选择产品线" /> : (
+      {!selectedPL ? <Empty description="请先选择产线" /> : (
         <>
           <Row gutter={24} style={{ marginBottom: 24 }}>
             <Col span={8}>

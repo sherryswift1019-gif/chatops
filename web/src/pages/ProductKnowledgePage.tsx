@@ -51,15 +51,15 @@ export default function ProductKnowledgePage() {
       title="知识库配置"
       extra={
         <Space>
-          <Select style={{ width: 200 }} placeholder="选择产品线" value={selectedPL} onChange={setSelectedPL}
+          <Select style={{ width: 200 }} placeholder="选择产线" value={selectedPL} onChange={setSelectedPL}
             options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))} />
         </Space>
       }
     >
       {!selectedPL ? (
-        <Empty description="请先选择产品线" />
+        <Empty description="请先选择产线" />
       ) : !config && !editing ? (
-        <Empty description="该产品线未配置知识库">
+        <Empty description="该产线未配置知识库">
           <Button type="primary" onClick={() => { form.resetFields(); setEditing(true) }}>配置知识库</Button>
         </Empty>
       ) : (

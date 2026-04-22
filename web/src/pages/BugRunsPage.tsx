@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Card, Table, Tag, Button, Select, Space, Modal, message } from 'antd'
+import { Card, Table, Tag, Button, Select, Space, Modal, message, Input } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { useSearchParams } from 'react-router-dom'
 import {
@@ -74,6 +74,9 @@ export default function BugRunsPage() {
   const productLineId = productLineIdStr ? Number(productLineIdStr) : undefined
   const status = searchParams.get('status') || undefined
   const level = searchParams.get('level') || undefined
+  const issueIdStr = searchParams.get('issueId')
+  const issueIdFilter = issueIdStr && /^\d+$/.test(issueIdStr) ? Number(issueIdStr) : undefined
+  const keywordFilter = searchParams.get('keyword') || undefined
   const page = Number(searchParams.get('page') || 1)
   const pageSize = Number(searchParams.get('pageSize') || 20)
 
@@ -83,7 +86,15 @@ export default function BugRunsPage() {
   const [userNameMap, setUserNameMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [selectedReport, setSelectedReport] = useState<BugAnalysisReport | null>(null)
+  const [issueInput, setIssueInput] = useState<string>(
+    issueIdFilter != null ? String(issueIdFilter) : keywordFilter ?? '',
+  )
   const abortRef = useRef<AbortController | null>(null)
+
+  // URL 上的 issueId/keyword 变了（比如跳转过来）→ 同步输入框
+  useEffect(() => {
+    setIssueInput(issueIdFilter != null ? String(issueIdFilter) : keywordFilter ?? '')
+  }, [issueIdFilter, keywordFilter])
 
   useEffect(() => {
     getProductLines().then(setProductLines).catch(() => {})
@@ -100,7 +111,7 @@ export default function BugRunsPage() {
   useEffect(() => {
     load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [productLineId, status, level, page, pageSize])
+  }, [productLineId, status, level, issueIdFilter, keywordFilter, page, pageSize])
 
   async function load() {
     abortRef.current?.abort()
@@ -109,6 +120,8 @@ export default function BugRunsPage() {
     try {
       const res = await listBugReports({
         productLineId,
+        issueId: issueIdFilter,
+        keyword: keywordFilter,
         status,
         level,
         page,
@@ -151,8 +164,10 @@ export default function BugRunsPage() {
     if (productLineId != null) n++
     if (status) n++
     if (level) n++
+    if (issueIdFilter != null) n++
+    if (keywordFilter) n++
     return n
-  }, [productLineId, status, level])
+  }, [productLineId, status, level, issueIdFilter, keywordFilter])
 
   async function handleRetry(record: BugAnalysisReport) {
     Modal.confirm({
@@ -214,10 +229,22 @@ export default function BugRunsPage() {
 
   const columns = [
     {
-      title: '产品线',
+      title: '产线',
       dataIndex: 'productLineName',
-      width: 140,
+      width: 100,
       render: (v: string | undefined) => <Tag>{v || '—'}</Tag>,
+    },
+    {
+      title: 'Issue',
+      dataIndex: 'issueId',
+      width: 80,
+      render: (iid: number | null, record: BugAnalysisReport) => {
+        if (!iid) return '—'
+        if (!record.issueUrl) return `#${iid}`
+        return (
+          <a href={record.issueUrl} target="_blank" rel="noopener noreferrer">#{iid}</a>
+        )
+      },
     },
     {
       title: '摘要',
@@ -264,17 +291,12 @@ export default function BugRunsPage() {
     {
       title: '操作',
       fixed: 'right' as const,
-      width: 280,
+      width: 220,
       render: (_: unknown, record: BugAnalysisReport) => (
         <Space size={4}>
           <Button type="link" size="small" onClick={() => setSelectedReport(record)}>
             详情
           </Button>
-          {record.issueUrl && (
-            <Button type="link" size="small" href={record.issueUrl} target="_blank" rel="noopener noreferrer">
-              查看 Issue
-            </Button>
-          )}
           {record.status === 'aborted' && (
             <>
               <Button type="link" size="small" danger onClick={() => handleRetry(record)}>
@@ -303,15 +325,15 @@ export default function BugRunsPage() {
           <Space wrap>
             <Select
               allowClear
-              style={{ width: 220 }}
-              placeholder="产品线"
+              style={{ width: 180 }}
+              placeholder="产线"
               value={productLineId}
               onChange={(v) => setFilter('productLine', v)}
               options={productLines.map((p) => ({ value: p.id, label: p.displayName }))}
             />
             <Select
               allowClear
-              style={{ minWidth: 180 }}
+              style={{ width: 180 }}
               placeholder="状态"
               value={status}
               onChange={(v) => setFilter('status', v)}
@@ -319,11 +341,43 @@ export default function BugRunsPage() {
             />
             <Select
               allowClear
-              style={{ minWidth: 120 }}
+              style={{ width: 180 }}
               placeholder="等级"
               value={level}
               onChange={(v) => setFilter('level', v)}
               options={LEVEL_OPTIONS}
+            />
+            <Input
+              allowClear
+              style={{ width: 180 }}
+              placeholder="Issue 编号 或 摘要"
+              value={issueInput}
+              onChange={(e) => {
+                setIssueInput(e.target.value)
+                // 点 x 或删光时触发空字符串 → 立即撤销筛选
+                if (e.target.value === '') {
+                  const next = new URLSearchParams(searchParams)
+                  next.delete('issueId')
+                  next.delete('keyword')
+                  next.delete('page')
+                  setSearchParams(next, { replace: true })
+                }
+              }}
+              onPressEnter={(e) => {
+                const v = (e.target as HTMLInputElement).value.trim()
+                const next = new URLSearchParams(searchParams)
+                next.delete('issueId')
+                next.delete('keyword')
+                next.delete('page')
+                if (!v) {
+                  // 空 → 都清
+                } else if (/^\d+$/.test(v)) {
+                  next.set('issueId', v)
+                } else {
+                  next.set('keyword', v)
+                }
+                setSearchParams(next, { replace: true })
+              }}
             />
             <Button icon={<ReloadOutlined />} onClick={load}>
               刷新
