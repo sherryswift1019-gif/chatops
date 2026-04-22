@@ -174,7 +174,7 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     }
   }
 
-  it('新格式（钉钉 AI 卡片 2.0）：outTrackId + content.cardPrivateData.actionIds[0]=agree → handler 收到 agree', async () => {
+  it('新格式（钉钉 AI 卡片 2.0）：outTrackId + content.cardPrivateData.actionIds[0]=agree → handler 收到 approved（adapter 层映射）', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
@@ -189,10 +189,10 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     await Promise.resolve()
 
     expect(handler).toHaveBeenCalledOnce()
-    expect(handler).toHaveBeenCalledWith('l3-fix-120', 'agree', 'u-primary')
+    expect(handler).toHaveBeenCalledWith('l3-fix-120', 'approved', 'u-primary')
   })
 
-  it('新格式：actionIds[0]=reject → handler 收到 reject', async () => {
+  it('新格式：actionIds[0]=reject → handler 收到 rejected（adapter 层映射）', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
@@ -206,10 +206,10 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     }))
     await Promise.resolve()
 
-    expect(handler).toHaveBeenCalledWith('l3-fix-121', 'reject', 'u-primary')
+    expect(handler).toHaveBeenCalledWith('l3-fix-121', 'rejected', 'u-primary')
   })
 
-  it('新格式：content 解析失败时仍回落到 params.action', async () => {
+  it('新格式：content 解析失败时仍回落到 params.action（映射后是 approved）', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
@@ -223,7 +223,7 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     }))
     await Promise.resolve()
 
-    expect(handler).toHaveBeenCalledWith('l3-fix-122', 'agree', 'u-primary')
+    expect(handler).toHaveBeenCalledWith('l3-fix-122', 'approved', 'u-primary')
   })
 
   it('旧格式：callbackData.{taskId,action} 仍兼容', async () => {

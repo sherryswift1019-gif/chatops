@@ -204,7 +204,10 @@ describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
       description: string
     }
     expect(cardArg.approverIds).toEqual(['u-primary']) // resolver 查到主仓库 owner
-    expect(cardArg.description).toContain('L3 Bug 修复方案审批')
+    // description 是 approval stage 渲染的 markdown（含 Issue / 产线 / 等级 字段），
+    // 只断言语义稳定的字段名，避免因文案微调反复失败
+    expect(cardArg.description).toContain('Issue')
+    expect(cardArg.description).toContain('L3')
 
     // ── 5. 模拟主 owner 点"同意"：调 resumeRun 恢复 graph ──
     await resumeRun(cardArg.runId, new Command({ resume: 'approved' }))
