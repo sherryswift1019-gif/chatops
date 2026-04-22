@@ -60,7 +60,7 @@ export default function CapabilitiesPage() {
   function openEdit(record: Capability) {
     setEditing(record)
     form.setFieldsValue({ ...record })
-    setPromptValue(record.systemPrompt ?? '')
+    setPromptValue(record.systemPrompt ?? record.defaultSystemPrompt ?? '')
     setPromptModified(false)
     setPipelineBindingDirty(false)
     setModalOpen(true)

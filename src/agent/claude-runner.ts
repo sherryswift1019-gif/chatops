@@ -565,12 +565,15 @@ ${intentRules}
     let systemPrompt: string
     if (executionMode) {
       systemPrompt = promptsValue.execution || EXECUTION_PROMPT
-    } else if (capability?.systemPrompt) {
-      systemPrompt = interpolatePrompt(capability.systemPrompt, {
-        initiatorRole: context.initiatorRole ?? 'developer',
-      })
     } else {
-      systemPrompt = FALLBACK_PROMPT
+      const effective = capability?.systemPrompt ?? capability?.defaultSystemPrompt ?? null
+      if (effective) {
+        systemPrompt = interpolatePrompt(effective, {
+          initiatorRole: context.initiatorRole ?? 'developer',
+        })
+      } else {
+        systemPrompt = FALLBACK_PROMPT
+      }
     }
 
     // 注入项目上下文
@@ -816,9 +819,10 @@ ${intentRules}
       return
     }
 
-    // systemPrompt: capability.systemPrompt + 产线上下文
-    let systemPrompt = capability.systemPrompt
-      ? interpolatePrompt(capability.systemPrompt, {
+    // systemPrompt: capability.systemPrompt（空则回落到 defaultSystemPrompt）+ 产线上下文
+    const effectivePrompt = capability.systemPrompt ?? capability.defaultSystemPrompt ?? null
+    let systemPrompt = effectivePrompt
+      ? interpolatePrompt(effectivePrompt, {
           initiatorRole: opts.context.initiatorRole ?? 'admin',
         })
       : '你是一个 PRD 助手，与产品经理多轮对话共同产出 PRD。'
