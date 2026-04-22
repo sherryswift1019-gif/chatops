@@ -1,22 +1,30 @@
 import { useEffect, useState, useRef } from 'react'
 import { Card, Tabs, Form, Input, Button, Space, Select, Upload, message, Spin, Alert, Modal } from 'antd'
-import { DownloadOutlined, UploadOutlined, EditOutlined, CloseOutlined, ReloadOutlined, ApiOutlined, ExclamationCircleOutlined, PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import { DownloadOutlined, UploadOutlined, EditOutlined, CloseOutlined, ReloadOutlined, ApiOutlined, ExclamationCircleOutlined } from '@ant-design/icons'
 import {
   getSystemConfig, updateSystemConfig, exportAllData, importAllData,
   getDingTalkStatus, testGitLabConnection, testHarborConnection,
 } from '../api/system-config'
 import type { SystemConfigEntry, DingTalkStatus, ConnectionTestResult } from '../types'
 
-type FieldType = 'text' | 'secret' | 'boolean' | 'keyvalue'
+type FieldType = 'text' | 'secret' | 'boolean'
+
+type NamePath = string | (string | number)[]
 
 interface FieldSchema {
-  name: string
+  /** 字段路径：string 为顶层字段，数组为嵌套字段（如 ['cardTemplates', 'issue_approval']） */
+  name: NamePath
   label: string
   type?: FieldType
-  /** keyvalue 专用：key 列占位符 */
-  keyPlaceholder?: string
-  /** keyvalue 专用：value 列占位符 */
-  valuePlaceholder?: string
+}
+
+function getByPath(obj: Record<string, unknown>, path: NamePath): unknown {
+  if (typeof path === 'string') return obj[path]
+  return path.reduce<unknown>((acc, k) => (acc as Record<string, unknown> | null | undefined)?.[k], obj)
+}
+
+function pathKey(path: NamePath): string {
+  return Array.isArray(path) ? path.join('.') : path
 }
 
 const CONFIG_SCHEMA: Record<string, { label: string; fields: FieldSchema[] }> = {
@@ -25,13 +33,7 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: FieldSchema[] }> = 
     fields: [
       { name: 'clientId', label: 'Client ID' },
       { name: 'clientSecret', label: 'Client Secret', type: 'secret' },
-      {
-        name: 'cardTemplates',
-        label: '互动卡片模板',
-        type: 'keyvalue',
-        keyPlaceholder: '场景名（如 issue_approval）',
-        valuePlaceholder: '模板 ID（如 38c337a5-...schema）',
-      },
+      { name: ['cardTemplates', 'issue_approval'], label: 'Issue 审批模板 ID' },
     ],
   },
   gitlab: {
@@ -104,18 +106,26 @@ export default function SystemConfigPage() {
   async function handleSave(key: string, values: Record<string, unknown>) {
     setSaving(key)
     try {
-      // 只发送非空值；keyvalue 字段保留对象形态（不 String 化）
+      // 递归过滤空字符串 / null / undefined：用户留空的字段不传给后端（route merge 保留原值）。
+      // 嵌套对象整体被过滤空后也不传（Record<string,unknown> 变成空对象就丢）。
+      function prune(v: unknown): unknown {
+        if (v == null) return undefined
+        if (typeof v === 'string') return v.trim() === '' ? undefined : v.trim()
+        if (Array.isArray(v)) return v
+        if (typeof v === 'object') {
+          const out: Record<string, unknown> = {}
+          for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+            const pv = prune(val)
+            if (pv !== undefined) out[k] = pv
+          }
+          return Object.keys(out).length > 0 ? out : undefined
+        }
+        return v
+      }
       const payload: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(values)) {
-        if (v == null) continue
-        if (typeof v === 'string') {
-          if (v.trim()) payload[k] = v.trim()
-        } else if (typeof v === 'object') {
-          // keyvalue 字段：空对象也要传，便于"清空所有条目"写回 DB
-          payload[k] = v
-        } else {
-          payload[k] = v
-        }
+        const pv = prune(v)
+        if (pv !== undefined) payload[k] = pv
       }
       if (Object.keys(payload).length === 0) {
         message.warning('没有需要保存的内容')
@@ -213,48 +223,17 @@ function ConfigForm({ configKey: _configKey, schema, values, saving, onSave, ext
   const [isDirty, setIsDirty] = useState(false)
 
   // 非 secret 字段的当前值预填到表单（secret 字段被后端 mask 成 ****xxxx，不能作为 initialValue）
+  // 嵌套路径字段（name 为数组）按 path 取值，Ant Design Form.Item 自动处理 name=数组的嵌套赋值
   useEffect(() => {
-    const initial: Record<string, unknown> = {}
-    for (const f of schema.fields) {
-      const v = values[f.name]
-      if (v == null) continue
-      if (f.type === 'secret') continue
-      if (f.type === 'keyvalue') {
-        // 对象 { k1: v1, k2: v2 } → 数组 [{ key: k1, value: v1 }, ...]，供 Form.List 渲染
-        if (typeof v === 'object' && !Array.isArray(v)) {
-          initial[f.name] = Object.entries(v as Record<string, unknown>).map(([key, value]) => ({
-            key,
-            value: String(value ?? ''),
-          }))
-        } else {
-          initial[f.name] = []
-        }
-        continue
-      }
-      if (v === '') continue
-      initial[f.name] = String(v)
-    }
     form.resetFields()
-    form.setFieldsValue(initial)
+    for (const f of schema.fields) {
+      if (f.type === 'secret') continue
+      const v = getByPath(values, f.name)
+      if (v == null || v === '') continue
+      form.setFields([{ name: f.name, value: String(v) }])
+    }
     setIsDirty(false)
   }, [values, schema, form])
-
-  // 提交前把 keyvalue 字段的数组转回对象
-  function handleFinish(raw: Record<string, unknown>): void {
-    const transformed: Record<string, unknown> = { ...raw }
-    for (const f of schema.fields) {
-      if (f.type !== 'keyvalue') continue
-      const arr = raw[f.name] as Array<{ key?: string; value?: string }> | undefined
-      const obj: Record<string, string> = {}
-      for (const item of arr ?? []) {
-        const k = (item?.key ?? '').trim()
-        const v = (item?.value ?? '').trim()
-        if (k && v) obj[k] = v
-      }
-      transformed[f.name] = obj
-    }
-    onSave(transformed)
-  }
 
   return (
     <div style={{ maxWidth: 500 }}>
@@ -262,54 +241,20 @@ function ConfigForm({ configKey: _configKey, schema, values, saving, onSave, ext
       <Form
         form={form}
         layout="vertical"
-        onFinish={handleFinish}
+        onFinish={onSave}
         onValuesChange={() => setIsDirty(true)}
         autoComplete="off"
       >
         {schema.fields.map((field) => {
           const type: FieldType = field.type ?? 'text'
-          if (type === 'keyvalue') {
-            return (
-              <Form.Item key={field.name} label={field.label}>
-                <Form.List name={field.name}>
-                  {(fields, { add, remove }) => (
-                    <>
-                      {fields.map(({ key, name, ...restField }) => (
-                        <Space key={key} align="baseline" style={{ display: 'flex', marginBottom: 8 }}>
-                          <Form.Item
-                            {...restField}
-                            name={[name, 'key']}
-                            rules={[{ required: true, message: '请填写场景名' }]}
-                            style={{ marginBottom: 0, flex: 1 }}
-                          >
-                            <Input placeholder={field.keyPlaceholder ?? '场景名'} autoComplete="off" />
-                          </Form.Item>
-                          <Form.Item
-                            {...restField}
-                            name={[name, 'value']}
-                            rules={[{ required: true, message: '请填写值' }]}
-                            style={{ marginBottom: 0, flex: 2 }}
-                          >
-                            <Input placeholder={field.valuePlaceholder ?? '值'} autoComplete="off" />
-                          </Form.Item>
-                          <MinusCircleOutlined onClick={() => remove(name)} />
-                        </Space>
-                      ))}
-                      <Form.Item style={{ marginBottom: 0 }}>
-                        <Button type="dashed" onClick={() => add()} icon={<PlusOutlined />} block>
-                          添加
-                        </Button>
-                      </Form.Item>
-                    </>
-                  )}
-                </Form.List>
-              </Form.Item>
-            )
-          }
+          const key = pathKey(field.name)
           return (
-            <Form.Item key={field.name} name={field.name} label={field.label}>
+            <Form.Item key={key} name={field.name} label={field.label}>
               {type === 'secret' ? (
-                <SecretInput maskedValue={values[field.name] ? String(values[field.name]) : ''} />
+                <SecretInput maskedValue={(() => {
+                  const v = getByPath(values, field.name)
+                  return v ? String(v) : ''
+                })()} />
               ) : type === 'boolean' ? (
                 <Select
                   placeholder="请选择"
