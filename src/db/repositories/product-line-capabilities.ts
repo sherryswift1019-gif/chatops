@@ -39,7 +39,8 @@ export async function checkCapabilityAccess(
   productLineId: number,
   capabilityKey: string,
   envName: string,
-  userRole: string
+  userRole: string,
+  source: 'im' | 'web' = 'im'
 ): Promise<{ allowed: boolean; reason?: string }> {
   const pool = getPool()
 
@@ -63,6 +64,9 @@ export async function checkCapabilityAccess(
   }
   if (!config.allowedRoles.includes(userRole)) {
     return { allowed: false, reason: '您的角色无权使用此能力' }
+  }
+  if (!config.triggerSources.includes(source)) {
+    return { allowed: false, reason: 'source-blocked' }
   }
 
   return { allowed: true }
