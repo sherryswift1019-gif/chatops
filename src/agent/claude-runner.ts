@@ -308,11 +308,14 @@ export class ClaudeRunner {
       // 4b: 已有产线的用户检查 capability-level 权限
       if (productLineId) {
         const envName = intent.env ?? '*'
-        const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole)
+        const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole, 'im')
         if (!access.allowed) {
+          const text = access.reason === 'source-blocked'
+            ? `⛔ 能力「${capability.displayName}」在当前产线已禁止通过 IM 触发，请到管理后台执行。`
+            : `⛔ 无法执行「${capability.displayName}」：${access.reason}`
           await adapter.sendMessage(
             { type: 'group', id: opts.groupId },
-            { text: `⛔ 无法执行「${capability.displayName}」：${access.reason}` }
+            { text }
           )
           return
         }
