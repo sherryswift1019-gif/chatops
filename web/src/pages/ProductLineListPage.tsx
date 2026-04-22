@@ -53,7 +53,7 @@ export default function ProductLineListPage() {
   ]
 
   return (
-    <Card title="产线管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增产线</Button>}>
+    <Card title="产品管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增产线</Button>}>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal title={editing ? '编辑产线' : '新增产线'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} destroyOnClose>
         <Form form={form} layout="vertical">

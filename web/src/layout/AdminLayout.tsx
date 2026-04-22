@@ -21,7 +21,7 @@ import { me, logout, type MeResponse } from '../api/auth'
 const { Sider, Content, Header } = Layout
 
 const PAGE_NAMES: Record<string, string> = {
-  '/product-lines': '产线管理',
+  '/product-lines': '产品管理',
   '/environments': '环境管理',
   '/dingtalk-users': '钉钉用户',
   '/capabilities': '能力管理',
@@ -41,7 +41,7 @@ const menuItems = [
     type: 'group' as const,
     label: '运维管理',
     children: [
-      { key: '/product-lines', icon: <AppstoreOutlined />, label: '产线管理' },
+      { key: '/product-lines', icon: <AppstoreOutlined />, label: '产品管理' },
       { key: '/environments', icon: <CloudOutlined />, label: '环境管理' },
       { key: '/dingtalk-users', icon: <UserOutlined />, label: '钉钉用户' },
       { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
