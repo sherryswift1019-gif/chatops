@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card, Tabs, Button, Table, Form, Input, Select, Modal, Space, Tag, Avatar,
-  Popconfirm, message, Switch, Spin, Typography, Divider, Checkbox,
+  Popconfirm, message, Switch, Spin, Typography, Divider, Checkbox, Tooltip,
 } from 'antd'
 import { ArrowLeftOutlined, PlusOutlined, SaveOutlined, UserOutlined } from '@ant-design/icons'
 import {
@@ -894,13 +894,29 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
             </p>
 
             <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 500, width: 120 }}>* 全局</span>
                 <Switch
                   checked={editConfigs['*']?.enabled ?? false}
                   onChange={(v) => handleConfigChange('*', 'enabled', v)}
                   checkedChildren="开" unCheckedChildren="关"
                 />
+                <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发，仍可通过管理后台执行">
+                  <span style={{ marginLeft: 12 }}>
+                    <span style={{ marginRight: 6, color: '#666' }}>允许 IM 触发</span>
+                    <Switch
+                      checked={editConfigs['*']?.triggerSources?.includes('im') ?? true}
+                      onChange={(v) => {
+                        const current = editConfigs['*']?.triggerSources ?? ['im', 'web']
+                        const next = v
+                          ? Array.from(new Set([...current, 'im']))
+                          : current.filter(s => s !== 'im')
+                        handleConfigChange('*', 'triggerSources', next.length > 0 ? next : ['web'])
+                      }}
+                      checkedChildren="IM" unCheckedChildren="IM"
+                    />
+                  </span>
+                </Tooltip>
               </div>
               {editConfigs['*']?.enabled && (
                 <Checkbox.Group
@@ -913,13 +929,29 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
 
             {envs.map(env => (
               <div key={env.id} style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 500, width: 120 }}>{env.displayName}（{env.name}）</span>
                   <Switch
                     checked={editConfigs[env.name]?.enabled ?? false}
                     onChange={(v) => handleConfigChange(env.name, 'enabled', v)}
                     checkedChildren="开" unCheckedChildren="关"
                   />
+                  <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发，仍可通过管理后台执行">
+                    <span style={{ marginLeft: 12 }}>
+                      <span style={{ marginRight: 6, color: '#666' }}>允许 IM 触发</span>
+                      <Switch
+                        checked={editConfigs[env.name]?.triggerSources?.includes('im') ?? true}
+                        onChange={(v) => {
+                          const current = editConfigs[env.name]?.triggerSources ?? ['im', 'web']
+                          const next = v
+                            ? Array.from(new Set([...current, 'im']))
+                            : current.filter(s => s !== 'im')
+                          handleConfigChange(env.name, 'triggerSources', next.length > 0 ? next : ['web'])
+                        }}
+                        checkedChildren="IM" unCheckedChildren="IM"
+                      />
+                    </span>
+                  </Tooltip>
                 </div>
                 {editConfigs[env.name]?.enabled && (
                   <Checkbox.Group
