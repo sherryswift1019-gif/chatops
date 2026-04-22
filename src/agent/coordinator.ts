@@ -84,13 +84,22 @@ async function sendL3FyiToSecondaryOwners(report: {
     primaryOwnerName,
     summary: (report.rootCauseSummary ?? '').slice(0, 200),
   })
-  await Promise.all(
+  const dmResults = await Promise.allSettled(
     Array.from(otherOwnerIds).map(oid =>
-      adapter.sendDirectMessage(oid, { text }).catch((err: unknown) => {
-        console.error('[AgentCoordinator] L3 FYI DM failed for', oid, err)
-      }),
+      adapter.sendDirectMessage(oid, { text }),
     ),
   )
+  const failedDms = dmResults
+    .map((r, i) => (r.status === 'rejected' ? { oid: Array.from(otherOwnerIds)[i], err: r.reason } : null))
+    .filter((x): x is { oid: string; err: unknown } => x !== null)
+  if (failedDms.length > 0) {
+    for (const f of failedDms) {
+      console.error('[AgentCoordinator] L3 FYI DM failed for', f.oid, f.err)
+    }
+    console.warn(
+      `[AgentCoordinator] L3 FYI DM: ${failedDms.length}/${otherOwnerIds.size} 失败（仍视为部分成功，pipeline 继续）`,
+    )
+  }
 }
 
 function buildL3FyiMessage(p: {

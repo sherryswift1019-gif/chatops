@@ -99,9 +99,12 @@ export async function handleNotify(opts: TriggerOptions): Promise<TriggerResult>
     return { success: true, output: `场景 ${scenario.kind}：无需发送 DM（信息由前端展示）` }
   }
 
-  const ownerMap = await buildOwnerMap(projectMrs, report.productLineId)
+  const { map: ownerMap, missingProjects } = await buildOwnerMap(projectMrs, report.productLineId)
   if (ownerMap.size === 0) {
-    return { success: false, error: 'no_recipients', output: '无可通知的接收人（project owner 均空）' }
+    const detail = missingProjects.length > 0
+      ? `这些 project 未配置 owner_id：${missingProjects.join(', ')}`
+      : '无有效 project'
+    return { success: false, error: 'no_recipients', output: `无可通知的接收人（${detail}）` }
   }
 
   const mgr = PipelineApprovalManager.getInstance()
@@ -155,11 +158,18 @@ interface OwnerEntry {
 async function buildOwnerMap(
   projectMrs: ProjectMr[],
   productLineId: number,
-): Promise<Map<string, OwnerEntry>> {
+): Promise<{ map: Map<string, OwnerEntry>; missingProjects: string[] }> {
   const map = new Map<string, OwnerEntry>()
+  const missingProjects: string[] = []
   for (const p of projectMrs) {
     const ownerId = await resolveOwner(p.projectPath, productLineId)
-    if (!ownerId) continue
+    if (!ownerId) {
+      console.warn(
+        `[Notify] project ${p.projectPath} (product_line=${productLineId}) 未配置 owner_id，跳过该 project 的通知`,
+      )
+      missingProjects.push(p.projectPath)
+      continue
+    }
     const entry = map.get(ownerId) ?? {
       projectPaths: [],
       mrIids: [],
@@ -172,7 +182,7 @@ async function buildOwnerMap(
     entry.reviewLabels.push(p.review.label)
     map.set(ownerId, entry)
   }
-  return map
+  return { map, missingProjects }
 }
 
 async function resolveOwner(projectPath: string, productLineId: number): Promise<string | null> {

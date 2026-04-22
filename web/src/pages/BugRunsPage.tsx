@@ -97,7 +97,9 @@ export default function BugRunsPage() {
   }, [issueIdFilter, keywordFilter])
 
   useEffect(() => {
-    getProductLines().then(setProductLines).catch(() => {})
+    getProductLines()
+      .then(setProductLines)
+      .catch((err) => console.error('[BugRunsPage] 加载产品线列表失败', err))
     // 拉 dingtalk_users 供 triggered_by 列显示名字（非严格：失败降级为显示原 id）
     getDingTalkUsers()
       .then((res) => {
@@ -105,7 +107,7 @@ export default function BugRunsPage() {
         for (const u of res.users as DingTalkUser[]) map[u.userId] = u.name
         setUserNameMap(map)
       })
-      .catch(() => {})
+      .catch((err) => console.error('[BugRunsPage] 加载钉钉用户列表失败（触发人列将显示原 id）', err))
   }, [])
 
   useEffect(() => {
