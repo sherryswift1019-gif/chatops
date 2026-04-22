@@ -45,6 +45,10 @@ import './agent/tools/run-tests.js'
 import './agent/tools/create-mr.js'
 import './agent/tools/update-ai-summary.js'
 import './agent/tools/review-mr-diff.js'
+import './agent/tools/save-prd.js'
+import './agent/tools/read-prd.js'
+import './agent/tools/update-prd-context.js'
+import './agent/tools/search-existing-prds.js'
 
 // 研发 AI 助手 Agent handler 注册
 import { registerAnalysisBugHandler } from './agent/analysis/analyzer.js'
@@ -54,6 +58,7 @@ import { registerApproveL3Handler } from './agent/approval/approve-l3-handler.js
 import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
 import { registerNotifyHandler } from './agent/notify/notify-handler.js'
 import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
+import { setPrdClaudeRunner } from './agent/prd/prd-agent.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
 import { startMrReconciler, stopMrReconciler } from './agent/reconcile/mr-state-reconciler.js'
 import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
@@ -191,6 +196,8 @@ async function main(): Promise<void> {
   })
 
   // analyzer/fix/review 均已改用 runClaudeCli，不再需要注入 ClaudeRunner
+  // PRD agent 仍走 Porygon-based ClaudeRunner
+  setPrdClaudeRunner(runner)
 
   // 注册 Agent capability handler
   registerAnalysisBugHandler()
@@ -234,7 +241,8 @@ async function main(): Promise<void> {
           })
         }
       )
-    }
+    },
+    (userId: string) => runner.endUserSession(userId)
   )
   sessionManager.start()
 
@@ -276,7 +284,7 @@ async function main(): Promise<void> {
   }
 
   // Admin API routes (under /admin prefix)
-  await app.register(adminPlugin, { prefix: '/admin', adapters })
+  await app.register(adminPlugin, { prefix: '/admin', adapters, runner })
 
   // Start pipeline scheduler
   const { startScheduler } = await import('./pipeline/scheduler.js')

@@ -146,3 +146,100 @@ export interface MetricDaily {
   id: number; date: string; productLineId: number | null
   metricKey: string; metricValue: number; metadata: Record<string, unknown> | null
 }
+
+export type PrdStatus =
+  | 'drafting'
+  | 'reviewing'
+  | 'review_blocked'
+  | 'draft'
+  | 'approved'
+  | 'archived'
+
+export interface PrdReviewFinding {
+  id: string
+  dimension: string
+  severity: 'blocker' | 'major' | 'minor'
+  location: string
+  description: string
+  suggestion?: string
+  canAutoFix: boolean
+  autoFixBlockedReason?: string
+  ownership?: 'pm' | 'admin' | 'business'
+  recommendation?: {
+    action: 'approve' | 'approve_with_edits' | 'reject'
+    reason: string
+  }
+}
+
+export interface PrdReviewResult {
+  status: 'passed' | 'blocked'
+  round: number
+  findings: PrdReviewFinding[]
+  recommendation?: {
+    action: 'approve' | 'approve_with_edits' | 'reject'
+    reason: string
+  }
+  reviewedAt: string
+}
+
+export interface PrdReviewHistoryEntry {
+  round: number
+  result: PrdReviewResult
+  repairedAt?: string
+  repairSummary?: string
+}
+
+export interface PrdDocument {
+  id: number
+  productLineId: number
+  title: string
+  version: number
+  status: PrdStatus
+  contentMarkdown: string
+  contentJson: Record<string, unknown>
+  reviewResult: PrdReviewResult | null
+  reviewHistory: PrdReviewHistoryEntry[]
+  createdBy: string
+  groupId: string | null
+  platform: string | null
+  agentSessionId: string | null
+  tags: string[]
+  metadata: Record<string, unknown>
+  createdAt: string
+  updatedAt: string
+}
+
+export type PrdChatRole = 'user' | 'assistant' | 'tool_use' | 'tool_result' | 'error'
+
+export interface PrdChatMessageMetadata {
+  /** 特殊 bubble 类型，例如 'review_progress' */
+  kind?: string
+  /** review_progress 阶段 */
+  stage?: string
+  prdId?: number
+  /** review_progress 完整事件 payload */
+  payload?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface PrdChatSession {
+  id: number
+  sessionKey: string
+  prdId: number | null
+  productLineId: number
+  createdBy: string
+  porygonSessionId: string | null
+  lastActiveAt: string
+  createdAt: string
+}
+
+export interface PrdChatMessage {
+  id: number
+  sessionKey: string
+  role: PrdChatRole
+  content: string
+  toolName: string | null
+  toolUseId: string | null
+  metadata: PrdChatMessageMetadata
+  createdAt: string
+}

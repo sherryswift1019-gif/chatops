@@ -1,7 +1,7 @@
 /**
  * Integration: capabilities.defaultPipelineId binding CRUD
  *
- * 验证 schema-v17 新增的 default_pipeline_id 字段能正确读写。
+ * 验证 schema-v19 新增的 default_pipeline_id 字段能正确读写。
  * 建立 IM → Pipeline 入口绑定所依赖的数据层契约。
  */
 import { describe, it, expect, beforeAll } from 'vitest'

@@ -14,6 +14,8 @@ import {
   BugOutlined,
   BookOutlined,
   DashboardOutlined,
+  UserSwitchOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import { me, logout, type MeResponse } from '../api/auth'
 
@@ -31,6 +33,8 @@ const PAGE_NAMES: Record<string, string> = {
   '/bug-runs': 'Bug 修复实例',
   '/product-knowledge': '知识库配置',
   '/metrics': '价值仪表盘',
+  '/prd-documents': 'PRD 文档',
+  '/prd-chat': 'PRD 对话',
 }
 
 const menuItems = [
@@ -58,6 +62,8 @@ const menuItems = [
     label: '研发 AI 助手',
     children: [
       { key: '/bug-runs', icon: <BugOutlined />, label: 'Bug 修复实例' },
+      { key: '/prd-documents', icon: <FileTextOutlined />, label: 'PRD 文档' },
+      { key: '/module-owners', icon: <UserSwitchOutlined />, label: '模块负责人' },
       { key: '/product-knowledge', icon: <BookOutlined />, label: '知识库配置' },
       { key: '/metrics', icon: <DashboardOutlined />, label: '价值仪表盘' },
     ],

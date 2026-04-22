@@ -163,6 +163,13 @@ export class ClaudeRunner {
     this.sessions.delete(userId)
   }
 
+  /** 供外部（如 IM /new 命令）主动结束某用户的当前对话。返回是否实际清理了 session。 */
+  endUserSession(userId: string): boolean {
+    const existed = this.sessions.has(userId)
+    if (existed) this.clearSession(userId)
+    return existed
+  }
+
   async run(opts: RunOptions): Promise<void> {
     const { prompt, context, adapter, executionMode = false, productLineId, senderDingtalkId } = opts
     const userId = context.initiatorId
@@ -506,6 +513,7 @@ ${intentRules}
   private async executeWithPorygon(opts: RunOptions, tools: AgentTool[], capability?: Capability, lockInfo?: { project: string; env: string }): Promise<void> {
     const { prompt, context, adapter, executionMode = false } = opts
     const userId = context.initiatorId
+    const runStartedAt = new Date()
 
     const FALLBACK_PROMPT = '你是一个 DevOps 助手。用户通过群聊与你交互。只使用提供给你的 MCP 工具，不要使用 Bash 等内置工具。'
     const EXECUTION_PROMPT = '你是一个 DevOps 自动化 agent，正在执行已审批的操作。直接执行，无需再次确认。'
@@ -608,11 +616,14 @@ ${intentRules}
 
         switch (msg.type) {
           case 'assistant':
-            if (msg.text) textBuffer += msg.text
+            if (msg.text) {
+              textBuffer += msg.text
+              console.log(`[Runner] assistant msg (len=${msg.text.length}): ${msg.text.slice(0, 200).replace(/\n/g, ' ')}${msg.text.length > 200 ? '…' : ''}`)
+            }
             break
 
           case 'tool_use':
-            console.log(`[Runner] Tool called: ${msg.toolName}`)
+            console.log(`[Runner] Tool called: ${msg.toolName}`, JSON.stringify(msg.input).slice(0, 200))
             break
 
           case 'result':
@@ -653,6 +664,20 @@ ${intentRules}
     if (worktree) {
       release(worktree)
       console.log(`[Runner] Worktree released: ${worktree.path}`)
+    }
+
+    // Post-run hooks: 扫描本次运行中被 save_prd 触达的 PRD，异步触发自审
+    if (capability?.key === 'create_prd') {
+      try {
+        const { scanPendingReviewsByTaskId, triggerPrdReviewAsync } = await import('./prd/prd-agent.js')
+        const prdIds = await scanPendingReviewsByTaskId(context.taskId, runStartedAt)
+        for (const id of prdIds) {
+          console.log(`[Runner] post-run: triggering PRD review for #${id}`)
+          triggerPrdReviewAsync(id)
+        }
+      } catch (err) {
+        console.error('[Runner] PRD post-run hook failed:', err)
+      }
     }
   }
 
@@ -723,4 +748,193 @@ ${intentRules}
   async dispose(): Promise<void> {
     await this.porygon.dispose()
   }
+
+  /**
+   * Web 端 PRD 对话流式入口（SSE 路由调用）。
+   * 与 IM 路径区别：不调 adapter.sendMessage，全部事件 yield 给调用方；
+   * sessionKey 作为命名空间写入 this.sessions，与 IM 的 userId 隔离。
+   */
+  async *streamWebChat(opts: {
+    prompt: string
+    context: TaskContext
+    capabilityKey: string
+    sessionKey: string
+    resumeSessionId?: string
+    productLineId: number
+  }): AsyncGenerator<WebChatEvent> {
+    const capability = await getCapabilityByKey(opts.capabilityKey)
+    if (!capability) {
+      yield { type: 'error', error: `能力 ${opts.capabilityKey} 不存在` }
+      return
+    }
+
+    const tools = capability.toolNames
+      .map((name) => getTool(name))
+      .filter((t): t is AgentTool => t !== undefined)
+    if (tools.length === 0) {
+      yield { type: 'error', error: `能力「${capability.displayName}」无可用工具` }
+      return
+    }
+
+    // systemPrompt: capability.systemPrompt + 产线上下文
+    let systemPrompt = capability.systemPrompt
+      ? interpolatePrompt(capability.systemPrompt, {
+          initiatorRole: opts.context.initiatorRole ?? 'admin',
+        })
+      : '你是一个 PRD 助手，与产品经理多轮对话共同产出 PRD。'
+
+    try {
+      systemPrompt += await buildProjectContext(opts.productLineId)
+    } catch (err) {
+      console.error('[Runner] streamWebChat buildProjectContext failed:', err)
+    }
+
+    const mcpServerPath = join(__dirname, 'mcp-server.ts')
+    const toolNames = tools.map((t) => t.name)
+    const runStartedAt = new Date()
+
+    // resume 优先级：调用方传入（来自 DB） > 内存 session
+    const memSessionId = this.getSessionId(opts.sessionKey)
+    const resumeId = opts.resumeSessionId ?? memSessionId
+
+    let capturedSessionId: string | undefined
+
+    try {
+      const claudeEnv = await buildClaudeEnv()
+      for await (const msg of this.porygon.query({
+        prompt: opts.prompt,
+        appendSystemPrompt: systemPrompt,
+        ...(resumeId ? { resume: resumeId } : {}),
+        mcpServers: {
+          'chatops-tools': {
+            command: 'node',
+            args: ['--import', 'tsx/esm', mcpServerPath],
+            env: {
+              ...(process.env as Record<string, string>),
+              CHATOPS_TASK_CONTEXT: JSON.stringify(opts.context),
+              CHATOPS_ALLOWED_TOOLS: toolNames.join(','),
+              DATABASE_URL: process.env.DATABASE_URL ?? '',
+              ...claudeEnv,
+            },
+          },
+        },
+        envVars: claudeEnv,
+      })) {
+        if ('sessionId' in msg && msg.sessionId) {
+          capturedSessionId = msg.sessionId as string
+          this.saveSession(opts.sessionKey, capturedSessionId, tools)
+        }
+
+        switch (msg.type) {
+          case 'stream_chunk': {
+            // Claude 适配器在分块模式下会从两个源头发 stream_chunk：
+            //   1. stream_event 的真实 delta（增量文本）
+            //   2. assistant 消息里的 text block（整段重复一遍）
+            // 只保留 (1)，否则前端会看到文本重复两次。
+            const rawType = (msg.raw as { type?: string } | undefined)?.type
+            if (rawType === 'assistant') break
+            yield { type: 'stream_chunk', text: msg.text }
+            break
+          }
+          case 'assistant':
+            // turnComplete 时 text 与 stream_chunk 累加重复，跳过 text 以免重复
+            yield { type: 'assistant', text: msg.turnComplete ? '' : msg.text, turnComplete: !!msg.turnComplete }
+            break
+          case 'tool_use':
+            yield {
+              type: 'tool_use',
+              toolName: msg.toolName,
+              input: msg.input,
+              toolUseId: (msg.raw as { id?: string } | undefined)?.id,
+            }
+            if (msg.output !== undefined) {
+              yield {
+                type: 'tool_result',
+                toolName: msg.toolName,
+                output: msg.output,
+                toolUseId: (msg.raw as { id?: string } | undefined)?.id,
+              }
+            }
+            break
+          case 'result':
+            // 结束信号由外层 done 处理
+            break
+          case 'error':
+            yield { type: 'error', error: msg.message }
+            return
+        }
+      }
+    } catch (err) {
+      console.error('[Runner] streamWebChat error:', err)
+      this.clearSession(opts.sessionKey)
+      yield { type: 'error', error: String(err) }
+      return
+    }
+
+    // 自审触发（Web 路径：同步 await + 实时 yield 进度事件；IM 路径保持 fire-and-forget）
+    if (capability.key === 'create_prd') {
+      try {
+        const prdAgent = await import('./prd/prd-agent.js')
+        const { scanPendingReviewsByTaskId, runPrdReview } = prdAgent
+        type ReviewProgressEvent = import('./prd/prd-agent.js').ReviewProgressEvent
+        const prdIds = await scanPendingReviewsByTaskId(opts.context.taskId, runStartedAt)
+        for (const id of prdIds) {
+          const queue: ReviewProgressEvent[] = []
+          let finished = false
+          let notify: (() => void) | null = null
+          const waitNext = () => new Promise<void>((resolve) => { notify = resolve })
+
+          const reviewPromise = runPrdReview(id, {
+            onProgress: (ev) => {
+              queue.push(ev)
+              if (notify) { const r = notify; notify = null; r() }
+            },
+          }).catch((err) => {
+            queue.push({
+              stage: 'review_error',
+              prdId: id,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }).finally(() => {
+            finished = true
+            if (notify) { const r = notify; notify = null; r() }
+          })
+
+          while (!finished || queue.length > 0) {
+            while (queue.length > 0) {
+              const ev = queue.shift()!
+              yield {
+                type: 'review_progress',
+                reviewStage: ev.stage,
+                prdId: ev.prdId,
+                reviewData: ev,
+              }
+            }
+            if (!finished) await waitNext()
+          }
+          await reviewPromise
+        }
+      } catch (err) {
+        console.error('[Runner] streamWebChat post-run hook failed:', err)
+      }
+    }
+
+    yield { type: 'done', sessionId: capturedSessionId }
+  }
+}
+
+export interface WebChatEvent {
+  type: 'stream_chunk' | 'assistant' | 'tool_use' | 'tool_result' | 'done' | 'error' | 'review_progress'
+  text?: string
+  turnComplete?: boolean
+  toolName?: string
+  input?: unknown
+  output?: string
+  toolUseId?: string
+  sessionId?: string
+  error?: string
+  // review_progress 专用
+  reviewStage?: string
+  prdId?: number
+  reviewData?: unknown
 }

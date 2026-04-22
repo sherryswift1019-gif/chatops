@@ -135,6 +135,8 @@ const SCHEMA_FILES = [
   'schema-v15.sql',
   'schema-v16.sql',
   'schema-v17.sql',
+  'schema-v18.sql',
+  'schema-v19.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
