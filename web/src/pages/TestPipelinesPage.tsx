@@ -88,7 +88,11 @@ export default function TestPipelinesPage() {
     const stages = (r.stages as any[]).map((s: any) => ({
       ...s,
       stageType: s.stageType ?? 'script',  // backward compat
-      script: s.script ?? s.params?.commands ?? s.params?.script ?? '',
+      // 加载时反向映射：capability stage 把 capabilityKey 显示到 script 字段的 textarea 里
+      // （UI 复用 script textarea，见 save 时 capabilityKey = (script).trim()）
+      script: s.stageType === 'capability'
+        ? (s.capabilityKey ?? '')
+        : (s.script ?? s.params?.commands ?? s.params?.script ?? ''),
       targetRoles: s.targetRoles ?? [],
       parallel: s.parallel ?? false,
     }))
@@ -118,8 +122,18 @@ export default function TestPipelinesPage() {
         name: s.name,
         stageType: s.stageType ?? 'script',
         script: s.stageType === 'script' ? (s.script ?? '') : undefined,
+        // capability stage: 复用 script 字段承载 capabilityKey（UX 简化）；
+        // capabilityParams 对所有 bug 修复 capability 统一用 {reportId:'{{triggerParams.reportId}}'}，
+        // 如未来出现需要额外 params 的 capability 再扩字段
+        capabilityKey: s.stageType === 'capability' ? (s.script ?? '').trim() : undefined,
+        capabilityParams:
+          s.stageType === 'capability'
+            ? (s.capabilityParams ?? { reportId: '{{triggerParams.reportId}}' })
+            : undefined,
         approverIds: s.stageType === 'approval' ? (s.approverIds ?? []) : undefined,
         approvalDescription: s.stageType === 'approval' ? (s.approvalDescription ?? '') : undefined,
+        approverIdsResolver:
+          s.stageType === 'approval' ? (s.approverIdsResolver ?? undefined) : undefined,
         targetRoles: s.targetRoles ?? [],
         parallel: s.parallel ?? false,
         timeoutSeconds: s.timeoutSeconds ?? 300,
@@ -368,6 +382,7 @@ export default function TestPipelinesPage() {
                       <Form.Item {...rest} name={[name, 'stageType']} label="类型" rules={[{ required: true }]}>
                         <Select style={{ width: 130 }} options={[
                           { value: 'script', label: '运行脚本' },
+                          { value: 'capability', label: 'AI 能力' },
                           { value: 'approval', label: '人员审批' },
                         ]} />
                       </Form.Item>
@@ -478,36 +493,62 @@ function StageTypeFields({ stageIndex, form, variableCatalog, dingtalkUsers }: {
   if (stageType === 'approval') {
     return (
       <div style={{ marginTop: 8 }}>
-        <Form.Item name={[stageIndex, 'approverIds']} label="审批人">
+        <Form.Item
+          name={[stageIndex, 'approverIdsResolver']}
+          label="审批人解析器"
+          tooltip="动态审批人策略名（如 primary_project_owner）。填了就以它为准，approverIds 列表失效。" >
+          <Input placeholder="如 primary_project_owner（运行时动态查主仓库 owner）" />
+        </Form.Item>
+        <Form.Item name={[stageIndex, 'approverIds']} label="审批人（静态列表，resolver 为空时才用）">
           <Select mode="multiple" placeholder="选择审批人" options={dingtalkUsers.map(u => ({ value: u.userId, label: u.name }))} />
         </Form.Item>
         <Form.Item name={[stageIndex, 'approvalDescription']} label="审批描述">
-          <Input placeholder="审批时展示的操作描述" />
+          <Input placeholder="审批卡片展示的操作描述（resolver 有自带描述时被覆盖）" />
         </Form.Item>
       </div>
     )
   }
 
-  // script type
+  const isCapability = stageType === 'capability'
+
+  // script / capability 共用 textarea
+  // - script 类型：shell 脚本
+  // - capability 类型：capabilityKey（后端将 script 字段的 trim() 值当 capabilityKey，
+  //   capabilityParams 自动补 {reportId: '{{triggerParams.reportId}}'}）
   return (
     <div style={{ marginTop: 8 }}>
       <Form.Item name={[stageIndex, 'script']} label={
-        <span>脚本 <Button type="link" size="small" icon={<RobotOutlined />} onClick={() => setAiModalOpen(true)}>AI 生成</Button></span>
+        isCapability
+          ? <span>Capability Key</span>
+          : <span>脚本 <Button type="link" size="small" icon={<RobotOutlined />} onClick={() => setAiModalOpen(true)}>AI 生成</Button></span>
       }>
-        <Input.TextArea ref={textAreaRef} rows={5} placeholder="输入要执行的 shell 脚本" style={{ fontFamily: 'monospace', fontSize: 12 }} />
+        <Input.TextArea
+          ref={textAreaRef}
+          rows={isCapability ? 1 : 5}
+          placeholder={
+            isCapability
+              ? '如 fix_bug_l2 / create_mr / ai_review_mr / notify_bug'
+              : '输入要执行的 shell 脚本'
+          }
+          style={{ fontFamily: 'monospace', fontSize: 12 }}
+        />
       </Form.Item>
-      <div style={{ marginBottom: 8 }}>
-        <span style={{ fontSize: 12, color: '#999', marginRight: 8 }}>可用变量（点击插入）：</span>
-        {variableCatalog.map(v => (
-          <Tag key={v.key} color="blue" style={{ cursor: 'pointer', marginBottom: 4 }}
-            onClick={() => insertVariable(v.key)} title={v.description}>
-            {'{{' + v.key + '}}'}
-          </Tag>
-        ))}
-      </div>
-      <AiCommandModal open={aiModalOpen} capabilityName="脚本" targetRoles={[]}
-        onConfirm={(cmd) => { form.setFieldValue(['stages', stageIndex, 'script'], cmd); setAiModalOpen(false) }}
-        onCancel={() => setAiModalOpen(false)} />
+      {!isCapability && (
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ fontSize: 12, color: '#999', marginRight: 8 }}>可用变量（点击插入）：</span>
+          {variableCatalog.map(v => (
+            <Tag key={v.key} color="blue" style={{ cursor: 'pointer', marginBottom: 4 }}
+              onClick={() => insertVariable(v.key)} title={v.description}>
+              {'{{' + v.key + '}}'}
+            </Tag>
+          ))}
+        </div>
+      )}
+      {!isCapability && (
+        <AiCommandModal open={aiModalOpen} capabilityName="脚本" targetRoles={[]}
+          onConfirm={(cmd) => { form.setFieldValue(['stages', stageIndex, 'script'], cmd); setAiModalOpen(false) }}
+          onCancel={() => setAiModalOpen(false)} />
+      )}
     </div>
   )
 }

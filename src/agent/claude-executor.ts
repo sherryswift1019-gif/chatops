@@ -58,7 +58,7 @@ export class PorygonExecutor implements ClaudeExecutor {
         defaultBackend: 'claude',
         backends: {
           claude: {
-            model: 'sonnet',
+            model: 'opus',  // 2026-04-21 从 sonnet 切 opus（深度推理优势，成本 ~5x）
             interactive: false,
             cliPath: join(__dirname, '..', '..', 'node_modules', '.bin', 'claude'),
           },

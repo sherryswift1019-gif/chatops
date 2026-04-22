@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify'
 import { createProductKnowledgeRepo, getByProductLineId } from '../../db/repositories/product-knowledge-repos.js'
-import { createModuleOwner } from '../../db/repositories/module-owners.js'
 import { ensureLocalCache } from '../../agent/knowledge/repository.js'
 import { scanAndGenerateSummaries } from '../../agent/knowledge/ai-summary-scanner.js'
 
@@ -80,21 +79,6 @@ async function runOnboard(task: OnboardTask, codeRepoUrl: string, knowledgeRepoU
   task.progress.push('开始扫描模块并生成 AI 摘要模板...')
   const scanResult = await scanAndGenerateSummaries(repoPath, aiSummaryPath)
   task.progress.push(`检测到 ${scanResult.modules.length} 个模块，生成 ${scanResult.summaryFiles.length} 个摘要文件`)
-
-  // Step 3: 写入负责人建议
-  for (const owner of scanResult.suggestedOwners) {
-    try {
-      await createModuleOwner({
-        productLineId: task.productLineId,
-        modulePattern: owner.module,
-        ownerUserId: owner.topContributor,
-        backupOwnerUserId: null,
-      })
-      task.progress.push(`负责人建议: ${owner.module} → ${owner.topContributor}`)
-    } catch {
-      task.progress.push(`负责人建议跳过（已存在）: ${owner.module}`)
-    }
-  }
 
   // Step 4: Clone 知识库仓库
   task.status = 'creating_knowledge'

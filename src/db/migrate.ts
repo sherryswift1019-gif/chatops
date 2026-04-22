@@ -76,6 +76,10 @@ const schemaV19 = readFileSync(join(__dirname, 'schema-v19.sql'), 'utf8')
 await pool.query(schemaV19)
 console.log('[migrate] schema-v19 applied')
 
+const schemaV20 = readFileSync(join(__dirname, 'schema-v20.sql'), 'utf8')
+await pool.query(schemaV20)
+console.log('[migrate] schema-v20 applied')
+
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
 // - system_prompt: refreshed only when it still equals the previous default
@@ -112,4 +116,4 @@ await pool.query(
 )
 
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v19, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19)')
+console.log('✅ Database schema applied (v1 ~ v20, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20)')

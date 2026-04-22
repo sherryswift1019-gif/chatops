@@ -159,7 +159,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
       11,
       {},
       { type: 'api', triggeredBy: 'u-trigger', params: { reportId: fakeReport.id } },
-      {},  // runtimeVarsInput（artifact-inputs 功能引入的新参数）
+      { reportId: String(fakeReport.id) },  // runtimeVars: reportId 塞进 runtime 变量以便 resume 时 reloadContext 恢复 triggerParams
       expect.any(Function),
     )
     expect(setPipelineRunId).toHaveBeenCalledWith(fakeReport.id, 77)
@@ -282,9 +282,9 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
       }
       if (code === 'fix_attempt') {
         return [
-          { id: 1, reportId: fakeReport.id, projectPath: 'PAM/pas-api', code: 'fix_attempt', status: 'failed', data: {} },
-          { id: 2, reportId: fakeReport.id, projectPath: 'PAM/pas-api', code: 'fix_attempt', status: 'failed', data: {} },
-          { id: 3, reportId: fakeReport.id, projectPath: 'PAM/pas-api', code: 'fix_attempt', status: 'failed', data: {} },
+          { id: 1, reportId: fakeReport.id, projectPath: 'PAM/pas-api', code: 'fix_attempt', status: 'failed', data: { attempt: 1, error: 'test compile error on attempt 1' } },
+          { id: 2, reportId: fakeReport.id, projectPath: 'PAM/pas-api', code: 'fix_attempt', status: 'failed', data: { attempt: 2, error: 'rebase failed (non-conflict) on attempt 2' } },
+          { id: 3, reportId: fakeReport.id, projectPath: 'PAM/pas-api', code: 'fix_attempt', status: 'failed', data: { attempt: 3, error: 'test still red on attempt 3' } },
         ]
       }
       return []
@@ -316,6 +316,7 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
         context: expect.objectContaining({
           failedStage: 'fix_bug_l2',
           attemptCount: 3,
+          failureSummary: expect.stringContaining('PAM/pas-api: test still red on attempt 3'),
         }),
       }),
     }))

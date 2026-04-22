@@ -8,35 +8,6 @@
 
 ---
 
-## 1. L3 审批 DM 按钮化（Interactive Card + Stream）
-
-**背景**：L3 审批流程当前发 DM（严益昌 `PipelineApprovalManager.requestApproval` → adapter.sendDirectMessage），但消息形态是 `sampleMarkdown` **纯文本**，用户必须在群里 `@ 机器人 approve #XX` / `reject #XX` / `reanalyze #XX` 才能完成审批。体验差，移动端不便，新人不知道规则。
-
-**现状**：
-- 回调链**已全部接通**（钉钉 Stream → dingtalk.ts `TOPIC_CARD` listener → `adapter.onCardAction` → server.ts → `PipelineApprovalManager.handleCallback`）
-- `PipelineApprovalManager.handleCallback(approvalId, decision, approverId)` 已预留，只是没人调
-- **唯一缺口**：`dingtalk.ts:sendDirectMessage` 当前发 `msgKey: 'sampleMarkdown'`，payload 里**没按钮**
-
-**待做**：
-1. 在钉钉开放平台创建**互动卡片模板**（Interactive Card）
-   - 标题 + 正文变量（审批描述）+ 两按钮 approve / reject
-   - 回调模式选 **Stream 订阅**（不选 HTTPS URL）—— 关键！这样 **不需要公网入口**
-2. `dingtalk.ts:sendDirectMessage` 分支扩展
-   - 入参 content 为 `InteractiveCard` 时走 `/v1.0/im/interactiveCards/send` API
-   - 入参 content 为 `TextContent` 时保留原 `oToMessages/batchSend` + sampleMarkdown
-3. 按钮 `action.value` 带 `l3-fix-${issueId}` + `approved|rejected`
-   - 钉钉点击后 Stream 的 CARD_ACTION callbackData 里 taskId + action 会传进来，走原有 `handleCallback` 链路 resolve
-4. `approval-manager.ts` 消息文案去掉"群内命令"提示（改为"点按钮审批"）
-5. **保留**群内命令审批路径（`tryHandleCommand`）作为 fallback —— 卡片渲染失败时用户仍有出路
-
-**关键技术点**：
-- **不需要公网 HTTPS 入口**——Stream 模式下钉钉通过已建立的 WSS 反向推按钮事件，和当前收消息走同一通道
-- 互动卡片 ≠ ActionCard（ActionCard 按钮只能跳 URL 或 `dtmd://` 代发消息，达不到"不打扰、直接返回结果"的要求）
-
-**相关笔记**：auto-memory `l3-approval-callback.md`（历史接入失败的回顾）
-
----
-
 ## 2. pipeline 审批机制双轨清理（V1 approval vs V2 capability）
 
 **背景**：两套审批路径并存
@@ -57,26 +28,6 @@
 - `notify_bug` 遍历涉及 project owner 发 DM ✅
 - `approve_l3` 只发审批请求给 primary project owner，非主 project owner 收 FYI DM（文案："Bug 涉及你负责的服务（非主仓库），主负责人 XX 正在审批方案。"）✅
 - owner 来源统一 = 产品详情页 > project 表单 > "负责人"字段 = `projects.owner_id` ✅
-
----
-
-## 3. 测试数据隔离 — 已做和未做的
-
-**背景**：2026-04-20 发现 `chatops` 开发库曾被 e2e/integration 测试污染（mock project `PAM/pas-api`、stub prompt 残留）。污染的直接原因是 `DATABASE_URL` 被误设到生产库。
-
-**已做（2026-04-20 同日）**：
-- `helpers/db.ts:assertTestDbSafeToReset` 双重防御
-  - B2：`NODE_ENV==='test'`——vitest 自动设置，非测试进程调 resetTestDb 立即 throw
-  - B3：DB 里必须存在 `chatops_test_db_marker` 表（生产库绝无此表）
-- 每次 DROP 重建 schema 后自动重种 marker 供下次校验
-- 补 `mock-e2e/README.md` "测试库 bootstrap" 小节，含 psql 命令
-- 详见 commit `ccb4c7d`
-
-**未做**：
-- **Claude agent 在 Bash 工具里的磁盘副作用未隔离**：`/tmp/analysis/fix-agent-*` / `/tmp/analysis/<uid>-detail-*` 累积；改 `~/.m2`；`mvn test` 起本地端口等——`cleanup-scheduler.ts` 覆盖有限
-- **生产库被污染后的数据恢复**：开发库 `projects` / `dingtalk_users` / `product_line_members` 等被覆盖/清空，需要手工重 seed（本次事故的残留）
-- **AI 运行态数据与真数据的"可丢弃标记"**：`bug_analysis_reports.run_mode='test'|'trial'|'prod'`，BugRunsPage 能按此过滤——目前真假混杂
-- **Claude Bash tool 沙箱化**：container/chroot 避免污染本机开发环境——长期性
 
 ---
 
@@ -144,7 +95,22 @@
 
 ## 6. Issue 模板标准化（7 段排版 + 原始材料保留 + 视觉转写）
 
-**背景**：2026-04-21 验证 Porygon 全链路后发现，[analyzer.ts:buildMarkdownReport](../src/agent/analysis/analyzer.ts#L82) 当前只产出**浓缩的 AI 分析结论**（分类/根因/方案/影响模块/分析步骤），缺失关键信息——后续审批/重试/人工接手都拿不到足够材料做独立判断。
+**状态**：⚠️ 部分完成（2026-04-21）
+
+**已完成**：
+- ✅ 7 段排版框架（§1 问题描述背景 → §7 分析步骤折叠）— [analyzer.ts:139 buildIssueDescription](../src/agent/analysis/analyzer.ts#L139)
+- ✅ `images_described[]` Schema 字段 — [analyzer.ts:48](../src/agent/analysis/analyzer.ts#L48)
+- ✅ analyze_bug prompt 升级到 4025B（7 段要求 + 8 条硬约束） — seed.sql
+- ✅ Issue 实际生成 7 段（L2 实测 Issue #135 验证通过）
+
+**未完成**（延后，见 §12）：
+- ❌ 图片视觉转写（adapter 把 images 透传给 Porygon vision backend）
+- ❌ 图片上传到 GitLab 附件（`POST /api/v4/projects/:id/uploads`）
+- ⚠️ Schema A 扩展字段（evidence_chain / impact_assessment / test_scope / followup_materials）部分字段 prompt 里要求了但 parseAnalysisOutput 没硬校验
+
+**原设计文档**（7 段完整定义 + 实施改动点 + 受益方）保留在本节历史快照中，供后续 §12 参考：
+
+**背景**：2026-04-21 验证 Porygon 全链路后发现，原 buildMarkdownReport 只产出浓缩的 AI 分析结论（分类/根因/方案/影响模块/分析步骤），缺失关键信息——后续审批/重试/人工接手都拿不到足够材料做独立判断。
 
 **核心问题**：
 
@@ -228,7 +194,11 @@
 
 ---
 
-## 7. fix-logic.ts rebase 失败被当 success 通过的 bug
+## 7. ✅ fix-logic.ts rebase 失败被当 success 通过的 bug（已修复 2026-04-21）
+
+**已修复 commit**：本次（fix-logic.ts 一行改 + fix-logic-preload.test.ts 3 个新单测）。
+
+**保留历史记录**以防 regress：
 
 **背景**：2026-04-21 Porygon 全链路连续 2 次验证（L2/test、L2/ai-chatops-dev），每次都在 fix_bug_l2 阶段看到：
 
@@ -422,47 +392,53 @@ app.post('/bug-reports/:id/retry', async (req, reply) => {
 
 ---
 
-## 11. Handover 区块字段契约错配（接手人 / 修复分支 / 失败摘要 三字段常显 `—`）
+## 11. ✅ Handover 区块字段契约错配（已完成 2026-04-22）
 
-**背景**：2026-04-21 查看 BugRunDetailDrawer 的"Handover"区块（[BugRunDetailDrawer.tsx:361-395](../web/src/components/BugRunDetailDrawer.tsx#L361-L395)），发现**3 个字段常年为 `—`**：接手人 / 修复分支 / 失败摘要。根因是前端读的字段名 vs 后端 [request-handover-handler.ts:150-160](../src/agent/handover/request-handover-handler.ts#L150-L160) 写入的字段名**不对齐**，加上"失败摘要"源头根本没生产过。
+**背景**：BugRunDetailDrawer 的"Handover"区块（[BugRunDetailDrawer.tsx:361-395](../web/src/components/BugRunDetailDrawer.tsx#L361-L395)）有 **3 个字段常年为 `—`**：接手人 / 修复分支 / 失败摘要。根因是前端读的字段名 vs 后端写入的字段名不对齐，加上"失败摘要"源头根本没生产过。
 
-**现状**：
+**修复两批**：
 
-| 前端读 | 后端 handover 事件写 | 状况 |
-|---|---|---|
-| `reason` | `reason` | ✅ |
-| `attemptCount` | `attemptCount` | ✅ |
-| `owner` | **没写** | ❌ 空 |
-| `fixBranchUrl` / `branchUrl` | 只写了 `fixBranch`（分支名，不是 URL） | ❌ 空 |
-| `failureSummary` | **没写**（只有 `failedAt`=stage 名） | ❌ 空 |
+**第一批（2026-04-21 commit 8a70302）**：
+- ✅ **接手人**：后端 handover 事件 data 冗余写 `owner`（查 `projects.owner_id` → fallback `module_owners`）
+- ✅ **修复分支**：后端同时写 `fixBranch` + `fixBranchUrl`（拼 `${gitlabBase}/${projectPath}/-/tree/${fixBranch}`）
+- ✅ **失败摘要（前端兜底）**：`failureSummary` 为空时整个 `Descriptions.Item` 不渲染
 
-**相关数据已有处**：
-- owner 实际**在同一 report 的 `notify` 事件 data 里**（HandoverBlock 没 fallback 过去拿）
-- fix-runner 每次失败的 error 在 `bug_fix_events.code='fix_bug_l1/l2/l3'.data` 里（没汇总给 handover）
+**第二批（2026-04-22 本次）—— 失败摘要数据源扩展**：
+- ✅ [coordinator.ts:357-381](../src/agent/coordinator.ts#L357-L381) —— 触发 `fix_exhausted` handover 前，按 projectPath 聚合每个 project **最后一次** failed 的 `fix_attempt.data.error`（每条 ≤200 字、总长 ≤1000 字）写入 `checkAndTriggerHandover` 的 context
+- ✅ [request-handover-handler.ts:116-119, 184](../src/agent/handover/request-handover-handler.ts#L116-L119) —— 解析 `ctx.failureSummary` 并写入 `bug_fix_events.handover.data.failureSummary`
+- ✅ 单测：coordinator fix_exhausted 分支 + request-handover "传入 context" 用例均加断言
 
-**待做**（3 个子决策，你定方向我改）：
+**为什么不改 fix-runner / retry-handler**：聚合点放在 coordinator onComplete 最省事——那里已经查了 `fix_attempt` events，直接复用数组；fix-runner 只管"每次 attempt 的 error 落盘"不变；契约更干净。
 
-1. **接手人**
-   - A. 前端 HandoverBlock 从同 report 的 notify 事件 fallback 读 owner（改动小，UI 层对齐）
-   - B. 后端 handover 事件 data 也冗余写 owner（数据冗余但单事件自包含）
-
-2. **修复分支**
-   - A. 前端读 `fixBranch` + 前端自己拼 GitLab URL 展示（依赖前端知道 GitLab base URL）
-   - B. 后端同时写 `fixBranch`（分支名）+ `fixBranchUrl`（完整 URL）
-
-3. **失败摘要**
-   - 需要 fix-runner 失败时把最后一次 error 的摘要传给 `checkAndTriggerHandover(...)`，在 handover 事件 data 里落 `failureSummary`
-   - 改动范围：fix-runner 层聚合 + handover handler 参数扩展 + data schema 扩展
-   - 前端原样渲染 `data.failureSummary`
-
-**决策/阻塞点**：
-- 是否愿意后端做数据冗余（owner/fixBranchUrl）换取单事件自包含，还是保持前端 fallback 拼接
-- 失败摘要一项工作量最大，可以和 §6（Issue 7 段模板里的"补充材料"）并轨考虑——两者都要求更结构化的错误证据
-- 不影响主流程（只影响详情页可读性），无阻塞，排期看
+**注意**：旧的 handover 事件不会回填 owner / fixBranchUrl / failureSummary，只影响新产生的事件。
 
 ---
 
-## 11. L3 审批能力恢复（迁移到 graph-runner approval stage）
+## 12. ✅ L3 审批能力恢复（已完成 2026-04-21）
+
+**状态**：已通过 **resolver 抽象方案** 恢复，3 组 skip 测试全部解开。
+
+**最终方案**（优于原 TODO 草案的模板展开）：
+- `StageDefinition` 加 `approverIdsResolver?: string` 字段（[types.ts](../src/pipeline/types.ts)）
+- 新建 [src/pipeline/approval-resolvers.ts](../src/pipeline/approval-resolvers.ts) —— resolver 注册表（同 capability handler 模式）
+- 新建 [src/agent/approval/resolvers.ts](../src/agent/approval/resolvers.ts) —— 业务 resolver 实现（目前含 `primary_project_owner`）
+- graph-builder.buildApprovalNode resolver 优先 + approverIds 模板展开 fallback
+- coordinator.handleAnalysisComplete 迁了 FYI DM（给从仓库 owner 发知情）+ 把 reportId 塞进 runtimeVars（resume 时 reloadContext 合并，avoid triggerParams 丢失）
+- graph-runner.reloadContext 合并 pipeline.triggerParams + run.runtimeVars
+- 删 approve-l3-handler.ts + server.ts 注册 + unit spec
+- seed.sql L3 pipeline 首 stage 改为 `{stageType:'approval', approverIdsResolver:'primary_project_owner'}`
+- 前端 Pipeline 编辑器下拉加"AI 能力"选项 + approverIdsResolver 字段（[TestPipelinesPage.tsx](../web/src/pages/TestPipelinesPage.tsx)）
+
+**为何选 resolver 而非模板展开**：真实业务里审批人几乎都是 context-dependent（L3 主仓库 owner / 报销金额判定 / 生产 OPS 产品线负责人）。resolver 让 pipeline 只声明"策略名"，运行时业务代码决定具体人。模板展开是静态耍小聪明，长期会积累技术债。
+
+**已解开的回归 spec（全绿）**：
+- [l3-multi-project-approval.test.ts](../src/__tests__/integration/l3-multi-project-approval.test.ts) —— 重写：approval approved / rejected 两条路径
+- [approval-timeout-retry.test.ts](../src/__tests__/integration/approval-timeout-retry.test.ts) —— 重写：stage.timeoutSeconds=1 触发 graph-runner 内置 timeout
+- `reanalyze-flow.test.ts` —— **删除**（retry_analysis 决策已被 main LangGraph 改造移除，无测义）
+
+**未来扩展**：
+- resolver 库扩充——报销审批、产品线负责人、security review 等
+- 钉钉 adapter 的 onCardAction → server.ts handleCallback 链路在实测钉钉 L3 中验证
 
 **背景**：2026-04-21 合并 main 到 dev 时，main 的 LangGraph 改造把 `PipelineApprovalManager.requestApproval` / `tryHandleCommand` 等 legacy API 换成 `throw Error('legacy API removed')`，主线改走 graph-runner 的 approval interrupt + `requestCard`。dev 分支保留的 `approve-l3-handler.ts` 还在调用 legacy `requestApproval`，运行时必崩。
 
@@ -505,3 +481,35 @@ app.post('/bug-reports/:id/retry', async (req, reply) => {
 - [integration/reanalyze-flow.test.ts](../src/__tests__/integration/reanalyze-flow.test.ts) `retry_analysis` case
 
 恢复 L3 审批能力后，需要把这 3 组 spec 去掉 skip 并重跑（可能需要改造为 graph-runner interrupt 语义）。
+
+---
+
+## 13. Issue 模板 — 视觉转写 + GitLab 附件上传（§6 剩余）
+
+**状态**：📌 待做（§6 主体已完成，这是剩余的两条子需求）
+
+**背景**：§6 Issue 模板 7 段排版已落地，但"视觉内容"还没接入：
+- 钉钉消息 images 字段仍然没进 Issue（adapter → Porygon vision 管道未打通）
+- 图片也没上传到 GitLab 附件（Issue description 里没有 `![](url)` 图链）
+
+**实施改动点**：
+
+1. **钉钉 adapter 透传 images**（[src/adapters/im/dingtalk.ts](../src/adapters/im/dingtalk.ts)）
+   - 下载图片（dingtalk image_key → image 内容）
+   - 传给 capability 调用（当前 runner 已有 images 引用，但 analyze_bug 路径未透传）
+
+2. **Porygon vision 后端**（新依赖）
+   - createPorygon 配置加 vision-capable model 或切 Sonnet-with-vision
+   - analyze_bug 调用时 prompt 附上 image 数据
+
+3. **GitLab 附件上传**（新增 helper）
+   - `src/agent/analysis/gitlab-upload.ts` 调 `POST /api/v4/projects/:id/uploads`
+   - 返回的 `markdown` 字段（如 `![image](/uploads/abc/xxx.png)`）插到 Issue §1 末尾
+
+4. **analyzer.parseAnalysisOutput**
+   - 当前允许 `images_described[]` 字段但没强校验；视觉转写上线后这个字段应始终填
+   - Schema A 扩展字段 `evidence_chain[]` / `impact_assessment` / `test_scope` / `followup_materials` 的硬校验也一并加
+
+**改动规模**：~150 行代码（adapter ~30 + upload helper ~50 + analyzer schema ~30 + 集成 ~40） + prompt 里"视觉转写"指令已在（验证 prompt 是否要求 vision 输出）
+
+**阻塞点**：需先确认 Porygon/Claude 的 vision 能力如何暴露（API 调用形式、模型选择），以及内网代理是否支持 image 传输。

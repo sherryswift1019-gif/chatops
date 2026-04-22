@@ -10,6 +10,7 @@ import type {
   PipelineEdge,
   ConditionSpec,
 } from './types.js'
+import { resolveApprovers } from './approval-resolvers.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -238,15 +239,51 @@ function buildCapabilityNode(
   }
 }
 
-function buildApprovalNode(stage: StageDefinition, index: number) {
+function buildApprovalNode(
+  stage: StageDefinition,
+  index: number,
+  triggerParams?: Record<string, unknown>,
+) {
   return async () => {
     const startedAt = nowIso()
     const startedMs = Date.now()
+
+    // 审批人两种来源（二选一）：
+    //   1. stage.approverIdsResolver 指定 resolver 名 → 运行时动态查（主路径，业务默认）
+    //   2. stage.approverIds 静态列表（含 `{{triggerParams.x}}` 模板展开）
+    // 设计说明见 src/pipeline/approval-resolvers.ts 头部
+    let approverIds: string[]
+    let description: string
+    try {
+      if (stage.approverIdsResolver) {
+        const r = await resolveApprovers(stage.approverIdsResolver, triggerParams ?? {})
+        approverIds = r.approverIds
+        description = r.description
+          ?? resolveTemplateString(stage.approvalDescription ?? stage.name, triggerParams)
+      } else {
+        approverIds = resolveApproverIds(stage.approverIds ?? [], triggerParams)
+        description = resolveTemplateString(stage.approvalDescription ?? stage.name, triggerParams)
+      }
+    } catch (err) {
+      // resolver 失败 → stage failed，不触发 interrupt（否则无接收方、挂在那里）
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error(`[approval-node] resolver/approverIds 解析失败:`, msg)
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `审批人解析失败: ${msg}`,
+        error: 'resolver_failed',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      }
+    }
+
     const payload: ApprovalInterruptValue = {
       type: APPROVAL_INTERRUPT,
       stageIndex: index,
-      approverIds: stage.approverIds ?? [],
-      description: stage.approvalDescription ?? stage.name,
+      approverIds,
+      description,
     }
     // interrupt() throws a GraphInterrupt on first entry and returns the
     // resume value on subsequent entries once Command({resume}) is applied.
@@ -262,6 +299,40 @@ function buildApprovalNode(stage: StageDefinition, index: number) {
       stageResults: finishedResult(stage, startedAt, startedMs, exec),
     }
   }
+}
+
+/**
+ * 展开 approverIds 数组里的 `{{triggerParams.xxx}}` 占位符，变成实际值。
+ * 支持 L3 审批场景：pipeline 定义时 approverIds = ["{{triggerParams.primaryOwnerId}}"]，
+ * coordinator 触发 pipeline 时已把 primaryOwnerId 塞进 triggerParams，这里运行时替换。
+ *
+ * 单元素整字符串匹配 `{{triggerParams.xxx}}`（如 "{{triggerParams.primaryOwnerId}}"）
+ * → 替换为 triggerParams[xxx]（字符串）。
+ * 无匹配或 triggerParams 缺 key → 保留原字符串（用户会看到 placeholder，方便排查配置错误）。
+ * 非字符串元素（理论上不会有，防御性） → 原样保留。
+ */
+function resolveApproverIds(
+  raw: string[],
+  triggerParams?: Record<string, unknown>,
+): string[] {
+  if (!triggerParams) return raw
+  return raw.map(v => resolveTemplateString(v, triggerParams))
+}
+
+/**
+ * 对 description/approverId 字符串做 `{{triggerParams.xxx}}` 替换（全子串）。
+ * 不支持嵌套/条件/过滤器等 Mustache 完整能力，MVP 足够。
+ */
+function resolveTemplateString(
+  s: string,
+  triggerParams?: Record<string, unknown>,
+): string {
+  if (!s || !triggerParams) return s
+  return s.replace(/\{\{triggerParams\.(\w+)\}\}/g, (match, key) => {
+    const v = triggerParams[key]
+    if (v === undefined || v === null) return match // 缺 key 保留占位符便于排查
+    return String(v)
+  })
 }
 
 function buildWaitWebhookNode(stage: StageDefinition, index: number) {
@@ -581,7 +652,7 @@ export function buildGraphFromPipeline(
       case 'capability':
         builder = builder.addNode(name, buildCapabilityNode(node, i, stageContext, hooks, triggerParams)); break
       case 'approval':
-        builder = builder.addNode(name, buildApprovalNode(node, i)); break
+        builder = builder.addNode(name, buildApprovalNode(node, i, triggerParams)); break
       case 'wait_webhook':
         builder = builder.addNode(name, buildWaitWebhookNode(node, i)); break
       case 'im_input':

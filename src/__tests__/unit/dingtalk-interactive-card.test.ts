@@ -5,11 +5,11 @@
  * 覆盖不到 sendDirectMessage HTTP 路径。本文件专门测互动卡片相关两件事：
  *   1. sendDirectMessage(content=InteractiveCard) → POST /v1.0/card/instances/createAndDeliver
  *      - URL / outTrackId / cardTemplateId / cardParamMap / openSpaceId 正确
- *      - 未配 DINGTALK_L3_CARD_TEMPLATE_ID 时降级为文字
+ *      - 未配 system_config.dingtalk.cardTemplates.issue_approval 时抛错（不再降级为文字）
  *   2. handleCardCallback 解析新格式（action: { id: 'agree' } / outTrackId）和旧格式（callbackData.{taskId, action}）
  *      双向兼容
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // 先 mock dingtalk-stream-sdk（和 dingtalk-adapter.test.ts 一致的骨架）
 vi.mock('dingtalk-stream-sdk-nodejs', () => {
@@ -45,15 +45,20 @@ vi.mock('axios', () => ({
   },
 }))
 
+// mock system_config — adapter sendInteractiveCard 通过 getConfig 读模板 ID
+vi.mock('../../db/repositories/system-config.js', () => ({
+  getConfig: vi.fn(),
+}))
+
 import axios from 'axios'
 import { DingTalkAdapter } from '../../adapters/im/dingtalk.js'
+import { getConfig } from '../../db/repositories/system-config.js'
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore
 import { __mockClient as mockClient, TOPIC_CARD } from 'dingtalk-stream-sdk-nodejs'
 
 describe('DingTalk InteractiveCard send', () => {
   let adapter: DingTalkAdapter
-  const originalTemplateId = process.env.DINGTALK_L3_CARD_TEMPLATE_ID
 
   beforeEach(() => {
     vi.mocked(axios.post).mockReset()
@@ -61,20 +66,17 @@ describe('DingTalk InteractiveCard send', () => {
     vi.mocked(axios.post).mockResolvedValue({
       data: { accessToken: 'fake-access-token', expireIn: 3600 },
     })
+    // 默认 mock：system_config.dingtalk.cardTemplates.issue_approval 已配置
+    vi.mocked(getConfig).mockReset()
+    vi.mocked(getConfig).mockResolvedValue({
+      key: 'dingtalk',
+      value: { cardTemplates: { issue_approval: 'test-template.schema' } },
+      updatedAt: new Date(),
+    } as any)
     adapter = new DingTalkAdapter({ clientId: 'app1', clientSecret: 'secret1' })
   })
 
-  afterEach(() => {
-    if (originalTemplateId !== undefined) {
-      process.env.DINGTALK_L3_CARD_TEMPLATE_ID = originalTemplateId
-    } else {
-      delete process.env.DINGTALK_L3_CARD_TEMPLATE_ID
-    }
-  })
-
   it('InteractiveCard → POST /v1.0/card/instances/createAndDeliver，cardParamMap 用 templateParams', async () => {
-    process.env.DINGTALK_L3_CARD_TEMPLATE_ID = 'test-template.schema'
-
     await adapter.sendDirectMessage('user-42', {
       title: 'L3 修复方案审批',
       body: 'description text',
@@ -117,27 +119,28 @@ describe('DingTalk InteractiveCard send', () => {
     })
   })
 
-  it('未配 DINGTALK_L3_CARD_TEMPLATE_ID 时 InteractiveCard 降级为 sampleMarkdown 文字', async () => {
-    delete process.env.DINGTALK_L3_CARD_TEMPLATE_ID
+  it('未配 cardTemplates.issue_approval 时抛错（不再降级为文字）', async () => {
+    // DB 里有 dingtalk key 但没有 cardTemplates
+    vi.mocked(getConfig).mockResolvedValueOnce({
+      key: 'dingtalk',
+      value: { clientId: 'app1' },
+      updatedAt: new Date(),
+    } as any)
 
-    await adapter.sendDirectMessage('user-42', {
+    await expect(adapter.sendDirectMessage('user-42', {
       title: 'L3 修复方案审批',
       body: 'description',
       actions: [{ label: '同意', value: 'agree', style: 'primary' }],
       callbackData: { taskId: 'l3-fix-120' },
-    })
+    })).rejects.toThrow(/issue_approval.*未配置/)
 
+    // 不降级，所以不会发任何 card 或文字消息
     const calls = vi.mocked(axios.post).mock.calls
-    // 不调 card/instances/createAndDeliver
     expect(calls.some(c => (c[0] as string).includes('/card/instances/createAndDeliver'))).toBe(false)
-    // 改走 oToMessages/batchSend
-    const textCall = calls.find(c => (c[0] as string).includes('/oToMessages/batchSend'))
-    expect(textCall).toBeTruthy()
+    expect(calls.some(c => (c[0] as string).includes('/oToMessages/batchSend'))).toBe(false)
   })
 
   it('InteractiveCard 缺 callbackData.taskId 时抛错（不能没有 outTrackId）', async () => {
-    process.env.DINGTALK_L3_CARD_TEMPLATE_ID = 'test-template.schema'
-
     await expect(adapter.sendDirectMessage('user-42', {
       title: 'x',
       body: 'y',
@@ -174,7 +177,7 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     }
   }
 
-  it('新格式（钉钉 AI 卡片 2.0）：outTrackId + content.cardPrivateData.actionIds[0]=agree → handler 收到 agree', async () => {
+  it('新格式（钉钉 AI 卡片 2.0）：outTrackId + content.cardPrivateData.actionIds[0]=agree → handler 收到 approved（adapter 层映射）', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
@@ -189,10 +192,10 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     await Promise.resolve()
 
     expect(handler).toHaveBeenCalledOnce()
-    expect(handler).toHaveBeenCalledWith('l3-fix-120', 'agree', 'u-primary')
+    expect(handler).toHaveBeenCalledWith('l3-fix-120', 'approved', 'u-primary')
   })
 
-  it('新格式：actionIds[0]=reject → handler 收到 reject', async () => {
+  it('新格式：actionIds[0]=reject → handler 收到 rejected（adapter 层映射）', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
@@ -206,10 +209,10 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     }))
     await Promise.resolve()
 
-    expect(handler).toHaveBeenCalledWith('l3-fix-121', 'reject', 'u-primary')
+    expect(handler).toHaveBeenCalledWith('l3-fix-121', 'rejected', 'u-primary')
   })
 
-  it('新格式：content 解析失败时仍回落到 params.action', async () => {
+  it('新格式：content 解析失败时仍回落到 params.action（映射后是 approved）', async () => {
     const handler = vi.fn()
     adapter.onCardAction(handler)
 
@@ -223,7 +226,7 @@ describe('DingTalk card callback 解析（新旧格式兼容）', () => {
     }))
     await Promise.resolve()
 
-    expect(handler).toHaveBeenCalledWith('l3-fix-122', 'agree', 'u-primary')
+    expect(handler).toHaveBeenCalledWith('l3-fix-122', 'approved', 'u-primary')
   })
 
   it('旧格式：callbackData.{taskId,action} 仍兼容', async () => {

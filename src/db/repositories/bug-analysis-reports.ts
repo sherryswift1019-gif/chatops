@@ -167,13 +167,14 @@ export async function listReportsByProductLine(productLineId: number, limit = 50
 export async function listReportsByProductLinePaged(params: {
   productLineId?: number
   issueId?: number
+  keyword?: string
   statuses?: ReportStatus[]
   levels?: BugLevel[]
   page: number
   limit: number
 }): Promise<{ data: BugAnalysisReport[]; total: number }> {
   const pool = getPool()
-  const { productLineId, issueId, statuses, levels, page, limit } = params
+  const { productLineId, issueId, keyword, statuses, levels, page, limit } = params
 
   const where: string[] = []
   const values: unknown[] = []
@@ -185,6 +186,10 @@ export async function listReportsByProductLinePaged(params: {
   if (issueId != null) {
     values.push(issueId)
     where.push(`b.issue_id = $${values.length}`)
+  }
+  if (keyword && keyword.trim().length > 0) {
+    values.push(`%${keyword.trim()}%`)
+    where.push(`b.root_cause_summary ILIKE $${values.length}`)
   }
   if (statuses && statuses.length > 0) {
     values.push(statuses)

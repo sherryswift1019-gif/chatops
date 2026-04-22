@@ -6,8 +6,11 @@ import {
 } from '../db/repositories/bug-analysis-reports.js'
 import type { TestPipeline } from '../db/repositories/test-pipelines.js'
 import { findByReportCode } from '../db/repositories/bug-fix-events.js'
+import { getProjectByGitlabPath } from '../db/repositories/projects-repo.js'
 import { getPool } from '../db/client.js'
 import { runPipeline, apiTrigger } from '../pipeline/executor.js'
+import { PipelineApprovalManager } from '../pipeline/approval-manager.js'
+import type { IMAdapter } from '../adapters/im/types.js'
 import type { TaskContext } from './tools/types.js'
 import type { ApprovalGate } from '../approval/gate.js'
 
@@ -31,6 +34,84 @@ const handlers = new Map<string, CapabilityHandler>()
 
 let approvalGate: ApprovalGate | null = null
 export function setApprovalGate(gate: ApprovalGate): void { approvalGate = gate }
+
+/**
+ * 给从仓库 owner 发 L3 审批 FYI 知情消息（非审批，纯通知）。
+ *
+ * 从仓库 owner 列表来源：scope_identified 事件里 `projectPath !== primaryProjectPath`
+ * 的条目，反查 project.ownerId，去重，排除主 owner。
+ *
+ * 副作用隔离：失败不抛——调用方用 `.catch(...)` 包，不阻塞主 pipeline 启动。
+ */
+async function sendL3FyiToSecondaryOwners(report: {
+  id: number
+  productLineId: number
+  primaryProjectPath: string | null
+  issueUrl: string
+  rootCauseSummary: string | null
+}): Promise<void> {
+  if (!report.primaryProjectPath) return
+
+  const primaryProject = await getProjectByGitlabPath(report.primaryProjectPath)
+  const primaryOwnerId =
+    (primaryProject?.ownerId && primaryProject.ownerId !== ''
+      ? primaryProject.ownerId
+      : null)
+    ?? ''
+  const primaryOwnerName = primaryProject?.ownerName || primaryOwnerId || '未知'
+
+  const scopes = await findByReportCode(report.id, 'scope_identified')
+  const otherOwnerIds = new Set<string>()
+  for (const s of scopes) {
+    if (!s.projectPath || s.projectPath === report.primaryProjectPath) continue
+    const proj = await getProjectByGitlabPath(s.projectPath)
+    const oid =
+      (proj?.ownerId && proj.ownerId !== '' ? proj.ownerId : null)
+      ?? null
+    if (oid && oid !== primaryOwnerId) otherOwnerIds.add(oid)
+  }
+  if (otherOwnerIds.size === 0) return
+
+  const mgr = PipelineApprovalManager.getInstance()
+  // 双重断言访问 approval-manager 的 private adapters——硬约束文件不能加 public
+  // getter（原 approve-l3-handler 里同样用法）。FYI 失败不影响主审批。
+  const adapter = (mgr as unknown as { adapters?: IMAdapter[] }).adapters?.[0]
+  if (!adapter) return
+
+  const text = buildL3FyiMessage({
+    issueUrl: report.issueUrl,
+    primaryProjectPath: report.primaryProjectPath,
+    primaryOwnerName,
+    summary: (report.rootCauseSummary ?? '').slice(0, 200),
+  })
+  await Promise.all(
+    Array.from(otherOwnerIds).map(oid =>
+      adapter.sendDirectMessage(oid, { text }).catch((err: unknown) => {
+        console.error('[AgentCoordinator] L3 FYI DM failed for', oid, err)
+      }),
+    ),
+  )
+}
+
+function buildL3FyiMessage(p: {
+  issueUrl: string
+  primaryProjectPath: string
+  primaryOwnerName: string
+  summary: string
+}): string {
+  return [
+    'L3 修复方案知情',
+    '',
+    `Bug 涉及你负责的服务（非主仓库），主负责人 ${p.primaryOwnerName} 正在审批方案。`,
+    '',
+    `Issue: ${p.issueUrl}`,
+    `主仓库: ${p.primaryProjectPath}`,
+    '',
+    `方案摘要: ${p.summary}`,
+    '',
+    '如对方案有疑问，请直接联系主负责人。',
+  ].join('\n')
+}
 
 export function registerCapabilityHandler(capabilityKey: string, handler: CapabilityHandler): void {
   handlers.set(capabilityKey, handler)
@@ -270,13 +351,29 @@ export async function handleAnalysisComplete(
             !fixAttempts.some(e => e.projectPath === path && e.status === 'success'),
         )
       if (fixExhausted) {
-        const failedCount = fixAttempts.filter(e => e.status === 'failed').length
+        const failedAttempts = fixAttempts.filter(e => e.status === 'failed')
+        const failedCount = failedAttempts.length
+        // 聚合每个 project 最后一次 failed 的 error，作为 handover 事件的 failureSummary。
+        // 按 projectPath 分组取最后一条（fix-runner 顺序写入，数组末尾 = 最新 attempt）。
+        const lastErrByProject = new Map<string, string>()
+        for (const ev of failedAttempts) {
+          const path = ev.projectPath ?? '(unknown)'
+          const err = (ev.data as Record<string, unknown> | null)?.error
+          if (typeof err === 'string' && err.length > 0) {
+            lastErrByProject.set(path, err)
+          }
+        }
+        const failureSummary = Array.from(lastErrByProject.entries())
+          .map(([path, err]) => `${path}: ${err.slice(0, 200)}`)
+          .join('\n')
+          .slice(0, 1000) || undefined
         console.log(
           `[AgentCoordinator] report=${reportId} fix 阶段失败（${failedCount} 次，存在 project 全部 attempt 失败）→ 触发 handover(fix_exhausted)`,
         )
         await checkAndTriggerHandover(reportId, 'fix_exhausted', triggeredBy, {
           failedStage: `fix_bug_${level}`,
           attemptCount: failedCount,
+          failureSummary,
         })
         return
       }
@@ -316,11 +413,25 @@ export async function handleAnalysisComplete(
     }
   }
 
+  // L3 pipeline 的审批人查询 / 审批卡片 description 都由 approval resolver 负责
+  //（src/agent/approval/resolvers.ts:primary_project_owner）。coordinator 只保留
+  // FYI DM 副作用——告知非主仓库 owner 审批正在进行，让他们对方案有知情。
+  // 失败不阻塞主流程：owner 收不到 FYI 不影响主 owner 的审批决策。
+  if (level === 'l3') {
+    await sendL3FyiToSecondaryOwners(report).catch(err => {
+      console.error('[AgentCoordinator] L3 FYI DM 发送失败（不阻塞主流程）:', err)
+    })
+  }
+
   const runId = await runPipeline(
     pipeline.id,
     {},  // capability-only pipeline，无需服务器
     apiTrigger({ triggeredBy, params: { reportId } }),
-    {},  // runtimeVarsInput（合并 main 新签名：artifact-inputs 功能引入）
+    // runtimeVars: 把 reportId 同时写进 runtime 变量（test_runs.runtime_vars），
+    // 这样 resume 时 reloadContext 能合并回 triggerParams——approval node 在
+    // interrupt 后的 replay 仍能拿到 reportId（否则 pipeline.triggerParams 的
+    // 静态模板 {reportId: null} 会覆盖，resolver 查不到 report）
+    { reportId: String(reportId) },
     onComplete,
   )
 
@@ -342,7 +453,7 @@ export async function checkAndTriggerHandover(
   reportId: number,
   reason: 'fix_exhausted' | 'l4_manual' | 'user_requested' | string,
   triggeredBy: string,
-  context?: { failedStage?: string; comment?: string; attemptCount?: number },
+  context?: { failedStage?: string; comment?: string; attemptCount?: number; failureSummary?: string },
 ): Promise<void> {
   // 幂等（handler 本身也有幂等；这里先查避免多次 triggerCapability 的日志噪音）
   const existing = await findByReportCode(reportId, 'handover')

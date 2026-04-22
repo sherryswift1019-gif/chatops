@@ -4,6 +4,7 @@ import type {
   IMAdapter, MessageHandler, CardActionHandler,
   MessageTarget, TextContent, InteractiveCard, UserInfo, NormalizedMessage
 } from './types.js'
+import { getConfig } from '../../db/repositories/system-config.js'
 
 interface DingTalkStreamConfig {
   clientId: string
@@ -219,28 +220,55 @@ export class DingTalkAdapter implements IMAdapter {
   /**
    * 发送钉钉互动卡片（基于已在钉钉 OA 后台创建的 cardTemplateId）。
    *
-   * 依赖环境变量 `DINGTALK_L3_CARD_TEMPLATE_ID`。
+   * 模板 ID 来源：`system_config.dingtalk.cardTemplates.issue_approval`。
+   * 管理员可在 Admin UI → 系统配置 → 钉钉 tab → "互动卡片模板" 里维护。
+   * 未配置时直接抛错（不降级为文字、不读 env fallback）——让调用方感知问题。
    * 用卡片 2.0 API：`/v1.0/card/instances/createAndDeliver`（需权限 `Card.Instance.Write`）。
    * outTrackId 用 content.callbackData.taskId（保证同一 approval 幂等 + 回调能映射回）。
    * openSpaceId 用 `dtv1.card//IM_ROBOT.<userId>` 维度投放到机器人 1v1 会话。
    * cardParamMap 优先用 content.templateParams；未提供则用默认 { title, body }。
    */
   private async sendInteractiveCard(userId: string, card: InteractiveCard): Promise<void> {
-    const templateId = process.env.DINGTALK_L3_CARD_TEMPLATE_ID
-    if (!templateId) {
-      // 未配置模板时降级为文字（fallback）
-      console.warn('[DingTalk] DINGTALK_L3_CARD_TEMPLATE_ID 未配置，InteractiveCard 降级为文字')
-      const text = `${card.title}\n\n${card.body}`
-      return this.sendDirectMessage(userId, { text })
+    const dingCfg = (await getConfig('dingtalk'))?.value as
+      | { cardTemplates?: Record<string, string> }
+      | undefined
+    const templateId = dingCfg?.cardTemplates?.issue_approval
+    if (!templateId || templateId.trim().length === 0) {
+      throw new Error(
+        '[DingTalk] issue_approval 卡片模板未配置。请到 Admin UI → 系统配置 → 钉钉 tab → "互动卡片模板" 中添加 issue_approval = <模板 ID>（钉钉 OA 开发者平台创建）',
+      )
     }
     const outTrackId = card.callbackData.taskId
     if (!outTrackId) {
       throw new Error('[DingTalk] InteractiveCard.callbackData.taskId is required (used as outTrackId)')
     }
-    const cardParamMap: Record<string, string> = card.templateParams ?? {
-      title: card.title,
-      body: card.body,
-    }
+    // 钉钉互动卡片模板 cc60e23f-...053a.schema 的变量（2026-04-22 实测对齐）:
+    //   title / body (富文本 markdown) / createTime / status
+    //
+    // approval-manager.ts 硬约束不改，它固定吐 title='🔐 流水线审批' + body='**操作：** <desc>'，
+    // 在 adapter 层按 title 识别并做 UX 调整：
+    //   - 标题替换为"Issue 修复方案审批"
+    //   - body 脱掉 "**操作：** " 前缀（resolver 给的 description 已是结构化 markdown）
+    const PIPELINE_APPROVAL_TITLE_RAW = '🔐 流水线审批'
+    const OPERATION_PREFIX = '**操作：** '
+    const displayTitle =
+      card.title === PIPELINE_APPROVAL_TITLE_RAW ? 'Bug 修复方案审批' : card.title
+    const rawBody = card.body ?? ''
+    const displayBody = rawBody.startsWith(OPERATION_PREFIX)
+      ? rawBody.slice(OPERATION_PREFIX.length)
+      : rawBody
+    const cardParamMap: Record<string, string> = card.templateParams ?? (() => {
+      const d = new Date()
+      const pad = (n: number) => String(n).padStart(2, '0')
+      const now = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+      return {
+        title: displayTitle,
+        body: displayBody,
+        createTime: now,
+        status: 'pending',
+      }
+    })()
+    console.log('[DingTalk] cardParamMap:', JSON.stringify(cardParamMap))
     const token = await this.getAccessToken()
     await axios.post(
       'https://api.dingtalk.com/v1.0/card/instances/createAndDeliver',
@@ -479,8 +507,22 @@ export class DingTalkAdapter implements IMAdapter {
     }
 
     if (taskId && action && userId) {
-      console.log(`[DingTalk] Card callback parsed OK: outTrackId=${taskId} action=${action} userId=${userId}`)
-      await this.cardActionHandler?.(taskId, action, userId)
+      // 钉钉模板按钮 value 是 agree/reject，chatops 内部常量是 approved/rejected
+      // adapter 做映射屏蔽差异，保持 approval-manager.ts 硬约束不改
+      const normalizedAction =
+        action === 'agree' ? 'approved' :
+        action === 'reject' ? 'rejected' :
+        action
+      console.log(`[DingTalk] Card callback parsed OK: outTrackId=${taskId} action=${action}→${normalizedAction} userId=${userId}`)
+      await this.cardActionHandler?.(taskId, normalizedAction, userId)
+      // 审批类 action：更新卡片 status 变量，触发模板侧按钮禁用态切换
+      if (normalizedAction === 'approved' || normalizedAction === 'rejected') {
+        try {
+          await this.updateInteractiveCard(taskId, normalizedAction)
+        } catch (err) {
+          console.warn('[DingTalk] updateInteractiveCard failed (非阻塞):', err)
+        }
+      }
     } else {
       console.warn('[DingTalk] handleCardCallback: missing fields', {
         taskId: !!taskId,
@@ -488,6 +530,39 @@ export class DingTalkAdapter implements IMAdapter {
         userId: !!userId,
       })
     }
+  }
+
+  /**
+   * 审批决议后原地更新卡片的 status 变量。
+   *
+   * 依赖模板侧按 status 配置的按钮显示条件：
+   *   status=pending → 显示"拒绝/同意"可点按钮
+   *   status=agree   → 显示"已同意"灰色禁用按钮
+   *   status=reject  → 显示"已拒绝"灰色禁用按钮
+   *
+   * chatops 内部常量 APPROVAL_APPROVED=approved / APPROVAL_REJECTED=rejected，
+   * 钉钉模板里用的是 agree/reject —— adapter 层做一次映射屏蔽差异。
+   *
+   * 钉钉更新卡片 API：PUT /v1.0/card/instances
+   * cardUpdateOptions.updateCardDataByKey=true：只合并传入的 key，不覆盖其他字段
+   */
+  private async updateInteractiveCard(
+    outTrackId: string,
+    action: 'approved' | 'rejected',
+  ): Promise<void> {
+    const status = action === 'approved' ? 'agree' : 'reject'
+    const token = await this.getAccessToken()
+    await axios.put(
+      'https://api.dingtalk.com/v1.0/card/instances',
+      {
+        outTrackId,
+        cardData: { cardParamMap: { status } },
+        cardUpdateOptions: { updateCardDataByKey: true },
+        userIdType: 1,
+      },
+      { headers: { 'x-acs-dingtalk-access-token': token } },
+    )
+    console.log(`[DingTalk] card status updated: outTrackId=${outTrackId} action=${action} → status=${status}`)
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
