@@ -25,6 +25,7 @@ export interface ProductLineCapability {
   envName: string
   enabled: boolean
   allowedRoles: string[]
+  triggerSources: string[]
 }
 
 export const getCapabilities = () => client.get<Capability[]>('/capabilities').then(r => r.data)
@@ -44,7 +45,16 @@ export const updateCapabilityPipelineBinding = (id: number, pipelineId: number |
 
 export const getProductLineCapabilities = (plId: number) =>
   client.get<ProductLineCapability[]>(`/product-lines/${plId}/capabilities`).then(r => r.data)
-export const setProductLineCapabilities = (plId: number, caps: Array<{ capabilityKey: string; envName: string; enabled: boolean; allowedRoles: string[] }>) =>
+export const setProductLineCapabilities = (
+  plId: number,
+  caps: Array<{
+    capabilityKey: string
+    envName: string
+    enabled: boolean
+    allowedRoles: string[]
+    triggerSources?: string[]
+  }>
+) =>
   client.put<ProductLineCapability[]>(`/product-lines/${plId}/capabilities`, caps).then(r => r.data)
 
 export interface StageOperation {
