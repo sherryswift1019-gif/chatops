@@ -1,6 +1,6 @@
-import { Drawer, Form, Input, InputNumber, Select, Switch } from 'antd'
-import { useEffect } from 'react'
-import type { StageNode, StageFields } from '../types'
+import { Drawer, Form, Input, InputNumber, Select, Switch, Alert } from 'antd'
+import { useEffect, useState } from 'react'
+import type { StageNode, StageFields, ImInputConfig } from '../types'
 
 interface Props {
   node: StageNode | null
@@ -10,16 +10,63 @@ interface Props {
   dingtalkUsers: { userId: string; name: string }[]
 }
 
+const DEFAULT_SCHEMA: Record<string, unknown> = { type: 'object', properties: {}, required: [] }
+
 export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers }: Props) {
   const [form] = Form.useForm()
+  // paramSchema 作为 JSON 字符串在 Inspector 本地维护，避免 antd Form 在每次按键
+  // 时重新受控导致编辑中断；onBlur 时解析并提交。
+  const [paramSchemaText, setParamSchemaText] = useState('')
+  const [paramSchemaErr, setParamSchemaErr] = useState<string | null>(null)
+
   useEffect(() => {
-    if (node) form.setFieldsValue(node.data)
+    if (node) {
+      form.setFieldsValue(node.data)
+      if (node.data.stageType === 'im_input') {
+        const s = node.data.imInputConfig?.paramSchema ?? DEFAULT_SCHEMA
+        setParamSchemaText(JSON.stringify(s, null, 2))
+        setParamSchemaErr(null)
+      }
+    }
   }, [node, form])
 
   if (!node) return null
 
   function handleValuesChange(_: unknown, all: Partial<StageFields>) {
+    // im_input 的 paramSchema 不在 Form 里，Form 触发变化时需要把本地 paramSchema
+    // 合并回 imInputConfig，否则 updateNodeData 浅合并会丢掉 paramSchema。
+    if (node!.data.stageType === 'im_input' && all.imInputConfig) {
+      let schema = node!.data.imInputConfig?.paramSchema ?? DEFAULT_SCHEMA
+      try {
+        schema = JSON.parse(paramSchemaText)
+      } catch {
+        // 保留上一次已知良好的 schema
+      }
+      all = {
+        ...all,
+        imInputConfig: {
+          ...(all.imInputConfig as Partial<ImInputConfig>),
+          paramSchema: schema,
+        } as ImInputConfig,
+      }
+    }
     onChange(node!.id, all)
+  }
+
+  function handleParamSchemaBlur() {
+    try {
+      const parsed = JSON.parse(paramSchemaText)
+      setParamSchemaErr(null)
+      const current = form.getFieldValue('imInputConfig') as Partial<ImInputConfig> | undefined
+      onChange(node!.id, {
+        imInputConfig: {
+          ...(current ?? node!.data.imInputConfig ?? {}),
+          paramSchema: parsed,
+        } as ImInputConfig,
+      })
+    } catch (e) {
+      setParamSchemaErr((e as Error).message)
+    }
   }
 
   return (
@@ -34,6 +81,7 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
             { value: 'approval', label: '人员审批' },
             { value: 'capability', label: 'Agent Capability' },
             { value: 'wait_webhook', label: '等待 Webhook' },
+            { value: 'im_input', label: 'IM 参数采集' },
           ]} />
         </Form.Item>
         <Form.Item name="targetRoles" label="目标角色">
@@ -79,6 +127,31 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
               <Form.Item name="webhookTag" label="Webhook Tag">
                 <Input />
               </Form.Item>
+            )
+            if (t === 'im_input') return (
+              <>
+                <Form.Item name={['imInputConfig', 'prompt']} label="引导语" rules={[{ required: true }]}>
+                  <Input.TextArea rows={3} placeholder="请提供以下参数：..." />
+                </Form.Item>
+                <Form.Item label="参数 Schema (JSON Schema)" required>
+                  <Input.TextArea
+                    rows={10}
+                    value={paramSchemaText}
+                    onChange={(e) => setParamSchemaText(e.target.value)}
+                    onBlur={handleParamSchemaBlur}
+                    style={{ fontFamily: 'monospace', fontSize: 12 }}
+                  />
+                  {paramSchemaErr && (
+                    <Alert type="error" showIcon style={{ marginTop: 8 }} message={`JSON 解析失败：${paramSchemaErr}`} />
+                  )}
+                </Form.Item>
+                <Form.Item name={['imInputConfig', 'capabilityKey']} label="关联 Capability Key（可选）">
+                  <Input placeholder="用于增强参数判定的上下文，留空即可" />
+                </Form.Item>
+                <Form.Item name={['imInputConfig', 'timeoutSeconds']} label="采集超时 (秒)">
+                  <InputNumber min={30} />
+                </Form.Item>
+              </>
             )
             return null
           }}

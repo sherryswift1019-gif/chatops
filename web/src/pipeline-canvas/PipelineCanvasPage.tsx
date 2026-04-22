@@ -31,10 +31,25 @@ const defaultStageFields = (type: StageType, id: string): StageFields => ({
   ...(type === 'approval' ? { approverIds: [], approvalDescription: '' } : {}),
   ...(type === 'capability' ? { capabilityKey: '' } : {}),
   ...(type === 'wait_webhook' ? { webhookTag: '' } : {}),
+  ...(type === 'im_input'
+    ? {
+        imInputConfig: {
+          prompt: '请提供以下参数：',
+          paramSchema: { type: 'object', properties: {}, required: [] },
+          timeoutSeconds: 600,
+        },
+      }
+    : {}),
 })
 
 function stageTypeLabel(t: StageType): string {
-  return t === 'script' ? '脚本' : t === 'approval' ? '审批' : t === 'capability' ? 'Capability' : 'Webhook'
+  switch (t) {
+    case 'script': return '脚本'
+    case 'approval': return '审批'
+    case 'capability': return 'Capability'
+    case 'wait_webhook': return 'Webhook'
+    case 'im_input': return 'IM 输入'
+  }
 }
 
 export default function PipelineCanvasPage() {

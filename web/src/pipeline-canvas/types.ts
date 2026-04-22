@@ -1,6 +1,13 @@
 import type { Node, Edge } from '@xyflow/react'
 
-export type StageType = 'script' | 'approval' | 'capability' | 'wait_webhook'
+export type StageType = 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input'
+
+export interface ImInputConfig {
+  prompt: string
+  paramSchema: Record<string, unknown>
+  capabilityKey?: string
+  timeoutSeconds?: number
+}
 
 export interface StageFields extends Record<string, unknown> {
   id: string
@@ -17,6 +24,7 @@ export interface StageFields extends Record<string, unknown> {
   capabilityKey?: string
   capabilityParams?: Record<string, unknown>
   webhookTag?: string
+  imInputConfig?: ImInputConfig
 }
 
 export type ConditionSpec =
