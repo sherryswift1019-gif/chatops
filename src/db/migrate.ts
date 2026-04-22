@@ -3,6 +3,10 @@ import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { Pool } from 'pg'
 import 'dotenv/config'
+import {
+  CREATE_PRD_SYSTEM_PROMPT,
+  REVIEW_PRD_SYSTEM_PROMPT,
+} from '../agent/prd/prompts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
@@ -56,5 +60,48 @@ const schemaV15 = readFileSync(join(__dirname, 'schema-v15.sql'), 'utf8')
 await pool.query(schemaV15)
 console.log('[migrate] schema-v15 applied')
 
+const schemaV16 = readFileSync(join(__dirname, 'schema-v16.sql'), 'utf8')
+await pool.query(schemaV16)
+console.log('[migrate] schema-v16 applied')
+
+const schemaV17 = readFileSync(join(__dirname, 'schema-v17.sql'), 'utf8')
+await pool.query(schemaV17)
+console.log('[migrate] schema-v17 applied')
+
+// Sync PRD system prompts from prompts.ts (code is the truth source).
+// - default_system_prompt: always refreshed from code.
+// - system_prompt: refreshed only when it still equals the previous default
+//   (i.e. admin hasn't hand-edited via Web). Admin edits are preserved.
+await pool.query(
+  `UPDATE capabilities
+     SET system_prompt = $2,
+         default_system_prompt = $2,
+         updated_at = NOW()
+   WHERE key = $1
+     AND (system_prompt IS NULL OR system_prompt = default_system_prompt)`,
+  ['create_prd', CREATE_PRD_SYSTEM_PROMPT]
+)
+await pool.query(
+  `UPDATE capabilities
+     SET default_system_prompt = $2, updated_at = NOW()
+   WHERE key = $1 AND default_system_prompt IS DISTINCT FROM $2`,
+  ['create_prd', CREATE_PRD_SYSTEM_PROMPT]
+)
+await pool.query(
+  `UPDATE capabilities
+     SET system_prompt = $2,
+         default_system_prompt = $2,
+         updated_at = NOW()
+   WHERE key = $1
+     AND (system_prompt IS NULL OR system_prompt = default_system_prompt)`,
+  ['review_prd', REVIEW_PRD_SYSTEM_PROMPT]
+)
+await pool.query(
+  `UPDATE capabilities
+     SET default_system_prompt = $2, updated_at = NOW()
+   WHERE key = $1 AND default_system_prompt IS DISTINCT FROM $2`,
+  ['review_prd', REVIEW_PRD_SYSTEM_PROMPT]
+)
+
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v15, 含 completed_at + triggered_by)')
+console.log('✅ Database schema applied (v1 ~ v17, 含 PRD v16/v17)')
