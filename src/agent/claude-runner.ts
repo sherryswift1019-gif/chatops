@@ -4,7 +4,8 @@ import { getTool, getAllTools, getPermittedTools } from './tools/index.js'
 import type { AgentTool, TaskContext, Role } from './tools/types.js'
 import { getRecentTasks } from '../db/repositories/tasks.js'
 import { listCapabilities, getCapabilityByKey, type Capability } from '../db/repositories/capabilities.js'
-import { checkCapabilityAccess } from '../db/repositories/product-line-capabilities.js'
+import { checkCapabilityAccess, getProductLineCapabilities } from '../db/repositories/product-line-capabilities.js'
+import { filterImTriggerableCapabilities } from './runner-greet-filter.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
@@ -262,7 +263,7 @@ export class ClaudeRunner {
 
       // Step 2: greet → 固定帮助（永不 resume）
       if (intent?.capability === 'greet') {
-        await this.sendGreeting(adapter, opts.groupId, atIds)
+        await this.sendGreeting(adapter, opts.groupId, atIds, productLineId, context.initiatorRole ?? 'developer')
         return
       }
 
@@ -280,7 +281,7 @@ export class ClaudeRunner {
           }
         }
         // 无 session 也无 intent → 当 greet
-        await this.sendGreeting(adapter, opts.groupId, atIds)
+        await this.sendGreeting(adapter, opts.groupId, atIds, productLineId, context.initiatorRole ?? 'developer')
         return
       }
 
@@ -471,8 +472,25 @@ export class ClaudeRunner {
     }
   }
 
-  private async sendGreeting(adapter: IMAdapter, groupId: string, atDingtalkIds?: string[]): Promise<void> {
-    const caps = await listCapabilities()
+  private async sendGreeting(
+    adapter: IMAdapter,
+    groupId: string,
+    atDingtalkIds?: string[],
+    productLineId?: number,
+    userRole: string = 'developer',
+  ): Promise<void> {
+    let caps = await listCapabilities()
+    if (productLineId) {
+      const plCaps = await getProductLineCapabilities(productLineId)
+      caps = filterImTriggerableCapabilities(caps, plCaps, userRole)
+    }
+    if (caps.length === 0) {
+      await adapter.sendMessage(
+        { type: 'group', id: groupId },
+        { text: '你当前在本产线下没有可通过 IM 触发的能力，请联系管理员或到管理后台查看。', atDingtalkIds } as any
+      )
+      return
+    }
     const examples: Record<string, string> = {
       deploy: '部署 ssh-proxy 到 dev 环境，分支 develop',
       rollback: '回滚 ssh-proxy dev 环境',
