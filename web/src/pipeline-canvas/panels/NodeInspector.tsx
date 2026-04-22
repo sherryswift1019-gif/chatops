@@ -1,6 +1,8 @@
-import { Drawer, Form, Input, InputNumber, Select, Switch, Alert } from 'antd'
+import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tag, Tooltip } from 'antd'
+import { ExclamationCircleTwoTone } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import type { StageNode, StageFields, ImInputConfig } from '../types'
+import type { CapabilityOption } from '../PipelineCanvasPage'
 
 interface Props {
   node: StageNode | null
@@ -8,11 +10,44 @@ interface Props {
   onChange: (id: string, data: Partial<StageFields>) => void
   availableRoles: string[]
   dingtalkUsers: { userId: string; name: string }[]
+  capabilities: CapabilityOption[]
 }
 
 const DEFAULT_SCHEMA: Record<string, unknown> = { type: 'object', properties: {}, required: [] }
 
-export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers }: Props) {
+function capabilityOptions(list: CapabilityOption[], currentKey?: string) {
+  const known = new Set(list.map(c => c.key))
+  const opts = list.map(c => ({
+    value: c.key,
+    label: (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div>{c.displayName}</div>
+          <div style={{ fontSize: 11, color: '#999' }}>{c.key}</div>
+        </div>
+        <Tag>{c.category}</Tag>
+      </div>
+    ),
+    key: c.key,
+    searchText: `${c.displayName} ${c.key}`,
+  }))
+  if (currentKey && !known.has(currentKey)) {
+    opts.unshift({
+      value: currentKey,
+      label: (
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <ExclamationCircleTwoTone twoToneColor="#faad14" style={{ marginRight: 6 }} />
+          <span>{currentKey}（不在能力列表中）</span>
+        </div>
+      ),
+      key: currentKey,
+      searchText: currentKey,
+    })
+  }
+  return opts
+}
+
+export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers, capabilities }: Props) {
   const [form] = Form.useForm()
   // paramSchema 作为 JSON 字符串在 Inspector 本地维护，避免 antd Form 在每次按键
   // 时重新受控导致编辑中断；onBlur 时解析并提交。
@@ -119,8 +154,20 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
               </>
             )
             if (t === 'capability') return (
-              <Form.Item name="capabilityKey" label="Capability Key">
-                <Input placeholder="pipeline_xxx / deploy / ..." />
+              <Form.Item
+                name="capabilityKey"
+                label="Capability"
+                rules={[{ required: true, message: '请选择 Capability' }]}
+              >
+                <Select
+                  showSearch
+                  placeholder="选择一个 Agent Capability"
+                  options={capabilityOptions(capabilities, node!.data.capabilityKey)}
+                  filterOption={(input, opt) => {
+                    const t = (opt as { searchText?: string } | undefined)?.searchText ?? ''
+                    return t.toLowerCase().includes(input.toLowerCase())
+                  }}
+                />
               </Form.Item>
             )
             if (t === 'wait_webhook') return (
@@ -145,8 +192,17 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                     <Alert type="error" showIcon style={{ marginTop: 8 }} message={`JSON 解析失败：${paramSchemaErr}`} />
                   )}
                 </Form.Item>
-                <Form.Item name={['imInputConfig', 'capabilityKey']} label="关联 Capability Key（可选）">
-                  <Input placeholder="用于增强参数判定的上下文，留空即可" />
+                <Form.Item name={['imInputConfig', 'capabilityKey']} label="关联 Capability（可选）">
+                  <Select
+                    allowClear
+                    showSearch
+                    placeholder="留空即可；用于增强 IM 参数判定的上下文"
+                    options={capabilityOptions(capabilities, node!.data.imInputConfig?.capabilityKey)}
+                    filterOption={(input, opt) => {
+                      const t = (opt as { searchText?: string } | undefined)?.searchText ?? ''
+                      return t.toLowerCase().includes(input.toLowerCase())
+                    }}
+                  />
                 </Form.Item>
                 <Form.Item name={['imInputConfig', 'timeoutSeconds']} label="采集超时 (秒)">
                   <InputNumber min={30} />
