@@ -220,7 +220,7 @@ function buildCapabilityNode(
     const startedAt = nowIso()
     const startedMs = Date.now()
     const ctx: StageContext = { ...ctxBase, stageIndex: index }
-    const runtimeVars = state.runtimeVars
+    const runtimeVars = { ...(ctxBase.variables ?? {}), ...(state.runtimeVars ?? {}) }
     let exec: StageExecutionResult
     try {
       exec = await hooks.runCapability(stage, ctx, triggerParams, runtimeVars)

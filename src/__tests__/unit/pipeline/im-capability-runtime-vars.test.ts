@@ -91,4 +91,34 @@ describe('im_input → capability: runtimeVars 打通', () => {
     expect(snap.values.runtimeVars.branch).toBe('main')
     expect(snap.values.stageResults.at(-1).status).toBe('success')
   })
+
+  it('capability hook 能读到 ctxBase.variables 中的 pipeline.variables', async () => {
+    const stages: StageDefinition[] = [
+      makeStage({
+        name: 'deploy',
+        stageType: 'capability',
+        capabilityKey: 'build',
+        capabilityParams: { env: '{{vars.env}}' },
+      }),
+    ]
+
+    let capturedEnv: unknown
+    const hooks: StageHooks = {
+      async runScript() { return { status: 'success', output: '' } },
+      async runCapability(_stage, _ctx, _trigger, runtimeVars) {
+        capturedEnv = (runtimeVars as { env?: unknown } | undefined)?.env
+        return { status: 'success', output: '' }
+      },
+    }
+
+    const graph = compile({
+      stages,
+      stageContext: baseCtx({ variables: { env: 'prod' } }),
+      hooks,
+    })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await graph.stream({ runId: 1 }, config))
+
+    expect(capturedEnv).toBe('prod')
+  })
 })
