@@ -80,6 +80,10 @@ const schemaV20 = readFileSync(join(__dirname, 'schema-v20.sql'), 'utf8')
 await pool.query(schemaV20)
 console.log('[migrate] schema-v20 applied')
 
+const schemaV21 = readFileSync(join(__dirname, 'schema-v21.sql'), 'utf8')
+await pool.query(schemaV21)
+console.log('[migrate] schema-v21 applied')
+
 const schemaV22 = readFileSync(join(__dirname, 'schema-v22.sql'), 'utf8')
 await pool.query(schemaV22)
 console.log('[migrate] schema-v22 applied')
@@ -120,4 +124,4 @@ await pool.query(
 )
 
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v20 + v22, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + trigger_sources v22)')
+console.log('✅ Database schema applied (v1 ~ v22, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22)')

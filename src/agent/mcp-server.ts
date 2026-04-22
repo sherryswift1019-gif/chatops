@@ -23,6 +23,7 @@ import type { TaskContext } from './tools/types.js'
 // Register all tools
 import './tools/check-env-status.js'
 import './tools/list-images.js'
+import './tools/list-gitlab-branches.js'
 import './tools/get-gitlab-commits.js'
 import './tools/get-logs.js'
 import './tools/deploy.js'

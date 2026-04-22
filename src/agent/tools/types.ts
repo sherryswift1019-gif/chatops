@@ -31,6 +31,7 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   query_deployments: ['developer', 'tester', 'ops', 'admin'],
   check_environment_status: ['developer', 'tester', 'ops', 'admin'],
   list_images: ['developer', 'tester', 'ops', 'admin'],
+  list_gitlab_branches: ['developer', 'tester', 'ops', 'admin'],
   get_gitlab_commits: ['developer', 'tester', 'ops', 'admin'],
   get_logs: ['developer', 'tester', 'ops', 'admin'],
   execute_deploy: ['ops', 'admin'],
