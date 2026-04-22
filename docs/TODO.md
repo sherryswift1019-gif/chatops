@@ -392,31 +392,25 @@ app.post('/bug-reports/:id/retry', async (req, reply) => {
 
 ---
 
-## 11. Handover 区块字段契约错配（接手人 / 修复分支 / 失败摘要 三字段常显 `—`）
+## 11. ✅ Handover 区块字段契约错配（已完成 2026-04-22）
 
-**背景**：2026-04-21 查看 BugRunDetailDrawer 的"Handover"区块（[BugRunDetailDrawer.tsx:361-395](../web/src/components/BugRunDetailDrawer.tsx#L361-L395)），发现**3 个字段常年为 `—`**：接手人 / 修复分支 / 失败摘要。根因是前端读的字段名 vs 后端 [request-handover-handler.ts:150-160](../src/agent/handover/request-handover-handler.ts#L150-L160) 写入的字段名**不对齐**，加上"失败摘要"源头根本没生产过。
+**背景**：BugRunDetailDrawer 的"Handover"区块（[BugRunDetailDrawer.tsx:361-395](../web/src/components/BugRunDetailDrawer.tsx#L361-L395)）有 **3 个字段常年为 `—`**：接手人 / 修复分支 / 失败摘要。根因是前端读的字段名 vs 后端写入的字段名不对齐，加上"失败摘要"源头根本没生产过。
 
-**进展**（2026-04-21 本轮已完成）：
-- ✅ **接手人**：后端 handover 事件 data 冗余写 `owner`（查 `projects.owner_id` → fallback `module_owners`），前端无需跨事件反查
+**修复两批**：
+
+**第一批（2026-04-21 commit 8a70302）**：
+- ✅ **接手人**：后端 handover 事件 data 冗余写 `owner`（查 `projects.owner_id` → fallback `module_owners`）
 - ✅ **修复分支**：后端同时写 `fixBranch` + `fixBranchUrl`（拼 `${gitlabBase}/${projectPath}/-/tree/${fixBranch}`）
-- ✅ **失败摘要（前端兜底）**：`failureSummary` 为空时整个 `Descriptions.Item` 不渲染（条件渲染，不再显示空 `—`）
-- ⚠️ **注意**：旧的 handover 事件不会回填 owner/fixBranchUrl，只影响新产生的事件
+- ✅ **失败摘要（前端兜底）**：`failureSummary` 为空时整个 `Descriptions.Item` 不渲染
 
-**剩余（数据源扩展）**：
+**第二批（2026-04-22 本次）—— 失败摘要数据源扩展**：
+- ✅ [coordinator.ts:357-381](../src/agent/coordinator.ts#L357-L381) —— 触发 `fix_exhausted` handover 前，按 projectPath 聚合每个 project **最后一次** failed 的 `fix_attempt.data.error`（每条 ≤200 字、总长 ≤1000 字）写入 `checkAndTriggerHandover` 的 context
+- ✅ [request-handover-handler.ts:116-119, 184](../src/agent/handover/request-handover-handler.ts#L116-L119) —— 解析 `ctx.failureSummary` 并写入 `bug_fix_events.handover.data.failureSummary`
+- ✅ 单测：coordinator fix_exhausted 分支 + request-handover "传入 context" 用例均加断言
 
-失败摘要真正的数据源——fix-runner 每次失败的 error 在 `bug_fix_events.code='fix_bug_l1/l2/l3'.data` 里，但没汇总传给 `checkAndTriggerHandover(...)`。
+**为什么不改 fix-runner / retry-handler**：聚合点放在 coordinator onComplete 最省事——那里已经查了 `fix_attempt` events，直接复用数组；fix-runner 只管"每次 attempt 的 error 落盘"不变；契约更干净。
 
-**修复方案**：
-- fix-runner 失败分支聚合 last error / stderr tail
-- `checkAndTriggerHandover(..., ctx)` 的 ctx 参数扩展 `failureSummary: string`
-- `request-handover-handler.ts` 把 `failureSummary` 写入 event data
-- 前端 HandoverBlock 已经读 `data.failureSummary`，自动展示
-
-**改动范围**：~4 个文件（fix-logic / retry-handler / coordinator / request-handover-handler）+ TriggerOptions.context 扩展
-
-**决策/阻塞点**：
-- 工作量可以和 §6 / §12（Issue 7 段模板里的"补充材料"）并轨做——两者都要求更结构化的错误证据
-- 不影响主流程（只影响详情页可读性），无阻塞，排期看
+**注意**：旧的 handover 事件不会回填 owner / fixBranchUrl / failureSummary，只影响新产生的事件。
 
 ---
 

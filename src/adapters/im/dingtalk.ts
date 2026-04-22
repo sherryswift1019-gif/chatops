@@ -4,6 +4,7 @@ import type {
   IMAdapter, MessageHandler, CardActionHandler,
   MessageTarget, TextContent, InteractiveCard, UserInfo, NormalizedMessage
 } from './types.js'
+import { getConfig } from '../../db/repositories/system-config.js'
 
 interface DingTalkStreamConfig {
   clientId: string
@@ -219,19 +220,23 @@ export class DingTalkAdapter implements IMAdapter {
   /**
    * 发送钉钉互动卡片（基于已在钉钉 OA 后台创建的 cardTemplateId）。
    *
-   * 依赖环境变量 `DINGTALK_L3_CARD_TEMPLATE_ID`。
+   * 模板 ID 来源：`system_config.dingtalk.cardTemplates.issue_approval`。
+   * 管理员可在 Admin UI → 系统配置 → 钉钉 tab → "互动卡片模板" 里维护。
+   * 未配置时直接抛错（不降级为文字、不读 env fallback）——让调用方感知问题。
    * 用卡片 2.0 API：`/v1.0/card/instances/createAndDeliver`（需权限 `Card.Instance.Write`）。
    * outTrackId 用 content.callbackData.taskId（保证同一 approval 幂等 + 回调能映射回）。
    * openSpaceId 用 `dtv1.card//IM_ROBOT.<userId>` 维度投放到机器人 1v1 会话。
    * cardParamMap 优先用 content.templateParams；未提供则用默认 { title, body }。
    */
   private async sendInteractiveCard(userId: string, card: InteractiveCard): Promise<void> {
-    const templateId = process.env.DINGTALK_L3_CARD_TEMPLATE_ID
-    if (!templateId) {
-      // 未配置模板时降级为文字（fallback）
-      console.warn('[DingTalk] DINGTALK_L3_CARD_TEMPLATE_ID 未配置，InteractiveCard 降级为文字')
-      const text = `${card.title}\n\n${card.body}`
-      return this.sendDirectMessage(userId, { text })
+    const dingCfg = (await getConfig('dingtalk'))?.value as
+      | { cardTemplates?: Record<string, string> }
+      | undefined
+    const templateId = dingCfg?.cardTemplates?.issue_approval
+    if (!templateId || templateId.trim().length === 0) {
+      throw new Error(
+        '[DingTalk] issue_approval 卡片模板未配置。请到 Admin UI → 系统配置 → 钉钉 tab → "互动卡片模板" 中添加 issue_approval = <模板 ID>（钉钉 OA 开发者平台创建）',
+      )
     }
     const outTrackId = card.callbackData.taskId
     if (!outTrackId) {

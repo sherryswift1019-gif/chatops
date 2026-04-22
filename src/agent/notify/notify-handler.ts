@@ -10,7 +10,6 @@ import {
   findLatest,
 } from '../../db/repositories/bug-fix-events.js'
 import { getProjectByGitlabPath } from '../../db/repositories/projects-repo.js'
-import { findOwner } from '../../db/repositories/module-owners.js'
 import { PipelineApprovalManager } from '../../pipeline/approval-manager.js'
 import type { IMAdapter } from '../../adapters/im/types.js'
 
@@ -180,8 +179,7 @@ async function resolveOwner(projectPath: string, productLineId: number): Promise
   const proj = await getProjectByGitlabPath(projectPath)
   const direct = proj?.ownerId && proj.ownerId !== '' ? proj.ownerId : null
   if (direct) return direct
-  const fallback = await findOwner(productLineId, projectPath)
-  return fallback?.ownerUserId ?? null
+  return null
 }
 
 async function gatherProjects(reportId: number): Promise<ProjectMr[]> {

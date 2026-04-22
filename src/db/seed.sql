@@ -38,17 +38,6 @@ FROM product_lines WHERE name = 'pam'
 ON CONFLICT (product_line_id) DO NOTHING;
 
 -- ============================================================
--- 5. 模块 → 负责人映射
--- ============================================================
-INSERT INTO module_owners (product_line_id, module_pattern, owner_user_id, backup_owner_user_id)
-SELECT id, 'pas-secret-task', '183832601538060368', NULL FROM product_lines WHERE name = 'pam'
-ON CONFLICT (product_line_id, module_pattern) DO NOTHING;
-
-INSERT INTO module_owners (product_line_id, module_pattern, owner_user_id, backup_owner_user_id)
-SELECT id, 'pas-bastion-host', '183832601538060368', NULL FROM product_lines WHERE name = 'pam'
-ON CONFLICT (product_line_id, module_pattern) DO NOTHING;
-
--- ============================================================
 -- 6. AI 助手 capability systemPrompt
 -- DB 是 prompt 的唯一数据源；管理后台可直接修改。
 -- 这里用 `system_prompt IS NULL` 保护：已有值（用户后台改过）不会被 seed 覆盖。

@@ -238,6 +238,7 @@ describe('request_handover handler', () => {
           failedStage: 'fix_bug_l2',
           comment: '测试打回',
           attemptCount: 3,
+          failureSummary: 'PAM/pas-api: test still red on attempt 3',
         }),
       )
 
@@ -247,6 +248,7 @@ describe('request_handover handler', () => {
       expect(data.failedAt).toBe('fix_bug_l2')
       expect(data.comment).toBe('测试打回')
       expect(data.attemptCount).toBe(3)
+      expect(data.failureSummary).toBe('PAM/pas-api: test still red on attempt 3')
     })
 
     it('未传 context → 对应字段为 null', async () => {
@@ -259,6 +261,7 @@ describe('request_handover handler', () => {
       expect(data.failedAt).toBeNull()
       expect(data.comment).toBeNull()
       expect(data.attemptCount).toBeNull()
+      expect(data.failureSummary).toBeNull()
     })
   })
 

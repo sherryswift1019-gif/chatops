@@ -10,7 +10,6 @@ import { createBugAnalysisReport, getBugAnalysisReportById, listReportsByProduct
 import { createProductKnowledgeRepo, getByProductLineId } from '../../db/repositories/product-knowledge-repos.js'
 import { incrementHit, getTopHits } from '../../db/repositories/knowledge-hit-stats.js'
 import { createStat, getAvgDuration } from '../../db/repositories/bug-analysis-stats.js'
-import { createModuleOwner, findOwner, listModuleOwners } from '../../db/repositories/module-owners.js'
 import { createAttribution, getByIssueId as getAttributionsByIssueId, countByType } from '../../db/repositories/root-cause-attribution.js'
 import { upsertMetric, getMetricRange } from '../../db/repositories/metrics-daily.js'
 import { parseAnalysisOutput, buildMarkdownReport } from '../../agent/analysis/analyzer.js'
@@ -71,31 +70,6 @@ describe('Integration: 新增 Repository CRUD', () => {
   it('lists reports by product line', async () => {
     const reports = await listReportsByProductLine(productLineId)
     expect(reports.length).toBeGreaterThan(0)
-  })
-
-  // ─── module_owners ───
-
-  it('creates and finds module owner', async () => {
-    await createModuleOwner({
-      productLineId,
-      modulePattern: 'pas-bastion-host',
-      ownerUserId: 'liaoss',
-      backupOwnerUserId: 'hanff',
-    })
-
-    const owner = await findOwner(productLineId, 'pas-bastion-host')
-    expect(owner).not.toBeNull()
-    expect(owner!.ownerUserId).toBe('liaoss')
-  })
-
-  it('returns null for unmatched module', async () => {
-    const owner = await findOwner(productLineId, 'unknown-module')
-    expect(owner).toBeNull()
-  })
-
-  it('lists module owners', async () => {
-    const owners = await listModuleOwners(productLineId)
-    expect(owners.length).toBeGreaterThan(0)
   })
 
   // ─── product_knowledge_repos ───

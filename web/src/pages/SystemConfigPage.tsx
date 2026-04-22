@@ -9,10 +9,22 @@ import type { SystemConfigEntry, DingTalkStatus, ConnectionTestResult } from '..
 
 type FieldType = 'text' | 'secret' | 'boolean'
 
+type NamePath = string | (string | number)[]
+
 interface FieldSchema {
-  name: string
+  /** 字段路径：string 为顶层字段，数组为嵌套字段（如 ['cardTemplates', 'issue_approval']） */
+  name: NamePath
   label: string
   type?: FieldType
+}
+
+function getByPath(obj: Record<string, unknown>, path: NamePath): unknown {
+  if (typeof path === 'string') return obj[path]
+  return path.reduce<unknown>((acc, k) => (acc as Record<string, unknown> | null | undefined)?.[k], obj)
+}
+
+function pathKey(path: NamePath): string {
+  return Array.isArray(path) ? path.join('.') : path
 }
 
 const CONFIG_SCHEMA: Record<string, { label: string; fields: FieldSchema[] }> = {
@@ -21,6 +33,7 @@ const CONFIG_SCHEMA: Record<string, { label: string; fields: FieldSchema[] }> = 
     fields: [
       { name: 'clientId', label: 'Client ID' },
       { name: 'clientSecret', label: 'Client Secret', type: 'secret' },
+      { name: ['cardTemplates', 'issue_approval'], label: 'Issue 审批模板 ID' },
     ],
   },
   gitlab: {
@@ -90,13 +103,29 @@ export default function SystemConfigPage() {
     }
   }
 
-  async function handleSave(key: string, values: Record<string, string>) {
+  async function handleSave(key: string, values: Record<string, unknown>) {
     setSaving(key)
     try {
-      // Only send non-empty values
-      const payload: Record<string, string> = {}
+      // 递归过滤空字符串 / null / undefined：用户留空的字段不传给后端（route merge 保留原值）。
+      // 嵌套对象整体被过滤空后也不传（Record<string,unknown> 变成空对象就丢）。
+      function prune(v: unknown): unknown {
+        if (v == null) return undefined
+        if (typeof v === 'string') return v.trim() === '' ? undefined : v.trim()
+        if (Array.isArray(v)) return v
+        if (typeof v === 'object') {
+          const out: Record<string, unknown> = {}
+          for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+            const pv = prune(val)
+            if (pv !== undefined) out[k] = pv
+          }
+          return Object.keys(out).length > 0 ? out : undefined
+        }
+        return v
+      }
+      const payload: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(values)) {
-        if (v && v.trim()) payload[k] = v.trim()
+        const pv = prune(v)
+        if (pv !== undefined) payload[k] = pv
       }
       if (Object.keys(payload).length === 0) {
         message.warning('没有需要保存的内容')
@@ -186,7 +215,7 @@ function ConfigForm({ configKey: _configKey, schema, values, saving, onSave, ext
   schema: { fields: FieldSchema[] }
   values: Record<string, unknown>
   saving: boolean
-  onSave: (values: Record<string, string>) => void
+  onSave: (values: Record<string, unknown>) => void
   extraHeader?: React.ReactNode
   extraActions?: (state: { isDirty: boolean; saving: boolean }) => React.ReactNode
 }) {
@@ -194,16 +223,15 @@ function ConfigForm({ configKey: _configKey, schema, values, saving, onSave, ext
   const [isDirty, setIsDirty] = useState(false)
 
   // 非 secret 字段的当前值预填到表单（secret 字段被后端 mask 成 ****xxxx，不能作为 initialValue）
+  // 嵌套路径字段（name 为数组）按 path 取值，Ant Design Form.Item 自动处理 name=数组的嵌套赋值
   useEffect(() => {
-    const initial: Record<string, string> = {}
-    for (const f of schema.fields) {
-      const v = values[f.name]
-      if (v == null || v === '') continue
-      if (f.type === 'secret') continue
-      initial[f.name] = String(v)
-    }
     form.resetFields()
-    form.setFieldsValue(initial)
+    for (const f of schema.fields) {
+      if (f.type === 'secret') continue
+      const v = getByPath(values, f.name)
+      if (v == null || v === '') continue
+      form.setFields([{ name: f.name, value: String(v) }])
+    }
     setIsDirty(false)
   }, [values, schema, form])
 
@@ -219,10 +247,14 @@ function ConfigForm({ configKey: _configKey, schema, values, saving, onSave, ext
       >
         {schema.fields.map((field) => {
           const type: FieldType = field.type ?? 'text'
+          const key = pathKey(field.name)
           return (
-            <Form.Item key={field.name} name={field.name} label={field.label}>
+            <Form.Item key={key} name={field.name} label={field.label}>
               {type === 'secret' ? (
-                <SecretInput maskedValue={values[field.name] ? String(values[field.name]) : ''} />
+                <SecretInput maskedValue={(() => {
+                  const v = getByPath(values, field.name)
+                  return v ? String(v) : ''
+                })()} />
               ) : type === 'boolean' ? (
                 <Select
                   placeholder="请选择"
