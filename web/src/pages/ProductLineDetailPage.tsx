@@ -587,9 +587,15 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<ApprovalRule | null>(null)
+  const [capabilities, setCapabilities] = useState<Capability[]>([])
+  const [envs, setEnvs] = useState<Environment[]>([])
   const [form] = Form.useForm()
 
   useEffect(() => { load() }, [productLineId])
+  useEffect(() => {
+    getCapabilities().then(setCapabilities)
+    getEnvironments().then(setEnvs)
+  }, [])
 
   async function load() {
     setLoading(true)
@@ -681,11 +687,39 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
         width={640}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请输入操作类型' }]}>
-            <Input placeholder="如: deploy, rollback" />
+          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请选择操作类型' }]}>
+            <Select
+              showSearch
+              placeholder="选择操作类型"
+              options={[
+                { value: '*', label: <span><Tag color="purple">*</Tag> 任意操作（通配）</span> },
+                ...capabilities.map(c => ({
+                  value: c.key,
+                  label: <span>{c.displayName} <span style={{ color: '#999', fontSize: 11 }}>({c.key})</span></span>,
+                })),
+              ]}
+              filterOption={(input, opt) => {
+                const v = String((opt as { value?: string } | undefined)?.value ?? '')
+                return v.toLowerCase().includes(input.toLowerCase())
+              }}
+            />
           </Form.Item>
-          <Form.Item name="env" label="环境" rules={[{ required: true, message: '请输入环境标识' }]}>
-            <Input placeholder="如: prod, staging" />
+          <Form.Item name="env" label="环境" rules={[{ required: true, message: '请选择环境' }]}>
+            <Select
+              showSearch
+              placeholder="选择环境"
+              options={[
+                { value: '*', label: <span><Tag color="purple">*</Tag> 任意环境（通配）</span> },
+                ...envs.map(e => ({
+                  value: e.name,
+                  label: <span>{e.displayName} <span style={{ color: '#999', fontSize: 11 }}>({e.name})</span></span>,
+                })),
+              ]}
+              filterOption={(input, opt) => {
+                const v = String((opt as { value?: string } | undefined)?.value ?? '')
+                return v.toLowerCase().includes(input.toLowerCase())
+              }}
+            />
           </Form.Item>
           <Form.Item name="primaryApprovers" label="主审批人（钉钉用户ID，多选）">
             <DingTalkUserSelect mode="multiple" placeholder="搜索并添加主审批人" />
