@@ -12,6 +12,7 @@ export interface Capability {
   playbook: unknown[]
   systemPrompt: string | null
   defaultSystemPrompt: string | null
+  defaultPipelineId: number | null
   isSystem: boolean
   updatedAt: string
   createdAt: string
@@ -37,6 +38,9 @@ export const updateCapabilitySystemPrompt = (id: number, systemPrompt: string) =
 
 export const resetCapabilitySystemPrompt = (id: number) =>
   client.post<Capability>(`/capabilities/${id}/system-prompt/reset`).then(r => r.data)
+
+export const updateCapabilityPipelineBinding = (id: number, pipelineId: number | null) =>
+  client.put<Capability>(`/capabilities/${id}/pipeline-binding`, { pipelineId }).then(r => r.data)
 
 export const getProductLineCapabilities = (plId: number) =>
   client.get<ProductLineCapability[]>(`/product-lines/${plId}/capabilities`).then(r => r.data)

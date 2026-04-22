@@ -15,6 +15,7 @@ export interface Capability {
   isSystem: boolean
   systemPrompt: string | null
   defaultSystemPrompt: string | null
+  defaultPipelineId: number | null
   updatedAt: Date | null
   createdAt: Date
 }
@@ -33,6 +34,7 @@ function mapRow(r: Record<string, unknown>): Capability {
     isSystem: (r.is_system ?? true) as boolean,
     systemPrompt: (r.system_prompt ?? null) as string | null,
     defaultSystemPrompt: (r.default_system_prompt ?? null) as string | null,
+    defaultPipelineId: (r.default_pipeline_id ?? null) as number | null,
     updatedAt: r.updated_at as Date | null,
     createdAt: r.created_at as Date,
   }
@@ -99,6 +101,19 @@ export async function resetCapabilitySystemPrompt(id: number): Promise<Capabilit
   const { rows } = await pool.query(
     `UPDATE capabilities SET system_prompt = default_system_prompt, updated_at = NOW() WHERE id = $1 RETURNING *`,
     [id]
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
+export async function updateCapabilityPipelineBinding(
+  id: number,
+  pipelineId: number | null,
+): Promise<Capability | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `UPDATE capabilities SET default_pipeline_id = $2, updated_at = NOW()
+     WHERE id = $1 RETURNING *`,
+    [id, pipelineId],
   )
   return rows[0] ? mapRow(rows[0]) : null
 }

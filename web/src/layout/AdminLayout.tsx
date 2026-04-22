@@ -94,7 +94,7 @@ export default function AdminLayout() {
     ? '/product-lines'
     : location.pathname.split('/').slice(0, 2).join('/')
 
-  const pageTitle = PAGE_NAMES[selectedKey] ?? 'ChatOps'
+  const pageTitle = PAGE_NAMES[selectedKey] ?? 'Mewtwo'
   const userInitial = user?.username?.[0]?.toUpperCase() ?? 'U'
 
   return (
@@ -108,8 +108,8 @@ export default function AdminLayout() {
       >
         {/* Logo */}
         <div className="chatops-logo">
-          <div className="chatops-logo-icon">CO</div>
-          {!collapsed && <span className="chatops-logo-text">ChatOps</span>}
+          <div className="chatops-logo-icon">MT</div>
+          {!collapsed && <span className="chatops-logo-text">Mewtwo</span>}
         </div>
 
         <Menu

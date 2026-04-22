@@ -1,10 +1,14 @@
 import { StateGraph, START, END, interrupt } from '@langchain/langgraph'
 import { PipelineStateAnnotation, type StageResult } from './graph-state.js'
+import { consultImInputAgent } from './im-input-agent.js'
 import type {
   StageDefinition,
   StageContext,
   StageExecutionResult,
   ServerInfo,
+  PipelineGraph,
+  PipelineEdge,
+  ConditionSpec,
 } from './types.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
@@ -37,8 +41,13 @@ export interface BuildGraphInput {
 // lets TypeScript catch typos at compile time instead of at runtime.
 export const APPROVAL_INTERRUPT = 'approval' as const
 export const WEBHOOK_INTERRUPT = 'webhook' as const
+export const IM_INPUT_INTERRUPT = 'im_input' as const
 export const APPROVAL_APPROVED = 'approved' as const
 export const APPROVAL_REJECTED = 'rejected' as const
+/** graph-runner 侧注入以示超时结束（handler 捕获后把 stage 标为 failed）。 */
+export const IM_INPUT_TIMEOUT_SENTINEL = '__im_input_timeout__' as const
+/** graph-runner 侧注入以示用户显式取消。 */
+export const IM_INPUT_CANCEL_SENTINEL = '__im_input_cancel__' as const
 // NOTE: webhook timeout is expressed as `{ timeout: true }` on the resume
 // value (see `WebhookResume`), not as an extra constant here.
 
@@ -79,6 +88,28 @@ export interface WebhookInterruptValue {
  * `timeout` key can use `{ data: ... }` to disambiguate.
  */
 export type WebhookResume = { data: unknown } | { timeout: true }
+
+/**
+ * im_input stage interrupt payload. graph-runner 根据 kind 路由到 im-router
+ * 注册 waiter 并把 prompt 推到 IM 群，等待用户消息作为 resume value（string）。
+ */
+export interface ImInputInterruptValue {
+  type: typeof IM_INPUT_INTERRUPT
+  stageIndex: number
+  stageName: string
+  platform: string
+  groupId: string
+  prompt: string
+  paramSchema: Record<string, unknown>
+  collectedSoFar: Record<string, unknown>
+  timeoutSeconds: number
+}
+
+/**
+ * im_input resume value：正常情况下是用户 IM 消息（string）；
+ * 超时/取消时 graph-runner 注入 sentinel 常量。
+ */
+export type ImInputResume = string
 
 function nodeName(index: number, stage: StageDefinition): string {
   return `stage_${index}_${stage.stageType}`
@@ -276,6 +307,140 @@ function buildWaitWebhookNode(stage: StageDefinition, index: number) {
   }
 }
 
+/**
+ * im_input 节点：对话式采集参数。
+ *
+ * 工作流程：
+ *   1. 进入时从 runtimeVars 读回已采集参数（用于 resume 场景）；
+ *   2. interrupt() 挂起，等 IM 消息作 resume value；
+ *   3. 消息交 consultImInputAgent 判定：done/aborted/continue；
+ *   4. continue → 回到第 2 步继续 interrupt（下一轮用更新后的 prompt）；
+ *   5. done → 返回 success StageResult + 参数合入 runtimeVars；
+ *      aborted/timeout → 返回 failed StageResult。
+ *
+ * resume value 约定：
+ *   - string：用户 IM 消息（正常路径）
+ *   - IM_INPUT_TIMEOUT_SENTINEL：graph-runner 超时定时器触发
+ *   - IM_INPUT_CANCEL_SENTINEL：系统显式取消
+ */
+function buildImInputNode(
+  stage: StageDefinition,
+  index: number,
+  ctxBase: StageContextBase,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const cfg = stage.imInputConfig
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+
+    if (!cfg) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'imInputConfig missing on im_input stage',
+        error: 'imInputConfig missing',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      }
+    }
+
+    const platform = ctxBase.triggerPlatform ?? ''
+    const groupId = ctxBase.triggerGroupId ?? ''
+    const timeoutSeconds = cfg.timeoutSeconds ?? 600
+
+    // 从 runtimeVars 读回上一轮 resume 前保存的参数快照（支持多轮 interrupt）。
+    // 以 `__im_input_collected_<index>` 为 key，避免污染业务 runtimeVars。
+    const collectedKey = `__im_input_collected_${index}`
+    let collected: Record<string, unknown> =
+      (state.runtimeVars?.[collectedKey] as Record<string, unknown> | undefined) ?? {}
+    let nextPrompt = cfg.prompt
+
+    // 多轮 interrupt 循环：每轮等一条 IM 消息
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const payload: ImInputInterruptValue = {
+        type: IM_INPUT_INTERRUPT,
+        stageIndex: index,
+        stageName: stage.name,
+        platform,
+        groupId,
+        prompt: nextPrompt,
+        paramSchema: cfg.paramSchema,
+        collectedSoFar: collected,
+        timeoutSeconds,
+      }
+      const resume = interrupt(payload) as ImInputResume
+
+      // 系统注入的 sentinel：超时/取消
+      if (resume === IM_INPUT_TIMEOUT_SENTINEL) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `IM 输入超时（${timeoutSeconds}s 未回复）`,
+          error: 'im_input_timeout',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+        }
+      }
+      if (resume === IM_INPUT_CANCEL_SENTINEL) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: '系统取消 IM 输入',
+          error: 'im_input_cancelled',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+        }
+      }
+
+      const r = await consultImInputAgent({
+        userMessage: String(resume),
+        currentParams: collected,
+        paramSchema: cfg.paramSchema,
+      })
+
+      if (r.aborted) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: '用户取消',
+          error: 'user_cancelled',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+        }
+      }
+
+      collected = r.params
+      if (r.done) {
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: JSON.stringify(collected),
+        }
+        // 参数进入 runtimeVars 供下游 stage 变量解析使用；同时保留快照
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult(stage, startedAt, startedMs, exec),
+          runtimeVars: {
+            ...collected,
+            [collectedKey]: collected,
+          },
+        }
+      }
+
+      // 还缺参数：更新 prompt，同时把当前快照落盘，下次 interrupt 入参时能读回
+      nextPrompt = r.nextPrompt ?? cfg.prompt
+      // NOTE: 由于 handler 只有在 return 时写入 state，while loop 内的
+      // collected 变量本身会跨 interrupt 保留（闭包），无需显式写 state。
+      // collectedKey 快照仅在"handler 异常中断后恢复"时起作用，此处由
+      // 最终 return 覆盖。
+    }
+  }
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === 'object' &&
@@ -315,23 +480,6 @@ function skipRestName(index: number): string {
   return `skip_rest_after_${index}`
 }
 
-// Router for stage i: reads the matching StageResult from state and decides
-// success|continue → next stage (or END), failed+stop → skip_rest sink.
-function buildRouter(stages: StageDefinition[], index: number) {
-  const stage = stages[index]
-  const isLast = index === stages.length - 1
-  const nextNode = isLast ? END : nodeName(index + 1, stages[index + 1])
-  const skipNode = skipRestName(index)
-  return (state: typeof PipelineStateAnnotation.State): string => {
-    const result = state.stageResults.find((r) => r.name === stage.name)
-    // Missing result falls through to the next node — stage nodes always
-    // write a result on exit, so this branch is purely defensive.
-    if (!result) return nextNode
-    if (shouldStopAfter(stage, result)) return skipNode
-    return nextNode
-  }
-}
-
 /**
  * Compile a StageDefinition[] into an uncompiled LangGraph StateGraph.
  *
@@ -341,64 +489,157 @@ function buildRouter(stages: StageDefinition[], index: number) {
  * Node naming: `stage_<index>_<type>`. Each stage also gets a paired
  * `skip_rest_after_<index>` node that marks downstream stages as skipped
  * when `onFailure === 'stop'` takes effect.
+ *
+ * Legacy wrapper: delegates to buildGraphFromPipeline after internal
+ * linearization so the two code paths never diverge.
  */
 export function buildGraphFromStages(
   input: BuildGraphInput,
-): ReturnType<typeof makeBuilder> {
-  return makeBuilder(input)
+): StateGraph<typeof PipelineStateAnnotation.State> {
+  return buildGraphFromPipeline({
+    graph: linearizeStagesForBuilder(input.stages),
+    stageContext: input.stageContext,
+    hooks: input.hooks,
+    triggerParams: input.triggerParams,
+  })
 }
 
-// makeBuilder keeps the dynamic node union hidden from the public signature:
-// addNode widens N step by step, so we cast at the boundary.
-function makeBuilder(input: BuildGraphInput) {
-  const { stages, stageContext, hooks, triggerParams } = input
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let graph: any = new StateGraph(PipelineStateAnnotation)
+// Internal fallback: build a linear PipelineGraph from legacy stages.
+// Distinct from graph-migration.linearizeStages — that one uses ULIDs and
+// x/y coordinates for the canvas; this one uses deterministic n<i> ids
+// so legacy tests/fixtures stay stable.
+function linearizeStagesForBuilder(stages: StageDefinition[]): PipelineGraph {
+  const nodes = stages.map((s, i) => ({
+    ...s, id: `n${i}`, position: { x: 0, y: i * 100 },
+  }))
+  const edges: PipelineEdge[] = []
+  for (let i = 0; i < nodes.length - 1; i++) {
+    edges.push({ id: `e${i}`, source: nodes[i].id, target: nodes[i + 1].id })
+  }
+  return { nodes, edges }
+}
 
-  if (stages.length === 0) {
-    graph = graph.addEdge(START, END)
-    return graph as StateGraph<typeof PipelineStateAnnotation.State>
+// ---- PipelineGraph-based builder with conditional edges -----------------
+
+export interface BuildPipelineGraphInput {
+  graph: PipelineGraph
+  stageContext: StageContextBase
+  hooks: StageHooks
+  triggerParams?: Record<string, unknown>
+}
+
+// Safe expression evaluator. Only two templates are accepted:
+//   - status === 'success' | 'failed' | 'skipped'
+//   - output.includes('...')
+// Anything else returns false, avoiding eval / new Function.
+function conditionMatches(cond: ConditionSpec | undefined, result: StageResult): boolean {
+  if (!cond) return true
+  if (cond.kind === 'onSuccess') return result.status === 'success'
+  if (cond.kind === 'onFailure') return result.status === 'failed'
+  // expression
+  const expr = cond.expression.trim()
+  const statusMatch = expr.match(/^status\s*===\s*'(success|failed|skipped)'$/)
+  if (statusMatch) return result.status === statusMatch[1]
+  const outputMatch = expr.match(/^output\.includes\(['"]([^'"]+)['"]\)$/)
+  if (outputMatch) return (result.output ?? '').includes(outputMatch[1])
+  return false
+}
+
+/**
+ * Compile a PipelineGraph into an uncompiled LangGraph StateGraph.
+ *
+ * For each node, registers the appropriate stage action + a paired
+ * skip_rest sink. Out-edges are assembled via addConditionalEdges with
+ * a router that:
+ *   1. Respects stage-level onFailure: 'stop' (→ skip sink)
+ *   2. Picks the first out-edge whose condition matches
+ *   3. Falls through to END if no condition matches
+ */
+export function buildGraphFromPipeline(
+  input: BuildPipelineGraphInput,
+): StateGraph<typeof PipelineStateAnnotation.State> {
+  const { graph, stageContext, hooks, triggerParams } = input
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let builder: any = new StateGraph(PipelineStateAnnotation)
+
+  if (graph.nodes.length === 0) {
+    builder = builder.addEdge(START, END)
+    return builder as StateGraph<typeof PipelineStateAnnotation.State>
   }
 
-  for (let i = 0; i < stages.length; i++) {
-    const stage = stages[i]
-    const name = nodeName(i, stage)
-    switch (stage.stageType) {
+  const idToName = new Map(graph.nodes.map((n, i) => [n.id, nodeName(i, n)]))
+
+  // addNode
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const node = graph.nodes[i]
+    const name = idToName.get(node.id)!
+    switch (node.stageType) {
       case 'script':
-        graph = graph.addNode(name, buildScriptNode(stage, i, stageContext, hooks))
-        break
+        builder = builder.addNode(name, buildScriptNode(node, i, stageContext, hooks)); break
       case 'capability':
-        graph = graph.addNode(
-          name,
-          buildCapabilityNode(stage, i, stageContext, hooks, triggerParams),
-        )
-        break
+        builder = builder.addNode(name, buildCapabilityNode(node, i, stageContext, hooks, triggerParams)); break
       case 'approval':
-        graph = graph.addNode(name, buildApprovalNode(stage, i))
-        break
+        builder = builder.addNode(name, buildApprovalNode(node, i)); break
       case 'wait_webhook':
-        graph = graph.addNode(name, buildWaitWebhookNode(stage, i))
-        break
+        builder = builder.addNode(name, buildWaitWebhookNode(node, i)); break
+      case 'im_input':
+        builder = builder.addNode(name, buildImInputNode(node, i, stageContext)); break
       default: {
-        const unknown: never = stage.stageType
+        const unknown: never = node.stageType
         throw new Error(`Unsupported stage type: ${String(unknown)}`)
       }
     }
-    graph = graph.addNode(skipRestName(i), buildSkipRestNode(stages, i + 1))
+    builder = builder.addNode(skipRestName(i), buildSkipRestNode(graph.nodes, i + 1))
   }
 
-  graph = graph.addEdge(START, nodeName(0, stages[0]))
-  for (let i = 0; i < stages.length; i++) {
-    const name = nodeName(i, stages[i])
-    const isLast = i === stages.length - 1
-    const nextName = isLast ? END : nodeName(i + 1, stages[i + 1])
+  // Entry: first node without an incoming edge; fallback to node[0].
+  const hasIncoming = new Set(graph.edges.map(e => e.target))
+  const entry = graph.nodes.find(n => !hasIncoming.has(n.id)) ?? graph.nodes[0]
+  builder = builder.addEdge(START, idToName.get(entry.id)!)
+
+  // Group out-edges by source.
+  const outBySource = new Map<string, PipelineEdge[]>()
+  for (const e of graph.edges) {
+    const arr = outBySource.get(e.source) ?? []
+    arr.push(e)
+    outBySource.set(e.source, arr)
+  }
+
+  for (let i = 0; i < graph.nodes.length; i++) {
+    const node = graph.nodes[i]
+    const name = idToName.get(node.id)!
     const skipName = skipRestName(i)
-    graph = graph.addConditionalEdges(name, buildRouter(stages, i), {
-      [nextName]: nextName,
-      [skipName]: skipName,
-    })
-    graph = graph.addEdge(skipName, END)
+    const outs = outBySource.get(node.id) ?? []
+
+    if (outs.length === 0) {
+      // Terminal node → END (with skip_rest guard for onFailure=stop).
+      builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
+        const result = state.stageResults.find((r) => r.name === node.name)
+        if (result && shouldStopAfter(node, result)) return skipName
+        return END
+      }, { [END]: END, [skipName]: skipName })
+      builder = builder.addEdge(skipName, END)
+      continue
+    }
+
+    const routeMap: Record<string, string> = { [skipName]: skipName, [END]: END }
+    for (const e of outs) {
+      const targetName = idToName.get(e.target)!
+      routeMap[targetName] = targetName
+    }
+
+    builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
+      const result = state.stageResults.find((r) => r.name === node.name)
+      if (!result) return idToName.get(outs[0].target) ?? END
+      if (shouldStopAfter(node, result)) return skipName
+      for (const e of outs) {
+        if (conditionMatches(e.condition, result)) return idToName.get(e.target)!
+      }
+      return END
+    }, routeMap)
+
+    builder = builder.addEdge(skipName, END)
   }
 
-  return graph as StateGraph<typeof PipelineStateAnnotation.State>
+  return builder as StateGraph<typeof PipelineStateAnnotation.State>
 }

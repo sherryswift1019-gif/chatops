@@ -182,7 +182,7 @@ export interface PipelineRunResult {
 export async function runPipeline(
   pipelineId: number,
   serverAssignment: Record<string, string[]>,
-  triggerType: 'manual' | 'api' | 'scheduled',
+  triggerType: 'manual' | 'api' | 'scheduled' | 'im',
   triggeredBy: string,
   runtimeVarsInput: Record<string, string> = {},
   onComplete?: (result: PipelineRunResult) => void,
