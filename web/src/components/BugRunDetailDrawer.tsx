@@ -246,14 +246,34 @@ function FixAttemptBlock({ events }: { events: BugFixEvent[] }) {
                   </Descriptions>
                   {error && (
                     <Collapse size="small" style={{ marginTop: 8 }}>
-                      <Collapse.Panel header="错误详情" key="err">
+                      <Collapse.Panel
+                        header={
+                          <Space size={6}>
+                            <span>错误详情</span>
+                            <span onClick={(e) => e.stopPropagation()}>
+                              <Text copyable={{ text: error, tooltips: ['复制', '已复制'] }} />
+                            </span>
+                          </Space>
+                        }
+                        key="err"
+                      >
                         <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{error}</pre>
                       </Collapse.Panel>
                     </Collapse>
                   )}
                   {output && (
                     <Collapse size="small" style={{ marginTop: 8 }}>
-                      <Collapse.Panel header="输出摘要" key="out">
+                      <Collapse.Panel
+                        header={
+                          <Space size={6}>
+                            <span>输出摘要</span>
+                            <span onClick={(e) => e.stopPropagation()}>
+                              <Text copyable={{ text: output, tooltips: ['复制', '已复制'] }} />
+                            </span>
+                          </Space>
+                        }
+                        key="out"
+                      >
                         <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{output}</pre>
                       </Collapse.Panel>
                     </Collapse>

@@ -5,7 +5,14 @@
  */
 import { spawn } from 'child_process'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import { fileURLToPath } from 'url'
+import { buildClaudeEnv } from './claude-config.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+// 与 PorygonExecutor 一致：锁定项目 node_modules/.bin/claude，不依赖 $PATH
+const CLAUDE_BIN = join(__dirname, '..', '..', 'node_modules', '.bin', 'claude')
 
 interface ClaudeRunEvent {
   type: 'init' | 'tool_call' | 'done'
@@ -39,6 +46,10 @@ export async function runClaudeCli(opts: {
 
   writeFileSync(promptPath, prompt)
 
+  // 可选：CLAUDE_MODEL env 控制模型（如 "opus" / "sonnet" / "claude-opus-4-7[1m]"）
+  // 未设置时走 claude CLI 默认（Sonnet 4.6 / 200K）
+  const modelFlag = process.env.CLAUDE_MODEL ? `--model "${process.env.CLAUDE_MODEL}"` : ''
+
   const scriptContent = `#!/bin/bash
 [[ -f ~/.zshrc ]] && source ~/.zshrc
 [[ -f ~/.bashrc ]] && source ~/.bashrc
@@ -46,10 +57,14 @@ export async function runClaudeCli(opts: {
 cd "${cwd ?? tmpDir}"
 unset CLAUDECODE
 PROMPT=$(cat "${promptPath}")
-claude -p "$PROMPT" --allowed-tools "${allowedTools}" --output-format stream-json --verbose < /dev/null
+"${CLAUDE_BIN}" -p "$PROMPT" --allowed-tools "${allowedTools}" ${modelFlag} --output-format stream-json --verbose < /dev/null
 `
   writeFileSync(scriptPath, scriptContent, { mode: 0o755 })
   console.log(`[ClaudeCLI] prompt(前200字): ${prompt.substring(0, 200)}...`)
+
+  // 与 PorygonExecutor 对齐：从 DB + .env 读 CLAUDE_CODE_OAUTH_TOKEN / ANTHROPIC_BASE_URL
+  // 再合并到子进程 env，否则容器内 claude 二进制报 "Not logged in · Please run /login"
+  const claudeEnv = await buildClaudeEnv()
 
   return new Promise<string>((resolve, reject) => {
     const startTime = Date.now()
@@ -59,7 +74,7 @@ claude -p "$PROMPT" --allowed-tools "${allowedTools}" --output-format stream-jso
 
     const child = spawn('bash', ['-l', scriptPath], {
       cwd: cwd ?? tmpDir,
-      env: process.env,
+      env: { ...process.env, ...claudeEnv },
     })
 
     child.stdout.on('data', (data: Buffer) => {

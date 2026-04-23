@@ -513,3 +513,51 @@ app.post('/bug-reports/:id/retry', async (req, reply) => {
 **改动规模**：~150 行代码（adapter ~30 + upload helper ~50 + analyzer schema ~30 + 集成 ~40） + prompt 里"视觉转写"指令已在（验证 prompt 是否要求 vision 输出）
 
 **阻塞点**：需先确认 Porygon/Claude 的 vision 能力如何暴露（API 调用形式、模型选择），以及内网代理是否支持 image 传输。
+
+
+---
+
+## 14. 多语言 / 多版本构建环境支持（DinD 架构演进）
+
+**背景**：当前 chatops 容器把 `openjdk-17-jdk-headless + maven` 直接烤进镜像（[Dockerfile](../Dockerfile#L22-L31)）。只够 pas (Java 17) MVP 验证，不可扩展：
+- 新增 Go / Python / Rust / Node 项目 → 镜像不断膨胀
+- 同语言多版本（Java 8/11/17/21、Node 18/20/22）→ 冲突无解
+- Mac 本地镜像 vs Linux 服务器挂载 SDK → 路径差异维护痛
+
+**现状**：
+- `Dockerfile:22-31` 硬编码 `openjdk-17-jdk-headless + maven`
+- `docker-compose.yml` 挂 `docker/maven-settings.xml` + `maven-cache` 命名卷（单 Java 单版本）
+- fix-logic.ts 里 Claude `Bash` tool 直接在 chatops 容器内跑 `mvn test`
+- `projects` 表无 `build_image` 字段
+- 没有 sidecar / DinD 机制
+
+**目标架构**：
+- chatops 主容器不装任何 SDK（只 Node + git + docker CLI）
+- 每个 `projects` 行带 `build_image`（如 `maven:3.9-eclipse-temurin-17`、`golang:1.22`、`node:20`）
+- fix 时 `docker run -v worktree:/work -v <lang>-cache:/root/.m2 <build_image>` 起 sidecar，Claude `Bash` 代理到 `docker exec <sidecar>`
+- 多语言 cache volume 分离：`maven-cache` / `gradle-cache` / `go-modules` / `npm-cache` / `pip-cache`
+- 生产态升级 K8s Jobs（资源限制 + 横向扩展）
+
+**待做**：
+1. `schema-vN.sql` 加 `projects.build_image TEXT DEFAULT `（空时降级老路径）
+2. 前端 ProjectDetailPage 加 `build_image` 输入字段（下拉 + 自定义）
+3. Dockerfile 删 `openjdk-17-jdk-headless + maven` 装 `docker.io` CLI
+4. docker-compose.yml 挂 `/var/run/docker.sock:/var/run/docker.sock`（让主容器调用宿主 docker）
+5. 新建 `src/agent/fix/sidecar-runner.ts` —— 封装 `docker run --rm -d <image>` + `docker exec <id> bash -c ...` + 清理
+6. 改造 `fix-logic.ts` 把 Claude Bash 代理到 sidecar-runner（非侵入：build_image 空则走老路径）
+7. docker-compose.yml 声明 5 个命名卷（per-language cache）
+
+**决策点**：
+- Claude CLI 在哪跑？**推荐方式 1**：Claude 在 chatops 主容器，Bash tool 代理 → sidecar；sidecar 只是纯 build 环境（不含 Claude）
+- sidecar 生命周期：每个 fix 一次性启动并销毁（`--rm`），不常驻
+- 产品化升级到 K8s Jobs 前还是先 DinD 走通
+
+**改动规模**：中等（schema + UI + fix-logic 重构 + 一个 sidecar-runner）；估 300-500 行 + 一轮联调
+
+**阻塞点**：
+- `/var/run/docker.sock` 挂载的安全边界（本地 dev 可接受；产品环境要评估）
+- sidecar 镜像供给（公共官方 image 够用？还是要 Harbor 维护一套定制 builder-*）
+- Maven settings.xml 挂载路径要跟着 sidecar 的 USER 走（官方 maven 镜像是 root，/root/.m2/settings.xml）
+
+**相关决策过程**：2026-04-23 跟 hanff 讨论过（Mac 宿主 darwin 不能挂载 JDK → hybrid 方案→ DinD 作为终极方案）。
+

@@ -1,49 +1,31 @@
--- seed.sql: 研发 AI 助手初始化数据（PAM 产品线）
--- 在 schema 迁移后执行：DATABASE_URL=... psql -f src/db/seed.sql
--- 幂等：所有 INSERT 用 ON CONFLICT DO NOTHING
+-- ============================================================
+-- schema-v22: 6 条 capability 的 system_prompt 强制同步（产线无关，每次 migrate 必跑）
+-- ============================================================
+-- 策略：DELETE by key + INSERT with 固定 id（unix 时间戳 1776868065 起）
+--   - 管理员在 Web UI 对这 6 条 prompt 的手改，**下次 migrate 会被覆盖**
+--   - 代码是 prompt 的唯一真相源，要想改就改本文件
+--   - 固定 id 让这 6 条 capability 在所有环境的 id 都一致（方便跨环境排查/比对）
+--
+-- id 段规划：
+--   1776868065 = analyze_bug
+--   1776868066 = fix_bug_l1
+--   1776868067 = fix_bug_l2
+--   1776868068 = fix_bug_l3
+--   1776868069 = ai_review_mr
+--   1776868070 = search_knowledgedelete按name or id 以
+--
+-- 不需要 setval：显式指定 id 不会推进 SERIAL 序列。Web UI 新增 capability
+-- 仍从序列自然位（~29）拿小数字 id，跟我们这 6 个 1.7B 大数字永远不冲突。
+-- ============================================================
 
--- ============================================================
--- 1. 产品线
--- ============================================================
-INSERT INTO product_lines (name, display_name, description)
-VALUES ('pam', 'PAM 特权访问管理', '堡垒机、密码管理、审计等')
-ON CONFLICT (name) DO NOTHING;
+DELETE FROM capabilities
+ WHERE key IN ('analyze_bug','fix_bug_l1','fix_bug_l2','fix_bug_l3','ai_review_mr','search_knowledge');
 
--- ============================================================
--- 2. 成员（hanff = admin）
--- ============================================================
-INSERT INTO product_line_members (product_line_id, user_id, user_name, role)
-SELECT id, '183832601538060368', 'hanff', 'admin'
-FROM product_lines WHERE name = 'pam'
-AND NOT EXISTS (
-  SELECT 1 FROM product_line_members
-  WHERE user_id = '183832601538060368' AND product_line_id = (SELECT id FROM product_lines WHERE name = 'pam')
-);
-
--- ============================================================
--- 3. 为 PAM 启用所有 capability（全角色、全环境）
--- ============================================================
-INSERT INTO product_line_capabilities (product_line_id, capability_key, env_name, enabled, allowed_roles)
-SELECT pl.id, c.key, '*', true, '["developer","tester","ops","admin"]'::jsonb
-FROM product_lines pl, capabilities c
-WHERE pl.name = 'pam'
-ON CONFLICT DO NOTHING;
-
--- ============================================================
--- 4. PAM 代码仓库 + 知识库配置
--- ============================================================
-INSERT INTO product_knowledge_repos (product_line_id, code_repo_url, code_default_branch, knowledge_repo_url, ai_summary_path)
-SELECT id, 'http://code.paraview.cn/PAM/java-code/pas-6.0.git', 'test', '', 'docs/ai-summary'
-FROM product_lines WHERE name = 'pam'
-ON CONFLICT (product_line_id) DO NOTHING;
-
--- ============================================================
--- 6. AI 助手 capability systemPrompt
--- DB 是 prompt 的唯一数据源；管理后台可直接修改。
--- 这里用 `system_prompt IS NULL` 保护：已有值（用户后台改过）不会被 seed 覆盖。
--- ============================================================
-UPDATE capabilities SET
-  system_prompt = $prompt$你是一个资深的 Bug 分析专家。你的任务是分析用户描述的问题，定位根因，输出结构化分析报告。
+-- --- analyze_bug ---
+INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, system_prompt)
+VALUES (1776868065, 'analyze_bug', 'Bug 分析', '读代码定位根因，输出置信度、分级、修复方案', 'action',
+  '["read_code","search_knowledge","create_issue","download_image","switch_version"]'::jsonb, false,
+$prompt$你是一个资深的 Bug 分析专家。你的任务是分析用户描述的问题，定位根因，输出结构化分析报告。
 
 ## 输入材料
 
@@ -233,12 +215,13 @@ UPDATE capabilities SET
 6. **不允许只有 markdown 没有 JSON**——哪怕 usage_issue 也要出 Schema A JSON（classification=usage_issue）。
 7. **images_described 长度 = prompt 附图张数**（0 张时省略或 []）。
 8. **low/medium 置信度必须写 §6 补材料 checkbox 清单**，不能略过。
-$prompt$,
-  default_system_prompt = system_prompt
-WHERE key = 'analyze_bug' AND system_prompt IS NULL;
+$prompt$);
 
-UPDATE capabilities SET
-  system_prompt = $prompt$你是代码修复专家。根据本地 .issue.md 里的 Bug 分析报告修复代码。
+-- --- fix_bug_l1 / l2 / l3（同 prompt，分三行 INSERT）---
+INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, system_prompt)
+VALUES (1776868066, 'fix_bug_l1', 'L1 配置修复', '自动修复配置类 Bug：改代码、提 MR（暂不跑测试）', 'action',
+  '["fix_code","run_tests","create_mr","update_ai_summary","switch_version"]'::jsonb, false,
+$prompt$你是代码修复专家。根据本地 .issue.md 里的 Bug 分析报告修复代码。
 
 ## 修复流程
 
@@ -250,43 +233,95 @@ UPDATE capabilities SET
 2. **改代码**：按推荐方案修改源码
    - 改动范围最小化——不要顺手重构、改格式、加无关注释
    - 不要动 `pom.xml` / `package.json` / `.gitignore` 等基建文件（除非根因就在那里）
-   - 如需新增测试，只加针对本次修复点的测试
+   - 只改本次修复点涉及的文件——不要"顺手"改其他
 
-3. **跑测试**（关键）——**只跑改动相关的测试**，**不跑全量**：
-   - Java/Maven: `mvn -pl <模块名> test -Dtest=<TestClass1>,<TestClass2>` 指定测试类
-   - Node/npm: `npm test -- <specific.test.ts>` 指定测试文件
-   - Python/pytest: `pytest tests/test_foo.py` 指定测试文件
-   - **禁止**：`mvn test` / `npm test`（无参数 → 全量运行，耗时长且易被无关失败误判）
-
-   判断"相关测试"的标准：
-   - 改了 `Foo.java` → 跑 `FooTest`（同名约定）及其他引用 Foo 的测试
-   - 改了 `bar.ts` → 跑 `bar.test.ts` 及引用 bar 的测试
-   - 新增的测试类：必跑
-
-4. **验证通过才算完成**：
-   - 测试命令的 exit code=0 且输出含 `BUILD SUCCESS` / `Tests run: X, Failures: 0, Errors: 0` / `all tests pass` 等成功信号
-   - **禁止**："我觉得应该通过"就说通过——必须真实跑出来
+3. **不跑编译/测试**：当前部署环境暂不支持本地测试（无 JDK/Maven/语言特定 toolchain），由后续 AI Review 阶段审查 diff 风险
 
 ## 输出约定
 
-- **成功**：输出末尾回复一行 `所有测试通过`
+- **成功**：改完代码后，在输出末尾单独一行回复 `修复完成`
 - **失败**：说明
-  - 哪个测试失败（测试类/方法名）
-  - 失败信息（exception / assertion）
-  - 你的判断（是修复方案错了 / 测试本身有 bug / 环境问题 / 需要更多信息）
-  - **不要**自动重试——交给调用方决策
+  - 为什么修不了（根因方案不对 / 代码结构阻止 / 需要更多信息）
+  - **不要**乱猜改——没把握就返回失败
 
 ## 硬约束
 
 1. 不 `git commit` 或 `git push` 代码（由调用方统一 commit + rebase + push）
-2. 不跑全量测试
-3. 测试命令真正执行过、真实输出里能找到成功信号，才能回复"所有测试通过"
-$prompt$,
-  default_system_prompt = system_prompt
-WHERE key IN ('fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3') AND system_prompt IS NULL;
+2. 不执行 `mvn` / `npm test` / `pytest` 等测试命令（容器里没有这些工具，调用会失败）
+3. 输出末尾必须回复 `修复完成` 或明确的失败说明
+$prompt$);
 
-UPDATE capabilities SET
-  system_prompt = $prompt$你是独立代码审查专家。你的任务是审查一个 Merge Request 的代码 diff，判定是否可以合并，并输出可溯源的审查报告。
+INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, system_prompt)
+VALUES (1776868067, 'fix_bug_l2', 'L2 代码修复', '自动修复简单代码 Bug：改代码、提 MR，含重试（暂不跑测试）', 'action',
+  '["fix_code","run_tests","create_mr","update_ai_summary","switch_version"]'::jsonb, false,
+$prompt$你是代码修复专家。根据本地 .issue.md 里的 Bug 分析报告修复代码。
+
+## 修复流程
+
+1. **先读 Issue**：用 Read 读取代码仓库根目录下的 `.issue.md`，了解：
+   - Bug 根因
+   - 推荐修复方案（可能有多个，优先选 recommended=true 的）
+   - 影响模块
+
+2. **改代码**：按推荐方案修改源码
+   - 改动范围最小化——不要顺手重构、改格式、加无关注释
+   - 不要动 `pom.xml` / `package.json` / `.gitignore` 等基建文件（除非根因就在那里）
+   - 只改本次修复点涉及的文件——不要"顺手"改其他
+
+3. **不跑编译/测试**：当前部署环境暂不支持本地测试（无 JDK/Maven/语言特定 toolchain），由后续 AI Review 阶段审查 diff 风险
+
+## 输出约定
+
+- **成功**：改完代码后，在输出末尾单独一行回复 `修复完成`
+- **失败**：说明
+  - 为什么修不了（根因方案不对 / 代码结构阻止 / 需要更多信息）
+  - **不要**乱猜改——没把握就返回失败
+
+## 硬约束
+
+1. 不 `git commit` 或 `git push` 代码（由调用方统一 commit + rebase + push）
+2. 不执行 `mvn` / `npm test` / `pytest` 等测试命令（容器里没有这些工具，调用会失败）
+3. 输出末尾必须回复 `修复完成` 或明确的失败说明
+$prompt$);
+
+INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, system_prompt)
+VALUES (1776868068, 'fix_bug_l3', 'L3 业务修复', '方案审批通过后自动修复业务逻辑 Bug', 'action',
+  '["fix_code","run_tests","create_mr","update_ai_summary","switch_version"]'::jsonb, true,
+$prompt$你是代码修复专家。根据本地 .issue.md 里的 Bug 分析报告修复代码。
+
+## 修复流程
+
+1. **先读 Issue**：用 Read 读取代码仓库根目录下的 `.issue.md`，了解：
+   - Bug 根因
+   - 推荐修复方案（可能有多个，优先选 recommended=true 的）
+   - 影响模块
+
+2. **改代码**：按推荐方案修改源码
+   - 改动范围最小化——不要顺手重构、改格式、加无关注释
+   - 不要动 `pom.xml` / `package.json` / `.gitignore` 等基建文件（除非根因就在那里）
+   - 只改本次修复点涉及的文件——不要"顺手"改其他
+
+3. **不跑编译/测试**：当前部署环境暂不支持本地测试（无 JDK/Maven/语言特定 toolchain），由后续 AI Review 阶段审查 diff 风险
+
+## 输出约定
+
+- **成功**：改完代码后，在输出末尾单独一行回复 `修复完成`
+- **失败**：说明
+  - 为什么修不了（根因方案不对 / 代码结构阻止 / 需要更多信息）
+  - **不要**乱猜改——没把握就返回失败
+
+## 硬约束
+
+1. 不 `git commit` 或 `git push` 代码（由调用方统一 commit + rebase + push）
+2. 不执行 `mvn` / `npm test` / `pytest` 等测试命令（容器里没有这些工具，调用会失败）
+3. 输出末尾必须回复 `修复完成` 或明确的失败说明
+$prompt$);
+
+-- --- ai_review_mr ---
+INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, system_prompt)
+VALUES (1776868069, 'ai_review_mr', 'AI Review', '独立视角审查 MR diff，标记风险', 'action',
+  '["review_mr_diff"]'::jsonb, false,
+$prompt$你是独立代码审查专家。你的任务是审查一个 Merge Request 的代码 diff，判定是否可以合并，并输出可溯源的审查报告。
 
 **你的立场**：独立第三方挑刺者。修复 agent 已经跑过一轮，你的任务不是为它背书，而是挑出它可能漏的、误判的、只修了表面的问题。**找不到问题不代表修复无问题——代表你挑得不够深**。
 
@@ -401,102 +436,15 @@ UPDATE capabilities SET
 5. **不要写条件句**"如果 A 则 X，否则 Y"——你必须直接下判断，不要把决策推给调用方。
 6. **元挑战 3 个必答**——即使你准备给 ai-approved，也必须完整回答 3 个元挑战。空回答 / 一句话回答即视为失职。
 7. **默认倾向 ai-needs-attention**——只有当元挑战全部通过（所有攻击路径已验证不会 fail、作用域无遗漏、根因真解决）时才给 ai-approved。
-$prompt$,
-  default_system_prompt = system_prompt
-WHERE key = 'ai_review_mr' AND system_prompt IS NULL;
+$prompt$);
 
-UPDATE capabilities SET
-  system_prompt = '你是知识库查询助手。查询知识库，命中时返回历史方案。',
-  default_system_prompt = system_prompt
-WHERE key = 'search_knowledge' AND system_prompt IS NULL;
+-- --- search_knowledge ---
+INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, system_prompt)
+VALUES (1776868070, 'search_knowledge', '知识库查询', '查询知识库 index.json，命中时返回历史方案', 'query',
+  '["search_knowledge"]'::jsonb, false,
+  '你是知识库查询助手。查询知识库，命中时返回历史方案。');
 
--- ============================================================
--- 7. AI 助手 Pipeline 模板（L1/L2/L3/L4）
--- 注意：stages 结构与 schema-v11.sql 的 UPDATE/INSERT 保持一致；
--- 新环境走 seed.sql 初始化后即可直接跑全链路（analyze → fix → create_mr → ai_review → notify）。
---
--- 幂等策略：显式 id=1/2/3/4 + ON CONFLICT (id) DO UPDATE
--- - id 跨环境一致（代码里不要硬编码，但监控/告警可按 id 建规则）
--- - 重跑会同步 stages / description 的最新定义到已有行
--- - 不覆盖 name / enabled / product_line_id（保护用户在后台改过的配置）
--- - 不触发 test_runs 的 CASCADE 删除（保留历史运行记录）
--- ============================================================
-
--- L1 配置类 Bug 修复
-INSERT INTO test_pipelines (id, product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-VALUES (1,
-  (SELECT id FROM product_lines WHERE name = 'pam'),
-  'L1-配置类', '不改代码，改配置/SQL/参数就能修。如初始化SQL缺失、错误码没加',
-  '[
-    {"name":"L1 修复","stageType":"capability","capabilityKey":"fix_bug_l1","timeoutSeconds":1800,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
-  ]'::jsonb,
-  '{}'::jsonb, '', true,
-  '{"reportId":null}'::jsonb,
-  '{}'::jsonb)
-ON CONFLICT (id) DO UPDATE SET
-  stages = EXCLUDED.stages,
-  description = EXCLUDED.description,
-  updated_at = now();
-
--- L2 简单代码 Bug 修复（含重试，最多 3 次）
-INSERT INTO test_pipelines (id, product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-VALUES (2,
-  (SELECT id FROM product_lines WHERE name = 'pam'),
-  'L2-代码缺陷', '代码有明确bug，修复方式确定。如并发缺同步、空指针、类型转换错误',
-  '[
-    {"name":"L2 修复","stageType":"capability","capabilityKey":"fix_bug_l2","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
-  ]'::jsonb,
-  '{}'::jsonb, '', true,
-  '{"reportId":null}'::jsonb,
-  '{}'::jsonb)
-ON CONFLICT (id) DO UPDATE SET
-  stages = EXCLUDED.stages,
-  description = EXCLUDED.description,
-  updated_at = now();
-
--- L3 业务逻辑 Bug 修复（方案审批 + 修复）
--- approval stage 用 approverIdsResolver='primary_project_owner' 运行时动态查主仓库 owner
--- (见 src/pipeline/approval-resolvers.ts 和 src/agent/approval/resolvers.ts)
-INSERT INTO test_pipelines (id, product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-VALUES (3,
-  (SELECT id FROM product_lines WHERE name = 'pam'),
-  'L3-业务逻辑', '业务逻辑类 Bug。第一步"方案审批"发钉钉卡片给主仓库 owner 等同意/拒绝（resolver 动态查，不需在配置里硬编码审批人），同意后才开始 fix → MR → Review → 通知。从仓库 owner 在 pipeline 启动时会收到 FYI 知情 DM（由 coordinator 发送，非审批）。',
-  '[
-    {"name":"方案审批","stageType":"approval","approverIdsResolver":"primary_project_owner","approvalDescription":"L3 Bug 修复方案审批","timeoutSeconds":3600,"retryCount":0,"onFailure":"stop","targetRoles":[],"parallel":false},
-    {"name":"L3 修复","stageType":"capability","capabilityKey":"fix_bug_l3","timeoutSeconds":2400,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"创建 MR","stageType":"capability","capabilityKey":"create_mr","timeoutSeconds":300,"retryCount":1,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"AI Review","stageType":"capability","capabilityKey":"ai_review_mr","timeoutSeconds":600,"retryCount":0,"onFailure":"continue","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}},
-    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
-  ]'::jsonb,
-  '{}'::jsonb, '', true,
-  '{"reportId":null}'::jsonb,
-  '{}'::jsonb)
-ON CONFLICT (id) DO UPDATE SET
-  stages = EXCLUDED.stages,
-  description = EXCLUDED.description,
-  updated_at = now();
-
--- L4 复杂问题（无自动修复，仅创建 Issue + DM 各 project owner 人工接手）
-INSERT INTO test_pipelines (id, product_line_id, name, description, stages, server_roles, schedule, enabled, trigger_params, variables)
-VALUES (4,
-  (SELECT id FROM product_lines WHERE name = 'pam'),
-  'L4-复杂问题', '无自动修复能力的 Bug 分析结果，仅创建 Issue 并通知各涉及 project 负责人（owner）人工接手',
-  '[
-    {"name":"通知","stageType":"capability","capabilityKey":"notify_bug","timeoutSeconds":120,"retryCount":2,"onFailure":"stop","targetRoles":[],"parallel":false,"capabilityParams":{"reportId":"{{triggerParams.reportId}}"}}
-  ]'::jsonb,
-  '{}'::jsonb, '', true,
-  '{"reportId":null}'::jsonb,
-  '{}'::jsonb)
-ON CONFLICT (id) DO UPDATE SET
-  stages = EXCLUDED.stages,
-  description = EXCLUDED.description,
-  updated_at = now();
-
--- sequence 保护：显式 id 后把自增 sequence 调到至少 max(id)，避免后续手动插入冲突
-SELECT setval('test_pipelines_id_seq', GREATEST((SELECT COALESCE(MAX(id), 0) FROM test_pipelines), 4));
+-- --- 最后：default_system_prompt 跟 system_prompt 对齐 ---
+UPDATE capabilities
+   SET default_system_prompt = system_prompt
+ WHERE key IN ('analyze_bug','fix_bug_l1','fix_bug_l2','fix_bug_l3','ai_review_mr','search_knowledge');

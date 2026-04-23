@@ -50,6 +50,7 @@ interface HandoverData {
   failedAt: string | null
   attemptCount: number | null
   comment: string | null
+  failureSummary: string | null // coordinator 聚合每个 project 最后一次 fix_attempt.error（≤1000 字）
 }
 
 interface Scenario {
@@ -245,6 +246,7 @@ async function decideScenario(
       failedAt: typeof data.failedAt === 'string' ? data.failedAt : null,
       attemptCount: typeof data.attemptCount === 'number' ? data.attemptCount : null,
       comment: typeof data.comment === 'string' ? data.comment : null,
+      failureSummary: typeof data.failureSummary === 'string' ? data.failureSummary : null,
     }
     return {
       kind: 'handover',
@@ -431,6 +433,9 @@ export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null 
       const commentLine = handoverData?.comment
         ? `用户说明：${handoverData.comment}`
         : null
+      const failureLine = handoverData?.failureSummary
+        ? `❗ AI 失败原因：\n${handoverData.failureSummary}`
+        : null
       return [
         `🛠 Bug 需你接手（AI 放弃自动修复）`,
         '',
@@ -443,6 +448,7 @@ export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null 
         `Issue label：needs-manual`,
         '',
         `📋 根因摘要：${summary || '（详见 Issue 正文）'}`,
+        ...(failureLine ? ['', failureLine] : []),
         ...(commentLine ? ['', commentLine] : []),
         '',
         `请在 GitLab checkout 分支继续修改，或关闭 Issue 放弃。`,

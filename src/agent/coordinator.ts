@@ -187,6 +187,7 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     const result = await handler(opts)
     console.log(`[AgentCoordinator] completed: ${opts.capabilityKey}`, {
       success: result.success,
+      ...(result.success ? {} : { error: result.error, output: result.output }),
     })
     return result
   } catch (err) {

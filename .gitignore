@@ -12,3 +12,4 @@ _bmad-output/
 test-results/
 playwright-report/
 web/tsconfig.tsbuildinfo
+src/db/system-config.local.sql

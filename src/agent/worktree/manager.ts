@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { promisify } from 'util'
+import { injectGitlabAuth } from '../../config/git-auth.js'
 
 const execAsync = promisify(exec)
 
@@ -88,7 +89,8 @@ async function ensureMainRepo(product: string, repoUrl: string): Promise<string>
   }
 
   mkdirSync(cachePath, { recursive: true })
-  await runGit(`git clone --bare ${repoUrl} ${cachePath}`)
+  const authedUrl = await injectGitlabAuth(repoUrl)
+  await runGit(`git clone --bare ${authedUrl} ${cachePath}`)
   // git clone --bare 默认不写 fetch refspec，后续 git fetch --all 拉不到新分支。
   // 用 refs/remotes/origin/* 命名空间（不是 refs/heads/*）：
   // - fetch 永远写入 remotes/origin/，不会尝试更新本地 heads——避免
