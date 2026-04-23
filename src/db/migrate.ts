@@ -80,13 +80,13 @@ const schemaV20 = readFileSync(join(__dirname, 'schema-v20.sql'), 'utf8')
 await pool.query(schemaV20)
 console.log('[migrate] schema-v20 applied')
 
-const schemaV21 = readFileSync(join(__dirname, 'schema-v21.sql'), 'utf8')
-await pool.query(schemaV21)
-console.log('[migrate] schema-v21 applied')
+const schemaV25 = readFileSync(join(__dirname, 'schema-v25.sql'), 'utf8')
+await pool.query(schemaV25)
+console.log('[migrate] schema-v25 applied')
 
-const schemaV22 = readFileSync(join(__dirname, 'schema-v22.sql'), 'utf8')
-await pool.query(schemaV22)
-console.log('[migrate] schema-v22 applied')
+const schemaV26 = readFileSync(join(__dirname, 'schema-v26.sql'), 'utf8')
+await pool.query(schemaV26)
+console.log('[migrate] schema-v26 applied')
 
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.

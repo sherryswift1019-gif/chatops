@@ -1,5 +1,7 @@
 -- ============================================================
--- schema-v22: 6 条 capability 的 system_prompt 强制同步（产线无关，每次 migrate 必跑）
+-- schema-v26: 6 条 capability 的 system_prompt 强制同步（产线无关，每次 migrate 必跑）
+-- 原本命名为 schema-v22；upstream main 合并时 v22 已被 trigger_sources 字段占用，
+-- v23 / v24 / v25 亦已分配，挪号到 v26。
 -- ============================================================
 -- 策略：DELETE by key + INSERT with 固定 id（unix 时间戳 1776868065 起）
 --   - 管理员在 Web UI 对这 6 条 prompt 的手改，**下次 migrate 会被覆盖**

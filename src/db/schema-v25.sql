@@ -1,5 +1,7 @@
 -- ============================================================
--- schema-v21: PAM 产线依赖 bootstrap（每次 migrate 都跑，ON CONFLICT DO NOTHING 幂等）
+-- schema-v25: PAM 产线依赖 bootstrap（每次 migrate 都跑，ON CONFLICT DO NOTHING 幂等）
+-- 原本命名为 schema-v21；upstream main 合并时 v21 已被 view_branches 能力占用，
+-- v22（trigger_sources）/ v23（PRD metrics）/ v24（Arch Agent 表）亦已分配，挪号到 v25。
 -- ============================================================
 -- 内容：产线依赖的初始化数据
 --   §1 产品线 pam
@@ -12,7 +14,7 @@
 -- 幂等：
 --   §1-§5 用 ON CONFLICT DO NOTHING（保护管理员 Web UI 对产线/成员/仓库/模块的手改）
 --   §6   用 DELETE by name + INSERT with timestamp id（强制刷新 L1-L4 pipeline 模板，
---        跟 schema-v22 capability prompt 同语义——代码是模板真相源）
+--        跟 schema-v26 capability prompt 同语义——代码是模板真相源）
 -- ============================================================
 
 -- §1 产品线
