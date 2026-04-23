@@ -97,6 +97,14 @@ const schemaV24 = readFileSync(join(__dirname, 'schema-v24.sql'), 'utf8')
 await pool.query(schemaV24)
 console.log('[migrate] schema-v24 applied')
 
+const schemaV25 = readFileSync(join(__dirname, 'schema-v25.sql'), 'utf8')
+await pool.query(schemaV25)
+console.log('[migrate] schema-v25 applied')
+
+const schemaV26 = readFileSync(join(__dirname, 'schema-v26.sql'), 'utf8')
+await pool.query(schemaV26)
+console.log('[migrate] schema-v26 applied')
+
 
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
@@ -134,4 +142,4 @@ await pool.query(
 )
 
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v24, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24)')
+console.log('✅ Database schema applied (v1 ~ v26, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26)')

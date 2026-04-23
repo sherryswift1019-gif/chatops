@@ -25,6 +25,7 @@ import type {
   Solution,
 } from '../../db/repositories/bug-analysis-reports.js'
 import type { TriggerOptions, TriggerResult } from '../coordinator.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 /**
  * 保留原有 parseAnalysisOutput 导出签名供老测试和老集成测试使用。
@@ -299,7 +300,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
     return { success: false, error: `产品线 ${productLineId} 下未配置任何 project` }
   }
 
-  const gitlabUrlBase = process.env.GITLAB_URL ?? ''
+  const gitlabUrlBase = (await resolveGitlabConfig()).url ?? ''
 
   // ========== 阶段 A：clone 主仓库 + 让 Claude 筛选涉及的 project ==========
   let mainWorktree

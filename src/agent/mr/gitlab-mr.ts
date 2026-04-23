@@ -3,6 +3,7 @@
  * 仅供 mr-handler.ts 使用。
  */
 import axios from 'axios'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 export interface CreateMrInput {
   projectPath: string
@@ -18,18 +19,17 @@ export interface CreatedMr {
   url: string
 }
 
-function getGitlabEnv(): { url: string; token: string } {
-  const url = process.env.GITLAB_URL
-  const token = process.env.GITLAB_TOKEN
+async function getGitlabEnv(): Promise<{ url: string; token: string }> {
+  const { url, token } = await resolveGitlabConfig()
   if (!url || !token) {
-    throw new Error('缺少 GITLAB_URL 或 GITLAB_TOKEN 环境变量')
+    throw new Error('缺少 GitLab url 或 token 配置（system_config.gitlab / GITLAB_URL / GITLAB_TOKEN）')
   }
   return { url, token }
 }
 
 /** 创建 GitLab Merge Request。失败抛错（由调用方决定是否落 DB）。 */
 export async function gitlabCreateMr(input: CreateMrInput): Promise<CreatedMr> {
-  const { url, token } = getGitlabEnv()
+  const { url, token } = await getGitlabEnv()
   const response = await axios.post(
     `${url}/api/v4/projects/${encodeURIComponent(input.projectPath)}/merge_requests`,
     {

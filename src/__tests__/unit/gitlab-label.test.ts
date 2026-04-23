@@ -65,7 +65,7 @@ describe('gitlabAddIssueLabel', () => {
     delete process.env.GITLAB_URL
     await expect(
       gitlabAddIssueLabel('PAM/pas-api', 1, 'label'),
-    ).rejects.toThrow(/GITLAB_URL 或 GITLAB_TOKEN/)
+    ).rejects.toThrow(/缺少 GitLab url 或 token/)
     expect(axios.put).not.toHaveBeenCalled()
   })
 
@@ -73,7 +73,7 @@ describe('gitlabAddIssueLabel', () => {
     delete process.env.GITLAB_TOKEN
     await expect(
       gitlabAddIssueLabel('PAM/pas-api', 1, 'label'),
-    ).rejects.toThrow(/GITLAB_URL 或 GITLAB_TOKEN/)
+    ).rejects.toThrow(/缺少 GitLab url 或 token/)
     expect(axios.put).not.toHaveBeenCalled()
   })
 

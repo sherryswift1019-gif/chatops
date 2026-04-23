@@ -2,6 +2,7 @@ import { exec } from 'child_process'
 import { existsSync, readFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { promisify } from 'util'
+import { injectGitlabAuth } from '../../config/git-auth.js'
 
 const execAsync = promisify(exec)
 
@@ -24,7 +25,8 @@ export async function ensureLocalCache(product: string, repoUrl: string): Promis
   }
 
   mkdirSync(cachePath, { recursive: true })
-  await execAsync(`git clone ${repoUrl} ${cachePath}`, { timeout: 120_000 })
+  const authedUrl = await injectGitlabAuth(repoUrl)
+  await execAsync(`git clone ${authedUrl} ${cachePath}`, { timeout: 120_000 })
   console.log(`[Knowledge] cloned ${repoUrl} to ${cachePath}`)
   return cachePath
 }

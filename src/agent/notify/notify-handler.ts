@@ -50,6 +50,7 @@ interface HandoverData {
   failedAt: string | null
   attemptCount: number | null
   comment: string | null
+  failureSummary: string | null // coordinator 聚合每个 project 最后一次 fix_attempt.error（≤1000 字）
 }
 
 interface Scenario {
@@ -99,9 +100,12 @@ export async function handleNotify(opts: TriggerOptions): Promise<TriggerResult>
     return { success: true, output: `场景 ${scenario.kind}：无需发送 DM（信息由前端展示）` }
   }
 
-  const ownerMap = await buildOwnerMap(projectMrs, report.productLineId)
+  const { map: ownerMap, missingProjects } = await buildOwnerMap(projectMrs, report.productLineId)
   if (ownerMap.size === 0) {
-    return { success: false, error: 'no_recipients', output: '无可通知的接收人（project owner 均空）' }
+    const detail = missingProjects.length > 0
+      ? `这些 project 未配置 owner_id：${missingProjects.join(', ')}`
+      : '无有效 project'
+    return { success: false, error: 'no_recipients', output: `无可通知的接收人（${detail}）` }
   }
 
   const mgr = PipelineApprovalManager.getInstance()
@@ -155,11 +159,18 @@ interface OwnerEntry {
 async function buildOwnerMap(
   projectMrs: ProjectMr[],
   productLineId: number,
-): Promise<Map<string, OwnerEntry>> {
+): Promise<{ map: Map<string, OwnerEntry>; missingProjects: string[] }> {
   const map = new Map<string, OwnerEntry>()
+  const missingProjects: string[] = []
   for (const p of projectMrs) {
     const ownerId = await resolveOwner(p.projectPath, productLineId)
-    if (!ownerId) continue
+    if (!ownerId) {
+      console.warn(
+        `[Notify] project ${p.projectPath} (product_line=${productLineId}) 未配置 owner_id，跳过该 project 的通知`,
+      )
+      missingProjects.push(p.projectPath)
+      continue
+    }
     const entry = map.get(ownerId) ?? {
       projectPaths: [],
       mrIids: [],
@@ -172,7 +183,7 @@ async function buildOwnerMap(
     entry.reviewLabels.push(p.review.label)
     map.set(ownerId, entry)
   }
-  return map
+  return { map, missingProjects }
 }
 
 async function resolveOwner(projectPath: string, productLineId: number): Promise<string | null> {
@@ -235,6 +246,7 @@ async function decideScenario(
       failedAt: typeof data.failedAt === 'string' ? data.failedAt : null,
       attemptCount: typeof data.attemptCount === 'number' ? data.attemptCount : null,
       comment: typeof data.comment === 'string' ? data.comment : null,
+      failureSummary: typeof data.failureSummary === 'string' ? data.failureSummary : null,
     }
     return {
       kind: 'handover',
@@ -421,6 +433,9 @@ export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null 
       const commentLine = handoverData?.comment
         ? `用户说明：${handoverData.comment}`
         : null
+      const failureLine = handoverData?.failureSummary
+        ? `❗ AI 失败原因：\n${handoverData.failureSummary}`
+        : null
       return [
         `🛠 Bug 需你接手（AI 放弃自动修复）`,
         '',
@@ -433,6 +448,7 @@ export function buildMessage(kind: MessageKind, ctx: MessageCtx): string | null 
         `Issue label：needs-manual`,
         '',
         `📋 根因摘要：${summary || '（详见 Issue 正文）'}`,
+        ...(failureLine ? ['', failureLine] : []),
         ...(commentLine ? ['', commentLine] : []),
         '',
         `请在 GitLab checkout 分支继续修改，或关闭 Issue 放弃。`,

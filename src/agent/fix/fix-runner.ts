@@ -107,6 +107,7 @@ export async function handleFixBug(opts: TriggerOptions, level: string): Promise
             targetBranch: sourceBranch,
             testResult: fixResult.testPassed,
             attempt,
+            ...(fixResult.output ? { output: fixResult.output } : {}),
             ...(fixResult.testPassed ? {} : { error: fixResult.error ?? '修复未成功' }),
           },
         })
