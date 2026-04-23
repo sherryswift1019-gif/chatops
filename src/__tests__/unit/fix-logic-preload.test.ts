@@ -35,6 +35,7 @@ import { acquire, release } from '../../agent/worktree/manager.js'
 import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { gitlabGetIssue } from '../../agent/analysis/gitlab-issue.js'
 import { createFixBranch, rebaseOnTarget, pushBranch, commitChanges } from '../../agent/fix/branch-manager.js'
+import { resetExecutorForTest } from '../../agent/claude-executor.js'
 
 const baseInput = {
   reportId: 1,
@@ -55,6 +56,11 @@ describe('runFixForProject: preload + prompt 集成行为', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    // 重置 claude-executor 单例 + 清理可能泄漏的 CLAUDE_EXECUTOR env，
+    // 否则其他 test 设的 porygon 路径会让 fix-logic 绕开 runClaudeCli mock。
+    resetExecutorForTest()
+    delete process.env.CLAUDE_EXECUTOR
+    process.env.NODE_ENV = 'test'
     tmpDir = await mkdtemp(join(tmpdir(), 'fixlogic-test-'))
     vi.mocked(acquire).mockResolvedValue({
       path: tmpDir,
@@ -136,6 +142,9 @@ describe('runFixForProject: rebase 失败的三种状态（TODO §7）', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks()
+    resetExecutorForTest()
+    delete process.env.CLAUDE_EXECUTOR
+    process.env.NODE_ENV = 'test'
     tmpDir = await mkdtemp(join(tmpdir(), 'fixlogic-rebase-test-'))
     vi.mocked(acquire).mockResolvedValue({
       path: tmpDir,
@@ -150,8 +159,8 @@ describe('runFixForProject: rebase 失败的三种状态（TODO §7）', () => {
       id: 10, key: 'fix_bug_l2', toolNames: [], systemPrompt: 'stub',
     } as any)
     vi.mocked(gitlabGetIssue).mockResolvedValue({ description: 'x' })
-    // Claude 输出带"测试通过"触发 isFixSuccessful → true，流程走到 rebase
-    vi.mocked(runClaudeCli).mockResolvedValue('所有测试通过')
+    // Claude 输出末尾单独一行为 marker `修复完成` 才能让 isFixSuccessful=true，走到 rebase
+    vi.mocked(runClaudeCli).mockResolvedValue('所有测试通过\n修复完成')
   })
 
   afterEach(async () => {

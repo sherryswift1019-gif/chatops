@@ -30,37 +30,38 @@ describe('Fix Runner: extractProjectPath', () => {
 })
 
 describe('Fix Runner: isFixSuccessful', () => {
-  it('包含"所有测试通过"→ 成功', () => {
-    expect(isFixSuccessful('修改了 2 个文件，所有测试通过。')).toBe(true)
+  // 严格 marker 规则（2026-04-23 改）：输出末尾**单独一行**为 `修复完成` 才算成功。
+  // 原 fuzzy 关键字匹配（"所有测试通过"/"BUILD SUCCESS"）已废弃——Claude 在
+  // 解释根因/引用日志时常出现"测试失败"等字样，误触发 failurePatterns 让明明改
+  // 好了却判失败。marker 是唯一可靠信号。
+
+  it('末尾行是 "修复完成" → 成功', () => {
+    expect(isFixSuccessful('修改了 2 个文件，所有测试通过。\n修复完成')).toBe(true)
   })
 
-  it('包含"测试失败"→ 失败', () => {
+  it('末尾行是 "修复完成" 带尾部空行 → 成功', () => {
+    expect(isFixSuccessful('修复了 NPE\n修复完成\n\n')).toBe(true)
+  })
+
+  it('末尾行带额外内容 → 失败（严格匹配）', () => {
+    expect(isFixSuccessful('所有测试通过\n修复完成，请审查')).toBe(false)
+  })
+
+  it('输出中含 "修复完成" 但非末尾行 → 失败', () => {
+    expect(isFixSuccessful('修复完成\n不过还要再改一处')).toBe(false)
+  })
+
+  it('只有"所有测试通过"无 marker → 失败（防 fuzzy 误触发）', () => {
+    expect(isFixSuccessful('修改了 2 个文件，所有测试通过。')).toBe(false)
+  })
+
+  it('含"测试失败"→ 失败', () => {
     expect(isFixSuccessful('运行测试后发现测试失败：NullPointerException')).toBe(false)
   })
 
-  it('先失败后成功 → 成功（以最后出现为准）', () => {
-    const output = [
-      '第一次尝试：测试失败',
-      '修改了异常处理逻辑',
-      '第二次运行：所有测试通过',
-    ].join('\n')
-    expect(isFixSuccessful(output)).toBe(true)
-  })
-
-  it('先成功后失败 → 失败', () => {
-    const output = [
-      '单元测试通过',
-      '运行集成测试：测试失败',
-    ].join('\n')
-    expect(isFixSuccessful(output)).toBe(false)
-  })
-
-  it('BUILD SUCCESS', () => {
-    expect(isFixSuccessful('mvn test output: BUILD SUCCESS')).toBe(true)
-  })
-
-  it('无匹配关键词 → 失败', () => {
-    expect(isFixSuccessful('代码已修改完毕')).toBe(false)
+  it('空输出 → 失败', () => {
+    expect(isFixSuccessful('')).toBe(false)
+    expect(isFixSuccessful('   \n\n')).toBe(false)
   })
 })
 
@@ -109,7 +110,7 @@ describe('Integration: L1/L2 修复闭环', () => {
 
   // 使用 vi.doMock 需要动态 import，这里用直接测试辅助函数 + 流程验证
   it('isFixSuccessful 正确识别成功场景', () => {
-    expect(isFixSuccessful('修复完成，所有测试通过')).toBe(true)
+    expect(isFixSuccessful('修改了 2 个文件\n修复完成')).toBe(true)
     expect(isFixSuccessful('BUILD FAILURE: compilation error')).toBe(false)
   })
 
