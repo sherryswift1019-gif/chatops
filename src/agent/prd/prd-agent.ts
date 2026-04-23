@@ -643,7 +643,8 @@ async function runClaudeOnce(opts: {
 }): Promise<string> {
   if (!runner) throw new Error('ClaudeRunner 未初始化')
   // review/repair 流程：prompt 已内联完整 PRD 全文，不需要 read_prd 工具；
-  // 每次都是一次性评审，走冷启动 + 3 turn 硬上限 + 120s 超时，防卡死。
+  // 每次都是一次性评审，走冷启动 + 3 turn 硬上限。不设超时——AI 审查耗时不稳定，
+  // 180s 也可能不够，硬截断会把合法慢调用判死。maxTurns=3 是最终兜底。
   return runner.executeCapabilityDirect({
     prompt: opts.prompt,
     systemPrompt: opts.systemPrompt,
@@ -652,7 +653,6 @@ async function runClaudeOnce(opts: {
     sessionKey: opts.sessionKey,
     freshSession: true,
     maxTurns: 3,
-    timeoutMs: 120_000,
   })
 }
 

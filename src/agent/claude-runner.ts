@@ -817,6 +817,7 @@ ${intentRules}
           env: {
             ...(process.env as Record<string, string>),
             CHATOPS_TASK_CONTEXT: JSON.stringify({ ...context, cwd }),
+            CHATOPS_ALLOWED_TOOLS: tools.map(t => t.name).join(','),
             DATABASE_URL: process.env.DATABASE_URL ?? '',
             ...claudeEnv,
           },
@@ -930,9 +931,9 @@ ${intentRules}
 
     let capturedSessionId: string | undefined
 
-    // 兜底：memory 策略允许 Web PRD 路径保留原生 Write/Edit，但 agent 偶尔会用它们
-    // 直接写 docs/prds/*.md 绕过 save_prd。在 tool_use 流里记下这些路径，post-hook 里
-    // 若检测到本轮 save_prd 未触发，就自动读文件入库，避免 PRD 孤立在磁盘上。
+    // 兜底：Write/Edit/MultiEdit 已加入 disallowedTools，Claude 正常情况应走 save_prd。
+    // 保留这段 salvage 逻辑作为最后防线：万一将来 disallow 失效或某个 porygon/Claude 版本
+    // 不尊重 disallowedTools，仍能把磁盘上的 PRD md 吸回 DB，避免 PRD 孤立。
     const prdsDirAbs = pathResolve(process.cwd(), 'docs/prds')
     const writtenPrdFiles = new Set<string>()
     const isPrdFilePath = (filePath: unknown): string | null => {
@@ -950,6 +951,10 @@ ${intentRules}
         prompt: opts.prompt,
         appendSystemPrompt: systemPrompt,
         ...(resumeId ? { resume: resumeId } : {}),
+        // 精准黑名单：禁 Claude Code 规划者/写代码类工具，避免 Agent 绕过 save_prd 写磁盘
+        // 或用 TodoWrite/ExitPlanMode 退化成代码规划人格。保留 Read/WebFetch/WebSearch/Glob/Grep
+        // 给 PRD Agent 澄清需求用（见 memory/feedback_disallowed_tools.md 的 Why）。
+        disallowedTools: ['Bash', 'Write', 'Edit', 'MultiEdit', 'TodoWrite', 'ExitPlanMode'],
         mcpServers: {
           'chatops-tools': {
             command: 'node',
