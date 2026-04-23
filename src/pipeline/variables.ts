@@ -1,3 +1,17 @@
+/**
+ * 变量模板约定（script 与 capability 节点语义统一）
+ *
+ * - `{{vars.xxx}}`：读取 `state.runtimeVars`（由 im_input / wait_webhook
+ *   节点写入）与 `pipeline.variables`（流水线配置自定义变量）的合并值。
+ *   script 节点走 resolveVariables（本文件），capability 节点走
+ *   resolveCapabilityParams（src/pipeline/executor-hooks.ts）。
+ * - `{{triggerParams.xxx}}`：仅 capability 节点识别，读取流水线触发时
+ *   透传的 triggerParams。
+ * - 未匹配的模板：保留字面字符串。
+ *
+ * capability 第一版仅支持整值替换（^{{...}}$），不支持嵌入式模板
+ * （如 "foo-{{vars.x}}"）。
+ */
 export interface VariableContext {
   productLine: { name: string; displayName: string }
   pipeline: { id: number; name: string }

@@ -7,6 +7,7 @@ import { listEnvironments } from '../../db/repositories/environments-repo.js'
 import { getConfig } from '../../db/repositories/system-config.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { resolveSSHConfig, resolveComposeFile, findProjectByName, findEnvByName } from './ssh-utils.js'
+import { listProjectBranches } from './list-gitlab-branches.js'
 import { appendFileSync } from 'fs'
 import axios from 'axios'
 import https from 'https'
@@ -75,22 +76,6 @@ function buildImageFullPath(harborUrl: string, harborProject: string, imageTag: 
 
 // ── GitLab branch → commit 解析 ─────────────────────────────────────────
 
-async function listGitLabBranches(gitlabPath: string): Promise<string[]> {
-  const gitlab = await resolveGitlabConfig()
-  if (!gitlab.url || !gitlab.token) return []
-  const encodedProject = encodeURIComponent(gitlabPath)
-  const agent = gitlab.skipTlsVerify ? new https.Agent({ rejectUnauthorized: false }) : undefined
-  try {
-    const res = await axios.get<Array<{ name: string }>>(
-      `${gitlab.url}/api/v4/projects/${encodedProject}/repository/branches`,
-      { headers: { 'PRIVATE-TOKEN': gitlab.token }, httpsAgent: agent, timeout: 10000, params: { per_page: 50 } }
-    )
-    return res.data.map(b => b.name)
-  } catch {
-    return []
-  }
-}
-
 async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ tag: string; commitId: string; shortId: string }> {
   const gitlab = await resolveGitlabConfig()
   if (!gitlab.url || !gitlab.token) throw new Error('GitLab 未配置（url/token）。请在系统配置中设置。')
@@ -112,7 +97,7 @@ async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ ta
     const status = (err as { response?: { status?: number } })?.response?.status
     if (status === 404) {
       // 查询该项目所有分支，帮用户找到正确分支名
-      const branchList = await listGitLabBranches(gitlabPath)
+      const branchList = await listProjectBranches(gitlabPath)
       const hint = branchList.length > 0
         ? `\n\n该模块可用分支:\n${branchList.map(b => `- ${b}`).join('\n')}`
         : ''

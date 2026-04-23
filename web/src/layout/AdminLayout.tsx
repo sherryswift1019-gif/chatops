@@ -21,7 +21,7 @@ import { me, logout, type MeResponse } from '../api/auth'
 const { Sider, Content, Header } = Layout
 
 const PAGE_NAMES: Record<string, string> = {
-  '/product-lines': '产线管理',
+  '/product-lines': '产品管理',
   '/environments': '环境管理',
   '/dingtalk-users': '钉钉用户',
   '/capabilities': '能力管理',
@@ -33,6 +33,7 @@ const PAGE_NAMES: Record<string, string> = {
   '/product-knowledge': '知识库配置',
   '/metrics': '价值仪表盘',
   '/prd-documents': 'PRD 文档',
+  '/prd-metrics': 'PRD 指标',
   '/prd-chat': 'PRD 对话',
 }
 
@@ -41,7 +42,7 @@ const menuItems = [
     type: 'group' as const,
     label: '运维管理',
     children: [
-      { key: '/product-lines', icon: <AppstoreOutlined />, label: '产线管理' },
+      { key: '/product-lines', icon: <AppstoreOutlined />, label: '产品管理' },
       { key: '/environments', icon: <CloudOutlined />, label: '环境管理' },
       { key: '/dingtalk-users', icon: <UserOutlined />, label: '钉钉用户' },
       { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
@@ -62,6 +63,7 @@ const menuItems = [
     children: [
       { key: '/bug-runs', icon: <BugOutlined />, label: 'Bug 修复实例' },
       { key: '/prd-documents', icon: <FileTextOutlined />, label: 'PRD 文档' },
+      { key: '/prd-metrics', icon: <DashboardOutlined />, label: 'PRD 指标' },
       { key: '/product-knowledge', icon: <BookOutlined />, label: '知识库配置' },
       { key: '/metrics', icon: <DashboardOutlined />, label: '价值仪表盘' },
     ],

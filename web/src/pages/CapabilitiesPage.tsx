@@ -60,7 +60,7 @@ export default function CapabilitiesPage() {
   function openEdit(record: Capability) {
     setEditing(record)
     form.setFieldsValue({ ...record })
-    setPromptValue(record.systemPrompt ?? '')
+    setPromptValue(record.systemPrompt ?? record.defaultSystemPrompt ?? '')
     setPromptModified(false)
     setPipelineBindingDirty(false)
     setModalOpen(true)
@@ -83,7 +83,14 @@ export default function CapabilitiesPage() {
         }
         message.success('更新成功')
       } else {
-        await createCapability(values)
+        const { defaultPipelineId, ...rest } = values
+        const created = await createCapability(rest)
+        if (promptModified && promptValue) {
+          await updateCapabilitySystemPrompt(created.id, promptValue)
+        }
+        if (pipelineBindingDirty && defaultPipelineId != null) {
+          await updateCapabilityPipelineBinding(created.id, Number(defaultPipelineId))
+        }
         message.success('创建成功')
       }
       setModalOpen(false)
@@ -183,53 +190,52 @@ export default function CapabilitiesPage() {
           <Form.Item name="needsApproval" label="需审批" valuePropName="checked" initialValue={false}>
             <Switch checkedChildren="是" unCheckedChildren="否" />
           </Form.Item>
-          {editing && (
-            <Form.Item
-              name="defaultPipelineId"
-              label={
-                <Space>
-                  <span>默认 Pipeline（IM 触发）</span>
-                  <Tooltip title="绑定后，IM 中触发此能力将启动对应 pipeline（通常首节点为参数澄清），具备审批/容错/回滚能力。未绑定则走 Agent 直接处理。">
-                    <Tag color="blue">说明</Tag>
-                  </Tooltip>
-                </Space>
-              }
-            >
-              <Select
-                allowClear
-                placeholder="未绑定 — 走 Agent 直接处理"
-                options={pipelines.map(p => ({ value: p.id, label: p.name }))}
-                onChange={() => setPipelineBindingDirty(true)}
-                onClear={() => setPipelineBindingDirty(true)}
-              />
-            </Form.Item>
-          )}
-          {editing && (
-            <Form.Item label={
+          <Form.Item
+            name="defaultPipelineId"
+            label={
               <Space>
-                <span>系统提示词</span>
-                {editing.systemPrompt !== editing.defaultSystemPrompt
-                  ? <Tag color="orange">自定义</Tag>
-                  : <Tag>默认</Tag>
-                }
+                <span>默认 Pipeline（IM 触发）</span>
+                <Tooltip title="绑定后，IM 中触发此能力将启动对应 pipeline（通常首节点为参数澄清），具备审批/容错/回滚能力。未绑定则走 Agent 直接处理。">
+                  <Tag color="blue">说明</Tag>
+                </Tooltip>
               </Space>
-            }>
-              <Input.TextArea
-                rows={8}
-                value={promptValue}
-                onChange={e => { setPromptValue(e.target.value); setPromptModified(true) }}
-                style={{ fontFamily: 'monospace', fontSize: 12 }}
-              />
-              <div style={{ marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            }
+          >
+            <Select
+              allowClear
+              placeholder="未绑定 — 走 Agent 直接处理"
+              options={pipelines.map(p => ({ value: p.id, label: p.name }))}
+              onChange={() => setPipelineBindingDirty(true)}
+              onClear={() => setPipelineBindingDirty(true)}
+            />
+          </Form.Item>
+          <Form.Item label={
+            <Space>
+              <span>系统提示词{!editing && '（可选）'}</span>
+              {editing && (editing.systemPrompt !== editing.defaultSystemPrompt
+                ? <Tag color="orange">自定义</Tag>
+                : <Tag>默认</Tag>
+              )}
+            </Space>
+          }>
+            <Input.TextArea
+              rows={8}
+              value={promptValue}
+              onChange={e => { setPromptValue(e.target.value); setPromptModified(true) }}
+              placeholder={editing ? undefined : '留空则使用系统默认提示词'}
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+            />
+            <div style={{ marginTop: 8, display: 'flex', justifyContent: editing ? 'space-between' : 'flex-end', alignItems: 'center' }}>
+              {editing && (
                 <Button size="small" onClick={handleResetPrompt} disabled={editing.systemPrompt === editing.defaultSystemPrompt}>
                   恢复默认
                 </Button>
-                <span style={{ color: token.colorTextDescription, fontSize: 12 }}>
-                  支持变量: {'{{initiatorRole}}'} | 模块/服务器信息会自动注入
-                </span>
-              </div>
-            </Form.Item>
-          )}
+              )}
+              <span style={{ color: token.colorTextDescription, fontSize: 12 }}>
+                支持变量: {'{{initiatorRole}}'} | 模块/服务器信息会自动注入
+              </span>
+            </div>
+          </Form.Item>
         </Form>
       </Modal>
     </Card>

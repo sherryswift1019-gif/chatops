@@ -22,6 +22,7 @@ const addMenuItems: MenuProps['items'] = [
   { key: 'approval', label: '人员审批' },
   { key: 'capability', label: 'Agent Capability' },
   { key: 'wait_webhook', label: '等待 Webhook' },
+  { key: 'im_input', label: 'IM 参数采集' },
 ]
 
 export function CanvasToolbar(p: Props) {

@@ -107,7 +107,8 @@ export async function runFixForProject(input: RunFixForProjectInput): Promise<Ru
     )
 
     const capabilityRow = await getCapabilityByKey(`fix_bug_${input.level}`)
-    if (!capabilityRow?.systemPrompt) {
+    const effectivePrompt = capabilityRow?.systemPrompt ?? capabilityRow?.defaultSystemPrompt ?? null
+    if (!effectivePrompt) {
       return { branch, testPassed: false, error: `fix_bug_${input.level} 未配置 systemPrompt` }
     }
 
@@ -119,7 +120,7 @@ export async function runFixForProject(input: RunFixForProjectInput): Promise<Ru
       return { branch, testPassed: false, error: `预取 Issue #${input.issueId} 失败: ${msg}` }
     }
 
-    const prompt = `${capabilityRow.systemPrompt}
+    const prompt = `${effectivePrompt}
 
 代码仓库路径: ${worktree.path}
 项目: ${input.projectPath}

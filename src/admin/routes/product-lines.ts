@@ -112,7 +112,16 @@ export async function registerProductLineRoutes(app: FastifyInstance): Promise<v
     return reply.send(await getProductLineCapabilities(Number(req.params.id)))
   })
 
-  app.put<{ Params: { id: string }; Body: Array<{ capabilityKey: string; envName: string; enabled: boolean; allowedRoles: string[] }> }>(
+  app.put<{
+    Params: { id: string }
+    Body: Array<{
+      capabilityKey: string
+      envName: string
+      enabled: boolean
+      allowedRoles: string[]
+      triggerSources?: string[]
+    }>
+  }>(
     '/product-lines/:id/capabilities', async (req, reply) => {
       const productLineId = Number(req.params.id)
       const caps = req.body

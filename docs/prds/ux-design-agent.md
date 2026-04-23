@@ -160,11 +160,11 @@
 **描述:** Phase 1/2 对话中，Agent 主动检索现有设计文档和知识库，避免风格不一致，发现可复用资产。
 
 **验收标准:**
-- [ ] `search_design_docs`：用模块名/功能关键词检索已有设计文档；找到时告知用户并询问是否对齐或复用
+- [ ] 已有设计文档检索能力（工具名随 §8 实现方案确定）：用模块名/功能关键词检索已有设计文档；找到时告知用户并询问是否对齐或复用
 - [ ] `search_knowledge`：检索平台级通用信息（产线设计配置、已有组件规范）
 - [ ] 检索结果摘要给用户确认，不直接写入设计文档
 
-**来源:** 对话 Phase 2 — 用户确认需要 search_design_docs + search_knowledge 两个工具
+**来源:** 对话 Phase 2 — 用户确认需要设计文档检索能力 + `search_knowledge`；工具名 `search_design_docs` 为草案名称，最终工具名随 §8 实现方案确认后确定
 
 ### 3.8 竞品研究 [P1]
 
@@ -244,12 +244,14 @@
 - [ ] 对话历史持久化到 DB，设计师可跨 session 查看
 - [ ] Web Admin 导航新增"设计文档"菜单入口
 
-**技术 TODO（一期实现前需澄清）:**
-- `PrdChatPage` / `usePrdChatStream` / `ChatComponents` / `prd-chat.ts` routes 当前与 PRD capability 强耦合（session_key 前缀、能力路由、review_progress 节点名）。复用到 UI/UX Agent 前，需要先抽取 `agentKind: 'prd' | 'design'` 参数并：
-  - 把 session_key 命名空间从 `prd-chat-*` 扩展为 `${agentKind}-chat-*`
-  - `prd_chat_sessions` / `prd_chat_messages` 两张表重命名为 `agent_chat_sessions` / `agent_chat_messages` 并补 `agent_kind` 字段（schema 迁移 + 历史数据回填），或新建 `design_chat_*` 并行表
-  - `streamWebChat` 入口按 `agentKind` 分发 capability（create_prd / create_design_doc）
-- 决策选项二选一（在设计阶段第一周内完成）: A. 合表（复用） / B. 并行表（隔离）
+**实施前提（合表方案，需在 UX Agent 开工前完成）:**
+
+以下为一次性基础设施升级，升级完成后后续所有 Agent（Arch / Dev / Test）直接复用，无需重复改造：
+
+1. **DB 迁移**：`prd_chat_sessions` → `agent_chat_sessions`（新增 `agent_kind VARCHAR NOT NULL DEFAULT 'prd'`），`prd_chat_messages` → `agent_chat_messages`（同增 `agent_kind`）；历史数据回填 `agent_kind='prd'`
+2. **后端路由泛化**：`prd-chat.ts` 重构为 `agent-chat.ts`，入参增加 `agentKind`；`streamWebChat` 按 `agentKind` 分发 capability（`create_prd` / `create_design_doc`）；原 `/admin/prd-chat` 路由保留重定向兼容
+3. **前端组件泛化**：`PrdChatPage` → `AgentChatPage`（接收 `agentKind` prop），`usePrdChatStream` → `useAgentChatStream`；`PrdChatPage` 改为 `<AgentChatPage agentKind="prd" />` 的封装，对外行为不变
+4. **UX Agent 直接使用**：`<AgentChatPage agentKind="design" />`，session_key 命名空间 `design-chat-*`，无需额外改动
 
 **来源:** 对话 Phase 3 — "Web 端对话面板放在一期一起做"
 
@@ -289,20 +291,32 @@
 | PRD 文档系统 / read_prd | 行为复用 | 复用 read_prd 工具，只读，不改动 PRD 数据或接口 | 完全兼容 | — | Phase 2 — 用户确认 |
 | search_knowledge | 行为复用 | 直接复用，不改动工具实现 | 完全兼容 | — | Phase 2 — 用户确认 |
 | IM 适配层（钉钉/飞书） | 行为复用 | 复用消息发送/接收，不改动适配器代码 | 完全兼容 | — | Phase 2 — 用户确认 |
-| PrdChatPage / usePrdChatStream | 行为复用 | 复用 Chat UI 组件和 SSE hook，新建 DesignChatPage，不修改原有组件 | 完全兼容 | — | Phase 3 — "Web 端对话面板放一期" |
+| PrdChatPage / usePrdChatStream / prd-chat.ts | 接口变更 | 泛化为 AgentChatPage / useAgentChatStream / agent-chat.ts，接收 agentKind 参数；PrdChatPage 改为 `<AgentChatPage agentKind="prd" />` 封装，对外行为不变 | 向后兼容（原路由保留重定向） | 回滚：revert 泛化提交，原组件文件备份保留 | Phase 3 对话 — 合表方案决策 |
+| prd_chat_sessions / prd_chat_messages | 数据结构变更 | 表重命名为 agent_chat_sessions / agent_chat_messages，新增 agent_kind 字段，历史数据回填 agent_kind='prd' | 破坏性变更 | 回滚：rename back + drop column；回填脚本幂等可重跑 | Phase 3 对话 — 合表方案决策 |
 | Web Admin 导航 | UI 变更 | 新增"设计文档"菜单项和页面路由 | 完全兼容 | 移除菜单项即可回滚 | Phase 3 范围确认 |
 | DB Schema | 数据结构变更 | 新增 design_documents 表，不修改任何现有表 | 完全兼容（新增表，不影响现有表） | drop table design_documents 即可回滚 | Phase 3 范围确认 |
 | 文件存储 | 接口变更 | 新增 HTML 原型文件存储能力（平台现无此能力，全新建设） | 完全兼容（新增能力，不影响现有） | 停止挂载存储目录即可 | Phase 3 范围确认 |
 
 ### 6.2 破坏性变更详述
 
-无
+**DB 表重命名：prd_chat_sessions / prd_chat_messages**
+
+- **现状**：两张表专用于 PRD Agent 对话，无 agent_kind 字段
+- **变更后**：重命名为 `agent_chat_sessions` / `agent_chat_messages`，新增 `agent_kind VARCHAR NOT NULL DEFAULT 'prd'`，历史记录回填 `agent_kind='prd'`
+- **影响方**：`prd-chat.ts` 后端路由、`usePrdChatStream` hook、`PrdChatPage` 组件（三者在同一次迁移提交中同步修改）
+- **迁移步骤**：
+  1. 执行 `schema-v8.sql`：ALTER TABLE RENAME + ADD COLUMN + UPDATE SET agent_kind='prd'
+  2. 同步部署后端泛化代码（agent-chat.ts）和前端泛化组件（AgentChatPage）
+  3. 验证 PRD Agent Web 对话面板功能正常（回归测试见 §6.3）
+- **回滚策略**：执行 rollback SQL（RENAME TABLE back + DROP COLUMN）+ revert 对应提交；迁移脚本幂等，可重跑
 
 ### 6.3 回归测试建议
 
 - [ ] 产线配置：新增设计系统字段为 null 时，HTML 原型和文档生成不报错（向后兼容验证）
 - [ ] read_prd 工具：UI/UX Agent 调用后 PRD 数据不被修改（只读验证）
 - [ ] Web Admin 导航：新增菜单项不影响现有页面路由和权限
+- [ ] DB 迁移：agent_chat_sessions 表中 PRD Agent 历史对话 agent_kind 字段回填正确（全部为 'prd'）
+- [ ] PRD Agent Web 对话面板：迁移后功能回归（session 创建、消息发送、SSE 流、历史查看均正常）
 - [ ] DB 迁移：新增 design_documents 表后现有表数据完整性不受影响
 - [ ] IM 交付：设计文档消息发送不影响现有 PRD Agent 消息的发送路径
 
@@ -317,7 +331,7 @@
 - 11 章 Markdown 设计规范文档生成
 - 单文件半交互 HTML 原型生成（服务器 URL 访问）
 - 设计自审（Markdown 文档，7 维度，最多 2 轮自修复）
-- 知识库检索（`search_design_docs` + `search_knowledge`）
+- 知识库检索（已有设计文档检索能力 + `search_knowledge`，工具名见 §8 待定）
 - 竞品研究（Agent 主动 web 搜索）
 - 上下文持久化（PRD Agent 模式 + 4 个设计专属字段）
 - System Prompt（7 条铁律含 UX 基线强制）
@@ -359,3 +373,5 @@
 | 铁律 7 UX 基线强制（5 条具体规则） | 用户提出 UX 易用性要求；Agent 将原则落地为可检查的具体规则 | Phase 2 补充对话 |
 | Web 端对话面板放一期，复用 PRD Agent 基础设施 | 用户明确要求一期做；git 状态显示 PRD Chat 基础设施已存在可复用 | Phase 3 对话 |
 | 竞品研究由 Agent 主动触发 | 用户希望 Agent 自己搜索，不需要设计师指定竞品 | Phase 2 对话 — 用户决策 |
+| Chat 基础设施采用合表方案（agent_chat_sessions + agent_kind 字段），一次性泛化 PrdChatPage → AgentChatPage | 后续规划 Arch / Dev / Test Agent；若各自建表，4 套重复基础设施难以维护；合表方案使每个新 Agent 只需注册 agentKind，无需改动基础设施 | Phase 3 对话 — 用户决策（2026-04-22）|
+| 3.7 验收标准改为能力维度（不锁定工具名 `search_design_docs`），工具名随 §8 实现方案确定 | §8 列为待定（新建独立工具 vs 扩展 `search_existing_prds` 加 `kind` 参数），两种方案工具名不同；在 3.7 锁定工具名会导致若走扩展方案时验收标准天然无法通过 | 自审驳回 blocker 修复（2026-04-22）|

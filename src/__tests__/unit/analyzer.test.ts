@@ -842,6 +842,43 @@ describe('handleAnalyzeBug 入口校验分支', () => {
     expect(res.error).toContain('未配置 systemPrompt')
   })
 
+  it('system_prompt 为 NULL 时 fallback 到 default_system_prompt', async () => {
+    const productLineId = await seedBaseData({
+      projects: [{ name: 'pas-api', gitlabPath: 'PAM/pas-api' }],
+    })
+    const pool = getTestPool()
+    await pool.query(
+      `UPDATE capabilities
+       SET system_prompt = NULL, default_system_prompt = 'DEFAULT_ANALYZE_PROMPT'
+       WHERE key = 'analyze_bug'`,
+    )
+
+    vi.mocked(runFilterStage).mockResolvedValue({
+      involvedProjects: [{ projectPath: 'PAM/pas-api', isPrimary: true, sourceBranch: 'master' }],
+      primaryProjectPath: 'PAM/pas-api',
+    })
+    vi.mocked(runDetailStage).mockResolvedValue(asDetail({
+      classification: 'bug',
+      level: 'l2',
+      confidence: 'high',
+      confidenceScore: 0.9,
+      rootCause: { type: 'business_logic', summary: 's', file: 'a.ts', lineRange: [1, 2] },
+      solutions: [{ id: 'a', summary: 's', recommended: true, risk: 'low', effort: 'small' }],
+      affectedModules: ['m'],
+      analysisSteps: ['s'],
+      markdown: '',
+    }))
+    vi.mocked(gitlabCreateIssue).mockResolvedValue({ iid: 1, url: 'http://x' })
+
+    const result = await handleAnalyzeBug(buildOpts(productLineId))
+
+    expect(result.success).toBe(true)
+    const filterCallArg = vi.mocked(runFilterStage).mock.calls[0][0]
+    expect(filterCallArg.systemPrompt).toBe('DEFAULT_ANALYZE_PROMPT')
+    const detailCallArg = vi.mocked(runDetailStage).mock.calls[0][0]
+    expect(detailCallArg.systemPrompt).toBe('DEFAULT_ANALYZE_PROMPT')
+  })
+
   it('productLine 下 0 个 project → 返回 "未配置任何 project"', async () => {
     // 准备数据：有 product_line + knowledgeRepo + capability，但 projects 表无记录
     const productLineId = await seedBaseData({ projects: [] })

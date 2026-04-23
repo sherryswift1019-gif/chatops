@@ -56,7 +56,8 @@ export async function runClaudeReview(input: RunClaudeReviewInput): Promise<Clau
   const { projectPath, mrIid, productLineId, fixBranch, signal } = input
 
   const capabilityRow = await getCapabilityByKey('ai_review_mr')
-  if (!capabilityRow?.systemPrompt) {
+  const effectivePrompt = capabilityRow?.systemPrompt ?? capabilityRow?.defaultSystemPrompt ?? null
+  if (!effectivePrompt) {
     throw new Error('ai_review_mr 未配置 systemPrompt，请在管理后台配置')
   }
 
@@ -84,7 +85,7 @@ export async function runClaudeReview(input: RunClaudeReviewInput): Promise<Clau
 
   try {
     const prompt =
-      `${capabilityRow.systemPrompt}\n\n` +
+      `${effectivePrompt}\n\n` +
       `你的工作目录已切到 **${projectPath}** 仓库的 fix 分支 \`${fixBranch}\`——` +
       `可用 Glob/Grep/Read 查阅**完整源码**（不限于 diff 范围），` +
       `特别推荐用来核查被修改函数的其他调用点、继承/实现方、反射引用。\n\n` +

@@ -3,14 +3,19 @@ import { Card, Table, Button, Modal, Form, Input, InputNumber, Select, Popconfir
 import { PlusOutlined } from '@ant-design/icons'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
 import { getProductLines } from '../api/product-lines'
+import { getCapabilities } from '../api/capabilities'
+import { getEnvironments } from '../api/environments'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
-import type { ApprovalRule, ProductLine } from '../types'
+import type { ApprovalRule, ProductLine, Environment } from '../types'
+import type { Capability } from '../api/capabilities'
 
 export default function ApprovalRulesPage() {
   const [data, setData] = useState<ApprovalRule[]>([])
   const [loading, setLoading] = useState(false)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [productLineMap, setProductLineMap] = useState<Map<number, string>>(new Map())
+  const [capabilities, setCapabilities] = useState<Capability[]>([])
+  const [environments, setEnvironments] = useState<Environment[]>([])
   const [filterProductLineId, setFilterProductLineId] = useState<number | undefined>(undefined)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<ApprovalRule | null>(null)
@@ -21,6 +26,8 @@ export default function ApprovalRulesPage() {
       setProductLines(pls)
       setProductLineMap(new Map(pls.map(pl => [pl.id, pl.displayName])))
     })
+    getCapabilities().then(setCapabilities)
+    getEnvironments().then(setEnvironments)
   }, [])
 
   useEffect(() => { load() }, [filterProductLineId])
@@ -138,11 +145,39 @@ export default function ApprovalRulesPage() {
               options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))}
             />
           </Form.Item>
-          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请输入操作类型' }]}>
-            <Input placeholder="如: deploy, rollback" />
+          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请选择操作类型' }]}>
+            <Select
+              showSearch
+              placeholder="选择操作类型"
+              options={[
+                { value: '*', label: <span><Tag color="purple">*</Tag> 任意操作（通配）</span> },
+                ...capabilities.map(c => ({
+                  value: c.key,
+                  label: <span>{c.displayName} <span style={{ color: '#999', fontSize: 11 }}>({c.key})</span></span>,
+                })),
+              ]}
+              filterOption={(input, opt) => {
+                const v = String((opt as { value?: string } | undefined)?.value ?? '')
+                return v.toLowerCase().includes(input.toLowerCase())
+              }}
+            />
           </Form.Item>
-          <Form.Item name="env" label="环境" rules={[{ required: true, message: '请输入环境' }]}>
-            <Input placeholder="如: prod, staging" />
+          <Form.Item name="env" label="环境" rules={[{ required: true, message: '请选择环境' }]}>
+            <Select
+              showSearch
+              placeholder="选择环境"
+              options={[
+                { value: '*', label: <span><Tag color="purple">*</Tag> 任意环境（通配）</span> },
+                ...environments.map(e => ({
+                  value: e.name,
+                  label: <span>{e.displayName} <span style={{ color: '#999', fontSize: 11 }}>({e.name})</span></span>,
+                })),
+              ]}
+              filterOption={(input, opt) => {
+                const v = String((opt as { value?: string } | undefined)?.value ?? '')
+                return v.toLowerCase().includes(input.toLowerCase())
+              }}
+            />
           </Form.Item>
           <Form.Item name="primaryApprovers" label="主审批人" initialValue={[]}>
             <DingTalkUserSelect mode="multiple" placeholder="搜索并添加主审批人" />

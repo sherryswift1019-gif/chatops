@@ -8,7 +8,7 @@ import type { TestPipeline } from '../db/repositories/test-pipelines.js'
 import { findByReportCode } from '../db/repositories/bug-fix-events.js'
 import { getProjectByGitlabPath } from '../db/repositories/projects-repo.js'
 import { getPool } from '../db/client.js'
-import { runPipeline } from '../pipeline/executor.js'
+import { runPipeline, apiTrigger } from '../pipeline/executor.js'
 import { PipelineApprovalManager } from '../pipeline/approval-manager.js'
 import type { IMAdapter } from '../adapters/im/types.js'
 import type { TaskContext } from './tools/types.js'
@@ -145,20 +145,19 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
   if (capability.defaultPipelineId) {
     try {
       // 动态 import 避免 coordinator ↔ executor-hooks ↔ coordinator 循环依赖。
-      const { runPipeline } = await import('../pipeline/executor.js')
+      const { runPipeline, imTrigger } = await import('../pipeline/executor.js')
       const runId = await runPipeline(
         capability.defaultPipelineId,
         {},  // IM 触发场景通常不预分配服务器，由 pipeline 内部按需处理
-        'im',
-        opts.context.initiatorId,
-        {},  // runtimeVars 走 triggerParams 通道
-        undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
-        opts.extraParams ?? {},
-        {
+        imTrigger({
+          triggeredBy: opts.context.initiatorId,
           platform: opts.context.platform,
           groupId: opts.context.groupId,
           userId: opts.context.initiatorId,
-        },
+          params: opts.extraParams ?? {},
+        }),
+        {},  // runtimeVars 走 trigger.params 通道
+        undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
       )
       console.log(
         `[AgentCoordinator] pipeline run #${runId} started for capability "${opts.capabilityKey}"`,
@@ -437,15 +436,13 @@ export async function handleAnalysisComplete(
   const runId = await runPipeline(
     pipeline.id,
     {},  // capability-only pipeline，无需服务器
-    'api',
-    triggeredBy,
+    apiTrigger({ triggeredBy, params: { reportId } }),
     // runtimeVars: 把 reportId 同时写进 runtime 变量（test_runs.runtime_vars），
     // 这样 resume 时 reloadContext 能合并回 triggerParams——approval node 在
     // interrupt 后的 replay 仍能拿到 reportId（否则 pipeline.triggerParams 的
     // 静态模板 {reportId: null} 会覆盖，resolver 查不到 report）
     { reportId: String(reportId) },
     onComplete,
-    { reportId },
   )
 
   await setPipelineRunId(reportId, runId)
@@ -515,6 +512,15 @@ export async function checkAndTriggerHandover(
 
 // 通知回调（server.ts 仍注入；当前链路已由 notify_bug capability 负责，保留 API 兼容性）
 type NotifyDmFn = (userId: string, message: string) => Promise<void>
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let notifyDmFn: NotifyDmFn | null = null
 export function setNotifyDmFn(fn: NotifyDmFn): void { notifyDmFn = fn }
+
+// 主动给用户发 IM 私聊。无 adapter 注入时 noop（测试/未配置 IM 的场景）。
+// 调用方应用 catch 包住避免发送失败影响主流程。
+export async function notifyDm(userId: string, message: string): Promise<void> {
+  if (!notifyDmFn) {
+    console.warn('[coordinator] notifyDm not configured, skipping DM to', userId)
+    return
+  }
+  await notifyDmFn(userId, message)
+}

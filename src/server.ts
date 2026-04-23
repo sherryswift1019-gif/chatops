@@ -24,6 +24,7 @@ import { registerImSender } from './pipeline/im-notifier.js'
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
 import './agent/tools/list-images.js'
+import './agent/tools/list-gitlab-branches.js'
 import './agent/tools/get-gitlab-commits.js'
 import './agent/tools/get-logs.js'
 import './agent/tools/deploy.js'
@@ -49,6 +50,11 @@ import './agent/tools/save-prd.js'
 import './agent/tools/read-prd.js'
 import './agent/tools/update-prd-context.js'
 import './agent/tools/search-existing-prds.js'
+import './agent/tools/submit-review.js'
+import './agent/tools/save-arch.js'
+import './agent/tools/read-arch.js'
+import './agent/tools/update-arch-context.js'
+import './agent/tools/search-existing-arch.js'
 
 // 研发 AI 助手 Agent handler 注册
 import { registerAnalysisBugHandler } from './agent/analysis/analyzer.js'
@@ -59,6 +65,7 @@ import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
 import { registerNotifyHandler } from './agent/notify/notify-handler.js'
 import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
 import { setPrdClaudeRunner } from './agent/prd/prd-agent.js'
+import { sweepOrphanReviewingPrds } from './db/repositories/prd-documents.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
 import { startMrReconciler, stopMrReconciler } from './agent/reconcile/mr-state-reconciler.js'
 import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
@@ -216,6 +223,17 @@ async function main(): Promise<void> {
 
   // 启动 MR 状态对账调度器（webhook 漏发兜底，默认 5min）
   startMrReconciler()
+
+  // 启动兜底：把被上次进程中断的 PRD（status=reviewing 停留 >5min）推到 review_blocked，
+  // 避免 UI 永久卡在 "Agent 正在处理" 的 spinner。
+  try {
+    const swept = await sweepOrphanReviewingPrds(5 * 60 * 1000)
+    if (swept > 0) {
+      app.log.info(`[prd-sweep] marked ${swept} orphan reviewing PRD(s) as review_blocked`)
+    }
+  } catch (err) {
+    app.log.warn({ err }, '[prd-sweep] sweep orphan reviewing PRDs failed')
+  }
 
   // Session manager — processes each message
   const sessionManager = new SessionManager(

@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card, Tabs, Button, Table, Form, Input, Select, Modal, Space, Tag, Avatar,
-  Popconfirm, message, Switch, Spin, Typography, Divider, Checkbox,
+  Popconfirm, message, Switch, Spin, Typography, Divider, Checkbox, Tooltip,
 } from 'antd'
 import { ArrowLeftOutlined, PlusOutlined, SaveOutlined, UserOutlined } from '@ant-design/icons'
 import {
@@ -587,9 +587,15 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<ApprovalRule | null>(null)
+  const [capabilities, setCapabilities] = useState<Capability[]>([])
+  const [envs, setEnvs] = useState<Environment[]>([])
   const [form] = Form.useForm()
 
   useEffect(() => { load() }, [productLineId])
+  useEffect(() => {
+    getCapabilities().then(setCapabilities)
+    getEnvironments().then(setEnvs)
+  }, [])
 
   async function load() {
     setLoading(true)
@@ -681,11 +687,39 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
         width={640}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请输入操作类型' }]}>
-            <Input placeholder="如: deploy, rollback" />
+          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请选择操作类型' }]}>
+            <Select
+              showSearch
+              placeholder="选择操作类型"
+              options={[
+                { value: '*', label: <span><Tag color="purple">*</Tag> 任意操作（通配）</span> },
+                ...capabilities.map(c => ({
+                  value: c.key,
+                  label: <span>{c.displayName} <span style={{ color: '#999', fontSize: 11 }}>({c.key})</span></span>,
+                })),
+              ]}
+              filterOption={(input, opt) => {
+                const v = String((opt as { value?: string } | undefined)?.value ?? '')
+                return v.toLowerCase().includes(input.toLowerCase())
+              }}
+            />
           </Form.Item>
-          <Form.Item name="env" label="环境" rules={[{ required: true, message: '请输入环境标识' }]}>
-            <Input placeholder="如: prod, staging" />
+          <Form.Item name="env" label="环境" rules={[{ required: true, message: '请选择环境' }]}>
+            <Select
+              showSearch
+              placeholder="选择环境"
+              options={[
+                { value: '*', label: <span><Tag color="purple">*</Tag> 任意环境（通配）</span> },
+                ...envs.map(e => ({
+                  value: e.name,
+                  label: <span>{e.displayName} <span style={{ color: '#999', fontSize: 11 }}>({e.name})</span></span>,
+                })),
+              ]}
+              filterOption={(input, opt) => {
+                const v = String((opt as { value?: string } | undefined)?.value ?? '')
+                return v.toLowerCase().includes(input.toLowerCase())
+              }}
+            />
           </Form.Item>
           <Form.Item name="primaryApprovers" label="主审批人（钉钉用户ID，多选）">
             <DingTalkUserSelect mode="multiple" placeholder="搜索并添加主审批人" />
@@ -713,7 +747,7 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
   const [plCaps, setPlCaps] = useState<ProductLineCapability[]>([])
   const [loading, setLoading] = useState(false)
   const [editingCap, setEditingCap] = useState<Capability | null>(null)
-  const [editConfigs, setEditConfigs] = useState<Record<string, { enabled: boolean; allowedRoles: string[] }>>({})
+  const [editConfigs, setEditConfigs] = useState<Record<string, { enabled: boolean; allowedRoles: string[]; triggerSources: string[] }>>({})
   const [saving, setSaving] = useState(false)
 
   useEffect(() => { loadData() }, [productLineId])
@@ -735,19 +769,23 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
 
   function openEdit(cap: Capability) {
     setEditingCap(cap)
-    const configs: Record<string, { enabled: boolean; allowedRoles: string[] }> = {}
+    const configs: Record<string, { enabled: boolean; allowedRoles: string[]; triggerSources: string[] }> = {}
     const capConfigs = plCaps.filter(c => c.capabilityKey === cap.key)
     for (const c of capConfigs) {
-      configs[c.envName] = { enabled: c.enabled, allowedRoles: [...c.allowedRoles] }
+      configs[c.envName] = {
+        enabled: c.enabled,
+        allowedRoles: [...c.allowedRoles],
+        triggerSources: c.triggerSources ? [...c.triggerSources] : ['im', 'web'],
+      }
     }
     setEditConfigs(configs)
   }
 
-  function handleConfigChange(envName: string, field: 'enabled' | 'allowedRoles', value: unknown) {
+  function handleConfigChange(envName: string, field: 'enabled' | 'allowedRoles' | 'triggerSources', value: unknown) {
     setEditConfigs(prev => ({
       ...prev,
       [envName]: {
-        ...(prev[envName] ?? { enabled: true, allowedRoles: ['developer', 'tester', 'ops', 'admin'] }),
+        ...(prev[envName] ?? { enabled: true, allowedRoles: ['developer', 'tester', 'ops', 'admin'], triggerSources: ['im', 'web'] }),
         [field]: value,
       },
     }))
@@ -757,14 +795,25 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     if (!editingCap) return
     setSaving(true)
     try {
-      // Keep other capabilities' configs
       const otherConfigs = plCaps
         .filter(c => c.capabilityKey !== editingCap.key)
-        .map(c => ({ capabilityKey: c.capabilityKey, envName: c.envName, enabled: c.enabled, allowedRoles: c.allowedRoles }))
+        .map(c => ({
+          capabilityKey: c.capabilityKey,
+          envName: c.envName,
+          enabled: c.enabled,
+          allowedRoles: c.allowedRoles,
+          triggerSources: c.triggerSources ?? ['im', 'web'],
+        }))
 
       const thisConfigs = Object.entries(editConfigs)
         .filter(([_, v]) => v.enabled || v.allowedRoles.length > 0)
-        .map(([envName, v]) => ({ capabilityKey: editingCap.key, envName, enabled: v.enabled, allowedRoles: v.allowedRoles }))
+        .map(([envName, v]) => ({
+          capabilityKey: editingCap.key,
+          envName,
+          enabled: v.enabled,
+          allowedRoles: v.allowedRoles,
+          triggerSources: v.triggerSources,
+        }))
 
       await setProductLineCapabilities(productLineId, [...otherConfigs, ...thisConfigs])
       message.success('能力配置已保存')
@@ -845,13 +894,29 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
             </p>
 
             <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
                 <span style={{ fontWeight: 500, width: 120 }}>* 全局</span>
                 <Switch
                   checked={editConfigs['*']?.enabled ?? false}
                   onChange={(v) => handleConfigChange('*', 'enabled', v)}
                   checkedChildren="开" unCheckedChildren="关"
                 />
+                <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发，仍可通过管理后台执行">
+                  <span style={{ marginLeft: 12 }}>
+                    <span style={{ marginRight: 6, color: '#666' }}>允许 IM 触发</span>
+                    <Switch
+                      checked={editConfigs['*']?.triggerSources?.includes('im') ?? true}
+                      onChange={(v) => {
+                        const current = editConfigs['*']?.triggerSources ?? ['im', 'web']
+                        const next = v
+                          ? Array.from(new Set([...current, 'im']))
+                          : current.filter(s => s !== 'im')
+                        handleConfigChange('*', 'triggerSources', next.length > 0 ? next : ['web'])
+                      }}
+                      checkedChildren="IM" unCheckedChildren="IM"
+                    />
+                  </span>
+                </Tooltip>
               </div>
               {editConfigs['*']?.enabled && (
                 <Checkbox.Group
@@ -864,13 +929,29 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
 
             {envs.map(env => (
               <div key={env.id} style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
                   <span style={{ fontWeight: 500, width: 120 }}>{env.displayName}（{env.name}）</span>
                   <Switch
                     checked={editConfigs[env.name]?.enabled ?? false}
                     onChange={(v) => handleConfigChange(env.name, 'enabled', v)}
                     checkedChildren="开" unCheckedChildren="关"
                   />
+                  <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发，仍可通过管理后台执行">
+                    <span style={{ marginLeft: 12 }}>
+                      <span style={{ marginRight: 6, color: '#666' }}>允许 IM 触发</span>
+                      <Switch
+                        checked={editConfigs[env.name]?.triggerSources?.includes('im') ?? true}
+                        onChange={(v) => {
+                          const current = editConfigs[env.name]?.triggerSources ?? ['im', 'web']
+                          const next = v
+                            ? Array.from(new Set([...current, 'im']))
+                            : current.filter(s => s !== 'im')
+                          handleConfigChange(env.name, 'triggerSources', next.length > 0 ? next : ['web'])
+                        }}
+                        checkedChildren="IM" unCheckedChildren="IM"
+                      />
+                    </span>
+                  </Tooltip>
                 </div>
                 {editConfigs[env.name]?.enabled && (
                   <Checkbox.Group

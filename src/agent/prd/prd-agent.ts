@@ -1,16 +1,24 @@
-import { getTool } from '../tools/index.js'
 import { getPool } from '../../db/client.js'
+import { config } from '../../config.js'
 import {
   getPrdDocumentById,
   updatePrdContent,
   updatePrdStatus,
   updatePrdReviewResult,
   appendReviewHistory,
+  mergePrdMetrics,
   type PrdDocument,
   type PrdReviewFinding,
   type PrdReviewResult,
 } from '../../db/repositories/prd-documents.js'
 import { REVIEW_PRD_SYSTEM_PROMPT, REPAIR_PRD_SYSTEM_PROMPT } from './prompts.js'
+import {
+  submitReviewTool,
+  takeSubmittedReview,
+  clearSubmittedReview,
+  type SubmitReviewPayload,
+} from '../tools/submit-review.js'
+import { RULES_VERSION } from './rules.js'
 import type { ClaudeRunner } from '../claude-runner.js'
 import type { TaskContext } from '../tools/types.js'
 
@@ -51,6 +59,81 @@ export interface PrdReviewRawOutput {
     reason: string
     confidence?: 'high' | 'medium' | 'low'
   }
+}
+
+/**
+ * V2.0 submit_review 工具调用 → PrdReviewResult 映射。
+ *
+ * V1 兼容：DB 字段 `dimension` 原本存数字或维度名，V2.0 改存 ruleId 字符串
+ * （PRD 审批列表页直接显示 ruleId，等列表页同步切换 V2 字段时可完全脱钩）。
+ */
+function mapSubmittedToResult(
+  payload: SubmitReviewPayload,
+  round: number
+): PrdReviewResult {
+  const severityMap: Record<string, 'blocker' | 'major' | 'minor'> = {
+    blocker: 'blocker',
+    warning: 'major',
+    info: 'minor',
+  }
+  const findings: PrdReviewFinding[] = payload.findings.map((f, i) => ({
+    id: `f-${round}-${i + 1}`,
+    dimension: f.ruleId, // V2: dimension 字段承接 ruleId 字符串
+    severity: severityMap[f.severity] ?? 'minor',
+    location: f.location,
+    description: f.issue,
+    suggestion: f.suggestion,
+    canAutoFix: f.canAutoFix ?? false,
+    autoFixBlockedReason: f.autoFixBlockedReason ?? undefined,
+    ownership: f.ownership,
+    recommendation: payload.recommendation
+      ? {
+          action: payload.recommendation.action,
+          reason: payload.recommendation.reason,
+        }
+      : undefined,
+  }))
+
+  return {
+    status: payload.status === 'blocked' ? 'blocked' : 'passed',
+    round,
+    findings,
+    recommendation: payload.recommendation
+      ? {
+          action: payload.recommendation.action,
+          reason: payload.recommendation.reason,
+        }
+      : undefined,
+    reviewedAt: new Date().toISOString(),
+  }
+}
+
+function buildReviewPrompt(prd: PrdDocument): string {
+  return `请审查以下 PRD 文档。审查完成后**必须调用 submit_review 工具**提交结构化结果（这是唯一合法出口；不要输出 JSON 代码块或自由文本）。
+
+PRD ID: ${prd.id}
+标题: ${prd.title}
+版本: v${prd.version}
+
+---
+
+${prd.contentMarkdown}
+`
+}
+
+function buildReviewReminderPrompt(prd: PrdDocument): string {
+  return `你上一轮没有调用 submit_review 工具（或调用被 schema 拒绝）。这是审查的唯一合法出口，请立刻调用 submit_review({ status, findings, recommendation })。
+
+禁止输出任何 JSON 代码块或自由文本；直接进行 tool-call。
+
+PRD ID: ${prd.id}
+标题: ${prd.title}
+版本: v${prd.version}
+
+---
+
+${prd.contentMarkdown}
+`
 }
 
 /**
@@ -115,6 +198,9 @@ export function validatePrdStructure(markdown: string): string[] {
  * - 纯 JSON
  * - ```json ... ``` 包裹
  * - 前后夹杂自然语言（定位第一个 { 到最后一个 }）
+ *
+ * V2.0 自审主路径已改为 submit_review 工具调用，不再用此函数；保留导出给测试/
+ * 诊断/V1 外部消费方使用（例如管理员在 Web 上手动粘 JSON 的旧诊断流）。
  */
 export function parsePrdReviewOutput(text: string): PrdReviewRawOutput | null {
   if (!text) return null
@@ -135,60 +221,6 @@ export function parsePrdReviewOutput(text: string): PrdReviewRawOutput | null {
   } catch {
     return null
   }
-}
-
-function mapRawToResult(
-  raw: PrdReviewRawOutput,
-  round: number
-): PrdReviewResult {
-  const severityMap: Record<string, 'blocker' | 'major' | 'minor'> = {
-    blocker: 'blocker',
-    warning: 'major',
-    info: 'minor',
-  }
-  const findings: PrdReviewFinding[] = raw.findings.map((f, i) => ({
-    id: `f-${round}-${i + 1}`,
-    dimension: f.dimension_name ?? String(f.dimension),
-    severity: severityMap[f.severity] ?? 'minor',
-    location: f.location,
-    description: f.issue,
-    suggestion: f.suggestion,
-    canAutoFix: f.canAutoFix ?? false,
-    autoFixBlockedReason: f.autoFixBlockedReason ?? undefined,
-    ownership: f.ownership,
-    recommendation: raw.recommendation
-      ? {
-          action: raw.recommendation.action,
-          reason: raw.recommendation.reason,
-        }
-      : undefined,
-  }))
-
-  return {
-    status: raw.status === 'blocked' ? 'blocked' : 'passed',
-    round,
-    findings,
-    recommendation: raw.recommendation
-      ? {
-          action: raw.recommendation.action,
-          reason: raw.recommendation.reason,
-        }
-      : undefined,
-    reviewedAt: new Date().toISOString(),
-  }
-}
-
-function buildReviewPrompt(prd: PrdDocument): string {
-  return `请审查以下 PRD 文档。按 9 个维度给出 JSON 格式的 findings。
-
-PRD ID: ${prd.id}
-标题: ${prd.title}
-版本: v${prd.version}
-
----
-
-${prd.contentMarkdown}
-`
 }
 
 function buildRepairPrompt(prd: PrdDocument, findings: PrdReviewFinding[]): string {
@@ -256,6 +288,28 @@ export async function runPrdReview(
     return
   }
 
+  const v2Mode = config.PRD_AGENT_V2_MODE
+
+  // Feature flag: off → 紧急 kill-switch，PRD 直接 draft，不跑 AI 自审
+  if (v2Mode === 'off') {
+    const skipResult: PrdReviewResult = {
+      status: 'passed',
+      round: 0,
+      findings: [],
+      reviewedAt: new Date().toISOString(),
+    }
+    await updatePrdReviewResult(prdId, skipResult, 'draft')
+    console.log(`[PrdAgent] PRD #${prdId} PRD_AGENT_V2_MODE=off，跳过 AI 自审`)
+    emit({ stage: 'review_started', prdId })
+    emit({
+      stage: 'review_finalized',
+      prdId,
+      finalStatus: 'draft',
+      round: 0,
+    })
+    return
+  }
+
   await updatePrdStatus(prdId, 'reviewing')
   emit({ stage: 'review_started', prdId })
 
@@ -303,45 +357,75 @@ export async function runPrdReview(
   let currentPrd = prd
   let lastResult: PrdReviewResult | null = null
 
+  // V2.0 baseline 埋点：review / repair 调用次数 + 自审总耗时。
+  // 在下方 try 的 finally 中写回 prd_documents.metrics，失败只打 log 不阻塞主流程。
+  let reviewCalls = 0
+  let repairCalls = 0
+  const reviewStartedAt = Date.now()
+
+  try {
   for (let round = 1; round <= MAX_REPAIR_ROUNDS + 1; round++) {
     const reviewCtx = buildBackgroundContext(currentPrd)
-    const reviewText = await runClaudeOnce({
+
+    // V2.0：submit_review 工具调用契约。先清 buffer，跑 review，
+    // 未收到 submit_review → 一次重试（reminder prompt），仍无 → 升级人工。
+    clearSubmittedReview(reviewCtx.taskId)
+    reviewCalls++
+    await runClaudeOnce({
       prompt: buildReviewPrompt(currentPrd),
       systemPrompt: REVIEW_PRD_SYSTEM_PROMPT,
       context: reviewCtx,
-      sessionKey: `prd-review-${prdId}-r${round}`,
+      tools: [submitReviewTool],
+      sessionKey: `prd-review-${prdId}-r${round}-a1`,
     })
+    let submitted = takeSubmittedReview(reviewCtx.taskId)
+    if (!submitted) {
+      // Attempt 2: 以 reminder prompt 重试一次
+      clearSubmittedReview(reviewCtx.taskId)
+      reviewCalls++
+      await runClaudeOnce({
+        prompt: buildReviewReminderPrompt(currentPrd),
+        systemPrompt: REVIEW_PRD_SYSTEM_PROMPT,
+        context: reviewCtx,
+        tools: [submitReviewTool],
+        sessionKey: `prd-review-${prdId}-r${round}-a2`,
+      })
+      submitted = takeSubmittedReview(reviewCtx.taskId)
+    }
 
-    const raw = parsePrdReviewOutput(reviewText)
-    if (!raw) {
+    if (!submitted) {
       const synthResult: PrdReviewResult = {
         status: 'blocked',
         round,
         findings: [
           {
-            id: `parse-err-${round}`,
-            dimension: '自审输出解析',
+            id: `contract-err-${round}`,
+            dimension: 'submit_review_missing',
             severity: 'blocker',
             location: '全文',
-            description: '自审返回的内容不是合法 JSON，无法解析 findings',
+            description:
+              '自审契约失败：2 次尝试后 Agent 仍未调用合法的 submit_review 工具',
             canAutoFix: false,
+            autoFixBlockedReason: '契约失败，需要人工检查审查结果',
             ownership: 'admin',
             recommendation: {
               action: 'reject',
-              reason: '自审输出异常，需要人工检查',
+              reason: '自审契约失败，需要人工检查',
             },
           },
         ],
-        recommendation: { action: 'reject', reason: '自审输出异常' },
+        recommendation: { action: 'reject', reason: '自审契约失败' },
         reviewedAt: new Date().toISOString(),
       }
       await updatePrdReviewResult(prdId, synthResult, 'review_blocked')
       await appendReviewHistory(prdId, { round, result: synthResult })
-      console.error(`[PrdAgent] PRD #${prdId} round ${round} 自审输出解析失败`)
+      console.error(
+        `[PrdAgent] PRD #${prdId} round ${round} submit_review 契约失败（2 次重试后仍未调用）`
+      )
       emit({
         stage: 'review_error',
         prdId,
-        error: `Round ${round} 自审输出不是合法 JSON`,
+        error: `Round ${round} 自审契约失败（未调用 submit_review）`,
       })
       emit({
         stage: 'review_finalized',
@@ -353,7 +437,7 @@ export async function runPrdReview(
       return
     }
 
-    const result = mapRawToResult(raw, round)
+    const result = mapSubmittedToResult(submitted, round)
     lastResult = result
     await appendReviewHistory(prdId, { round, result })
 
@@ -369,6 +453,22 @@ export async function runPrdReview(
       infoCount: infos.length,
       recommendation: result.recommendation,
     })
+
+    // Feature flag: shadow → 只做一轮观测，blocker 不触发自修复也不阻塞
+    if (v2Mode === 'shadow') {
+      await updatePrdReviewResult(prdId, result, 'draft')
+      console.log(
+        `[PrdAgent] PRD #${prdId} shadow 模式：round ${round} findings=${result.findings.length} blocker=${blockers.length}（不阻塞，强制 draft）`
+      )
+      emit({
+        stage: 'review_finalized',
+        prdId,
+        finalStatus: 'draft',
+        round,
+        recommendation: result.recommendation,
+      })
+      return
+    }
 
     if (blockers.length === 0) {
       await updatePrdReviewResult(prdId, result, 'draft')
@@ -397,13 +497,14 @@ export async function runPrdReview(
       return
     }
 
-    // blocker 中任一 ownership 非 admin → 无法自修复，直接升级人工
-    const fixableBlockers = blockers.filter((f) => f.canAutoFix && f.ownership === 'admin')
-    const unfixable = blockers.filter((f) => !f.canAutoFix || f.ownership !== 'admin')
+    // 存在非 canAutoFix 的 blocker → 无法自修复，直接升级人工
+    // （canAutoFix 由 REVIEW agent 自评，true 表示不依赖新对话事实即可改文本）
+    const fixableBlockers = blockers.filter((f) => f.canAutoFix)
+    const unfixable = blockers.filter((f) => !f.canAutoFix)
     if (fixableBlockers.length === 0 || unfixable.length > 0) {
       await updatePrdReviewResult(prdId, result, 'review_blocked')
       console.log(
-        `[PrdAgent] PRD #${prdId} round ${round} 存在非 admin 可修复的 blocker，升级人工`
+        `[PrdAgent] PRD #${prdId} round ${round} 存在非 canAutoFix 的 blocker，升级人工`
       )
       emit({
         stage: 'review_finalized',
@@ -418,6 +519,7 @@ export async function runPrdReview(
     // 自修复
     console.log(`[PrdAgent] PRD #${prdId} round ${round} 开始自修复（${fixableBlockers.length} 条 blocker）`)
     emit({ stage: 'repair_started', prdId, round, fixableCount: fixableBlockers.length })
+    repairCalls++
     const repairText = await runClaudeOnce({
       prompt: buildRepairPrompt(currentPrd, fixableBlockers),
       systemPrompt: REPAIR_PRD_SYSTEM_PROMPT,
@@ -448,6 +550,7 @@ export async function runPrdReview(
 
     const updated = await updatePrdContent(prdId, {
       contentMarkdown: repairedMarkdown,
+      contentJson: stripStructuredOnRepair(currentPrd.contentJson),
     })
     if (!updated) {
       await updatePrdReviewResult(prdId, result, 'review_blocked')
@@ -470,6 +573,41 @@ export async function runPrdReview(
       repairSummary: `自动修复 ${fixableBlockers.length} 条 blocker`,
     })
     emit({ stage: 'repair_done', prdId, round, ok: true })
+  }
+  } catch (err) {
+    // Porygon/Claude 超时或其他运行时异常 → 不能让 PRD 永远挂在 reviewing
+    const errMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[PrdAgent] PRD #${prdId} 自审异常，升级人工:`, errMsg)
+    const fallbackRound = lastResult?.round ?? 0
+    const synthResult: PrdReviewResult = {
+      status: 'blocked',
+      round: fallbackRound,
+      findings: [],
+      recommendation: {
+        action: 'reject',
+        reason: `自审异常: ${errMsg}`,
+      },
+      reviewedAt: new Date().toISOString(),
+    }
+    await updatePrdReviewResult(prdId, synthResult, 'review_blocked')
+    await appendReviewHistory(prdId, { round: fallbackRound, result: synthResult })
+    emit({ stage: 'review_error', prdId, error: errMsg })
+    emit({
+      stage: 'review_finalized',
+      prdId,
+      finalStatus: 'review_blocked',
+      round: fallbackRound,
+      recommendation: synthResult.recommendation,
+    })
+    return
+  } finally {
+    // 无论走哪条 terminal 路径，都把本次自审的埋点增量写回。
+    // 失败只打 log：埋点不是核心流程，不能阻塞 PRD 审查结果的落地。
+    await mergePrdMetrics(prdId, {
+      llmCallsDelta: { review: reviewCalls, repair: repairCalls },
+      reviewDurationMs: Date.now() - reviewStartedAt,
+      rulesVersion: RULES_VERSION,
+    })
   }
 
   // Fallback (should not reach)
@@ -501,16 +639,20 @@ async function runClaudeOnce(opts: {
   systemPrompt: string
   context: TaskContext
   sessionKey: string
+  tools?: Array<import('../tools/types.js').AgentTool>
 }): Promise<string> {
   if (!runner) throw new Error('ClaudeRunner 未初始化')
-  const readPrd = getTool('read_prd')
-  const tools = readPrd ? [readPrd] : []
+  // review/repair 流程：prompt 已内联完整 PRD 全文，不需要 read_prd 工具；
+  // 每次都是一次性评审，走冷启动 + 3 turn 硬上限。不设超时——AI 审查耗时不稳定，
+  // 180s 也可能不够，硬截断会把合法慢调用判死。maxTurns=3 是最终兜底。
   return runner.executeCapabilityDirect({
     prompt: opts.prompt,
     systemPrompt: opts.systemPrompt,
     context: opts.context,
-    tools,
+    tools: opts.tools ?? [],
     sessionKey: opts.sessionKey,
+    freshSession: true,
+    maxTurns: 3,
   })
 }
 
@@ -522,6 +664,30 @@ function extractMarkdownFromRepairOutput(text: string): string {
   const fenceMatch = text.match(/^```(?:markdown|md)?\s*\n([\s\S]*?)\n```\s*$/)
   if (fenceMatch) return fenceMatch[1].trim()
   return text.trim()
+}
+
+/**
+ * V2 PRD 自修复后 Markdown 与入库的 `structuredPrd` 语义漂移：
+ * repair Agent 只输出 markdown，不重跑 save_prd 的机械校验 / 模板渲染，所以
+ * `contentJson.structuredPrd` 对应的已是旧版本，留着会误导 read-prd 的 V1/V2 路由。
+ *
+ * 策略：剥离 `structuredPrd` + `rulesVersion`；其余键（phase/dialogueRounds/...）保留。
+ * 剥离后 read-prd 会把它判定为 V1 PRD，与实际 markdown-only 存储一致。
+ * V1 PRD（原本就没 structuredPrd）返回 undefined，让 updatePrdContent 不改 content_json 字段。
+ */
+export function stripStructuredOnRepair(
+  existing: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  if (!existing || typeof existing !== 'object') return undefined
+  if (!('structuredPrd' in existing) && !('rulesVersion' in existing)) {
+    return undefined
+  }
+  const next: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(existing)) {
+    if (k === 'structuredPrd' || k === 'rulesVersion') continue
+    next[k] = v
+  }
+  return next
 }
 
 /**

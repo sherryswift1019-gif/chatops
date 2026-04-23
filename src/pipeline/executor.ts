@@ -35,16 +35,22 @@ import {
 import { linearizeStages } from './graph-migration.js'
 import type { StageContextBase } from './graph-builder.js'
 import type { StageDefinition, ServerInfo, ArtifactInput, PipelineGraph } from './types.js'
+import {
+  type PipelineTrigger,
+  type ImTriggerContext,
+  extractImContext,
+} from './trigger.js'
 
 const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
 
 export type { PipelineRunResult } from './graph-runner.js'
-
-export interface ImTriggerContext {
-  platform: string
-  groupId: string
-  userId: string
-}
+export type { PipelineTrigger, ImTriggerContext } from './trigger.js'
+export {
+  imTrigger,
+  manualTrigger,
+  apiTrigger,
+  scheduledTrigger,
+} from './trigger.js'
 
 /**
  * Kick off a pipeline run. Returns the run id as soon as the initial invoke
@@ -55,24 +61,23 @@ export interface ImTriggerContext {
 export async function runPipeline(
   pipelineId: number,
   serverAssignment: Record<string, string[]>,
-  triggerType: 'manual' | 'api' | 'scheduled' | 'im',
-  triggeredBy: string,
+  trigger: PipelineTrigger,
   runtimeVarsInput: Record<string, string> = {},
   onComplete?: (result: PipelineRunResult) => void,
-  triggerParams?: Record<string, unknown>,
-  imContext?: ImTriggerContext,
 ): Promise<number> {
+  const { type: triggerType, triggeredBy } = trigger
+  const triggerParams = trigger.params
+  const imContext: ImTriggerContext | undefined = extractImContext(trigger)
+
   // Legacy fallback for rollback scenarios.
   if (process.env.PIPELINE_ENGINE === 'legacy') {
     const { runPipeline: legacy } = await import('./executor-legacy.js')
     return legacy(
       pipelineId,
       serverAssignment,
-      triggerType,
-      triggeredBy,
+      trigger,
       runtimeVarsInput,
       onComplete,
-      triggerParams,
     )
   }
 

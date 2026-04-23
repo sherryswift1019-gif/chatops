@@ -19,6 +19,8 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
   for (const n of graph.nodes) {
     if (nodeIds.has(n.id)) errors.push(`duplicate node id: ${n.id}`)
     nodeIds.add(n.id)
+    const fieldError = checkRequiredFields(n)
+    if (fieldError) errors.push(fieldError)
   }
 
   const adjacency = new Map<string, string[]>()
@@ -42,7 +44,7 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
     color.set(v, 1)
     for (const next of adjacency.get(v) ?? []) {
       const c = color.get(next)
-      if (c === 1) return true        // gray → back-edge → cycle
+      if (c === 1) return true
       if (c === 0 && dfs(next)) return true
     }
     color.set(v, 2)
@@ -56,4 +58,43 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
   }
 
   return { ok: errors.length === 0, errors }
+}
+
+function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
+  const prefix = `node ${n.id} (stageType=${n.stageType})`
+  switch (n.stageType) {
+    case 'capability':
+      if (!n.capabilityKey || !n.capabilityKey.trim()) {
+        return `${prefix}: capabilityKey is required`
+      }
+      return null
+    case 'wait_webhook':
+      if (!n.webhookTag || !n.webhookTag.trim()) {
+        return `${prefix}: webhookTag is required`
+      }
+      return null
+    case 'im_input': {
+      const cfg = n.imInputConfig
+      if (!cfg || !cfg.prompt || !cfg.prompt.trim()) {
+        return `${prefix}: imInputConfig.prompt is required`
+      }
+      if (
+        typeof cfg.paramSchema !== 'object' ||
+        cfg.paramSchema === null ||
+        Array.isArray(cfg.paramSchema)
+      ) {
+        return `${prefix}: imInputConfig.paramSchema must be an object`
+      }
+      return null
+    }
+    case 'approval':
+      if (!Array.isArray(n.approverIds) || n.approverIds.length === 0) {
+        return `${prefix}: approverIds is required (non-empty array)`
+      }
+      return null
+    case 'script':
+      return null
+    default:
+      return null
+  }
 }

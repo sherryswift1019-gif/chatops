@@ -3,6 +3,7 @@ import { listTestPipelines, getTestPipelineById } from '../../db/repositories/te
 import { listTestServers } from '../../db/repositories/test-servers.js'
 import { getTestRunById } from '../../db/repositories/test-runs.js'
 import { runPipeline } from '../../pipeline/executor.js'
+import { manualTrigger } from '../../pipeline/trigger.js'
 import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
 const autotestTool: AgentTool = {
@@ -80,7 +81,7 @@ const autotestTool: AgentTool = {
               return { success: false, output: '没有可用的空闲服务器，无法自动分配' }
             }
           }
-          const id = await runPipeline(pipelineId, serverMap, 'manual', ctx.initiatorId, runtimeVars ?? {}, (result) => {
+          const id = await runPipeline(pipelineId, serverMap, manualTrigger({ triggeredBy: ctx.initiatorId }), runtimeVars ?? {}, (result) => {
             // Store completion result for later query - onComplete is fire-and-forget
             console.log(`[autotest] Pipeline ${pipelineId} run #${result.runId} completed: ${result.status} in ${result.durationMs}ms`)
           })

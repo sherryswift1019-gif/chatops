@@ -24,6 +24,7 @@ export interface StageHooks {
     stage: StageDefinition,
     ctx: StageContext,
     triggerParams?: Record<string, unknown>,
+    runtimeVars?: Record<string, unknown>,
   ): Promise<StageExecutionResult>
 }
 
@@ -216,13 +217,14 @@ function buildCapabilityNode(
   hooks: StageHooks,
   triggerParams?: Record<string, unknown>,
 ) {
-  return async () => {
+  return async (state: typeof PipelineStateAnnotation.State) => {
     const startedAt = nowIso()
     const startedMs = Date.now()
     const ctx: StageContext = { ...ctxBase, stageIndex: index }
+    const runtimeVars = { ...(ctxBase.variables ?? {}), ...(state.runtimeVars ?? {}) }
     let exec: StageExecutionResult
     try {
-      exec = await hooks.runCapability(stage, ctx, triggerParams)
+      exec = await hooks.runCapability(stage, ctx, triggerParams, runtimeVars)
     } catch (err) {
       exec = {
         status: 'failed',

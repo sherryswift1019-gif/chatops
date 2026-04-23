@@ -4,7 +4,8 @@ import { getTool, getAllTools, getPermittedTools } from './tools/index.js'
 import type { AgentTool, TaskContext, Role } from './tools/types.js'
 import { getRecentTasks } from '../db/repositories/tasks.js'
 import { listCapabilities, getCapabilityByKey, type Capability } from '../db/repositories/capabilities.js'
-import { checkCapabilityAccess } from '../db/repositories/product-line-capabilities.js'
+import { checkCapabilityAccess, getProductLineCapabilities } from '../db/repositories/product-line-capabilities.js'
+import { filterImTriggerableCapabilities } from './runner-greet-filter.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
@@ -18,7 +19,9 @@ import { getApprovalRules } from '../db/repositories/approval-rules.js'
 import { acquireLock, releaseLock } from './deploy-lock.js'
 import { acquire, release, type Worktree } from './worktree/manager.js'
 import { getByProductLineId } from '../db/repositories/product-knowledge-repos.js'
-import { dirname, join } from 'path'
+import { getPrdDocumentById } from '../db/repositories/prd-documents.js'
+import { buildRejectSystemPromptAppendix } from './prd/reject-seed.js'
+import { dirname, join, resolve as pathResolve, relative as pathRelative } from 'path'
 import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -144,6 +147,38 @@ async function buildProjectContext(productLineId: number): Promise<string> {
   return lines.join('\n')
 }
 
+/**
+ * 构造"当前 PRD 上下文"段，拼到 Web chat 的 systemPrompt 末尾。
+ * 用户在 PRD 列表点「继续对话」进来时，session 绑定了 prdId；
+ * 把当前 PRD 的 id / 标题 / 版本 / 状态透传给 Claude，
+ * 避免它把"审查 / 修改 / 看一下"等指代解析为随便搜一个别的 PRD。
+ */
+async function buildPrdContext(prdId: number): Promise<string> {
+  const prd = await getPrdDocumentById(prdId)
+  if (!prd) return ''
+  const lines: string[] = [
+    '',
+    '--- 当前 PRD 上下文 ---',
+    `你正在继续一个已有 PRD 的对话。用户的"审查 / 改 / 读 / 看一下"等指代默认指向这份 PRD。`,
+    `PRD ID: ${prd.id}`,
+    `标题: ${prd.title}`,
+    `版本: v${prd.version}`,
+    `状态: ${prd.status}`,
+    '',
+    `需要读取完整内容时调 read_prd({ prdId: ${prd.id} })。`,
+    `需要更新时调 save_prd({ prdId: ${prd.id}, title, contentMarkdown })——必须整份 markdown 回传，不要只回传 diff。`,
+    `严禁用 Write / Edit / MultiEdit 去写 docs/prds/*.md；一切 PRD 正文写入只能走 save_prd，否则会产生重复/新建 PRD。`,
+    `不要调 search_existing_prds 去找别的 PRD，也不要自行猜测别的 prdId。`,
+  ]
+
+  // drafting + 最近一次 review 是 reject → 把驳回原因/blockers 注入系统提示，
+  // 让下一轮对话（无论是新建 session 还是 resume）都带上承接上下文。
+  const appendix = buildRejectSystemPromptAppendix(prd)
+  if (appendix) lines.push(appendix)
+
+  return lines.join('\n')
+}
+
 export class ClaudeRunner {
   private porygon: Porygon
   private sessions = new Map<string, UserSession>()
@@ -262,7 +297,7 @@ export class ClaudeRunner {
 
       // Step 2: greet → 固定帮助（永不 resume）
       if (intent?.capability === 'greet') {
-        await this.sendGreeting(adapter, opts.groupId, atIds)
+        await this.sendGreeting(adapter, opts.groupId, atIds, productLineId, context.initiatorRole ?? 'developer')
         return
       }
 
@@ -280,7 +315,7 @@ export class ClaudeRunner {
           }
         }
         // 无 session 也无 intent → 当 greet
-        await this.sendGreeting(adapter, opts.groupId, atIds)
+        await this.sendGreeting(adapter, opts.groupId, atIds, productLineId, context.initiatorRole ?? 'developer')
         return
       }
 
@@ -308,11 +343,14 @@ export class ClaudeRunner {
       // 4b: 已有产线的用户检查 capability-level 权限
       if (productLineId) {
         const envName = intent.env ?? '*'
-        const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole)
+        const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole, 'im')
         if (!access.allowed) {
+          const text = access.reason === 'source-blocked'
+            ? `⛔ 能力「${capability.displayName}」在当前产线已禁止通过 IM 触发，请到管理后台执行。`
+            : `⛔ 无法执行「${capability.displayName}」：${access.reason}`
           await adapter.sendMessage(
             { type: 'group', id: opts.groupId },
-            { text: `⛔ 无法执行「${capability.displayName}」：${access.reason}` }
+            { text }
           )
           return
         }
@@ -468,8 +506,25 @@ export class ClaudeRunner {
     }
   }
 
-  private async sendGreeting(adapter: IMAdapter, groupId: string, atDingtalkIds?: string[]): Promise<void> {
-    const caps = await listCapabilities()
+  private async sendGreeting(
+    adapter: IMAdapter,
+    groupId: string,
+    atDingtalkIds?: string[],
+    productLineId?: number,
+    userRole: string = 'developer',
+  ): Promise<void> {
+    let caps = await listCapabilities()
+    if (productLineId) {
+      const plCaps = await getProductLineCapabilities(productLineId)
+      caps = filterImTriggerableCapabilities(caps, plCaps, userRole)
+    }
+    if (caps.length === 0) {
+      await adapter.sendMessage(
+        { type: 'group', id: groupId },
+        { text: '你当前在本产线下没有可通过 IM 触发的能力，请联系管理员或到管理后台查看。', atDingtalkIds } as any
+      )
+      return
+    }
     const examples: Record<string, string> = {
       deploy: '部署 ssh-proxy 到 dev 环境，分支 develop',
       rollback: '回滚 ssh-proxy dev 环境',
@@ -565,12 +620,15 @@ ${intentRules}
     let systemPrompt: string
     if (executionMode) {
       systemPrompt = promptsValue.execution || EXECUTION_PROMPT
-    } else if (capability?.systemPrompt) {
-      systemPrompt = interpolatePrompt(capability.systemPrompt, {
-        initiatorRole: context.initiatorRole ?? 'developer',
-      })
     } else {
-      systemPrompt = FALLBACK_PROMPT
+      const effective = capability?.systemPrompt ?? capability?.defaultSystemPrompt ?? null
+      if (effective) {
+        systemPrompt = interpolatePrompt(effective, {
+          initiatorRole: context.initiatorRole ?? 'developer',
+        })
+      } else {
+        systemPrompt = FALLBACK_PROMPT
+      }
     }
 
     // 注入项目上下文
@@ -733,20 +791,21 @@ ${intentRules}
     tools: AgentTool[]
     cwd?: string
     sessionKey?: string
+    freshSession?: boolean
+    maxTurns?: number
+    timeoutMs?: number
   }): Promise<string> {
-    const { prompt, systemPrompt, context, tools, cwd, sessionKey } = opts
+    const { prompt, systemPrompt, context, tools, cwd, sessionKey, freshSession, maxTurns, timeoutMs } = opts
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
 
-    const existingSessionId = sessionKey ? this.getSessionId(sessionKey) : undefined
+    const existingSessionId = !freshSession && sessionKey ? this.getSessionId(sessionKey) : undefined
     const claudeEnv = await buildClaudeEnv()
 
-    console.log(`[Runner] executeCapabilityDirect: cwd=${cwd}, tools=${tools.map(t=>t.name).join(',')}, resume=${!!existingSessionId}`)
+    console.log(`[Runner] executeCapabilityDirect: cwd=${cwd}, tools=${tools.map(t=>t.name).join(',')}, resume=${!!existingSessionId}, maxTurns=${maxTurns ?? 200}, timeoutMs=${timeoutMs ?? 'none'}`)
 
     let textBuffer = ''
-    let toolCallCount = 0
-    const MAX_TOOL_CALLS = 20
 
-    for await (const msg of this.porygon.query({
+    const queryIter = this.porygon.query({
       prompt,
       appendSystemPrompt: systemPrompt,
       ...(existingSessionId ? { resume: existingSessionId } : {}),
@@ -758,6 +817,7 @@ ${intentRules}
           env: {
             ...(process.env as Record<string, string>),
             CHATOPS_TASK_CONTEXT: JSON.stringify({ ...context, cwd }),
+            CHATOPS_ALLOWED_TOOLS: tools.map(t => t.name).join(','),
             DATABASE_URL: process.env.DATABASE_URL ?? '',
             ...claudeEnv,
           },
@@ -765,20 +825,42 @@ ${intentRules}
       },
       disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent'],
       envVars: claudeEnv,
-      maxTurns: 200,
-    })) {
-      if ('sessionId' in msg && msg.sessionId && sessionKey) {
-        this.saveSession(sessionKey, msg.sessionId as string, tools)
+      maxTurns: maxTurns ?? 200,
+    })
+
+    const consume = async (): Promise<void> => {
+      for await (const msg of queryIter) {
+        if ('sessionId' in msg && msg.sessionId && sessionKey) {
+          this.saveSession(sessionKey, msg.sessionId as string, tools)
+        }
+        if (msg.type === 'tool_use') {
+          const toolName = 'name' in msg ? msg.name : 'unknown'
+          console.log(`[Runner] Tool called: ${toolName}`)
+        }
+        if (msg.type === 'assistant' && 'content' in msg) {
+          textBuffer += String(msg.content)
+        } else if (msg.type === 'result' && 'text' in msg) {
+          textBuffer += String(msg.text)
+        }
       }
-      if (msg.type === 'tool_use') {
-        const toolName = 'name' in msg ? msg.name : 'unknown'
-        console.log(`[Runner] Tool called: ${toolName}`)
+    }
+
+    if (timeoutMs && timeoutMs > 0) {
+      let timer: NodeJS.Timeout | undefined
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          // porygon.query 是 AsyncGenerator，尝试 return() 中止迭代；catch 避免终止逻辑反过来抛
+          queryIter.return?.(undefined).catch(() => {})
+          reject(new Error(`executeCapabilityDirect timed out after ${timeoutMs}ms`))
+        }, timeoutMs)
+      })
+      try {
+        await Promise.race([consume(), timeoutPromise])
+      } finally {
+        if (timer) clearTimeout(timer)
       }
-      if (msg.type === 'assistant' && 'content' in msg) {
-        textBuffer += String(msg.content)
-      } else if (msg.type === 'result' && 'text' in msg) {
-        textBuffer += String(msg.text)
-      }
+    } else {
+      await consume()
     }
 
     console.log(`[Runner] executeCapabilityDirect completed, output length: ${textBuffer.length}`)
@@ -801,6 +883,7 @@ ${intentRules}
     sessionKey: string
     resumeSessionId?: string
     productLineId: number
+    prdId?: number
   }): AsyncGenerator<WebChatEvent> {
     const capability = await getCapabilityByKey(opts.capabilityKey)
     if (!capability) {
@@ -816,9 +899,10 @@ ${intentRules}
       return
     }
 
-    // systemPrompt: capability.systemPrompt + 产线上下文
-    let systemPrompt = capability.systemPrompt
-      ? interpolatePrompt(capability.systemPrompt, {
+    // systemPrompt: capability.systemPrompt（空则回落到 defaultSystemPrompt）+ 产线上下文
+    const effectivePrompt = capability.systemPrompt ?? capability.defaultSystemPrompt ?? null
+    let systemPrompt = effectivePrompt
+      ? interpolatePrompt(effectivePrompt, {
           initiatorRole: opts.context.initiatorRole ?? 'admin',
         })
       : '你是一个 PRD 助手，与产品经理多轮对话共同产出 PRD。'
@@ -827,6 +911,14 @@ ${intentRules}
       systemPrompt += await buildProjectContext(opts.productLineId)
     } catch (err) {
       console.error('[Runner] streamWebChat buildProjectContext failed:', err)
+    }
+
+    if (opts.prdId) {
+      try {
+        systemPrompt += await buildPrdContext(opts.prdId)
+      } catch (err) {
+        console.error('[Runner] streamWebChat buildPrdContext failed:', err)
+      }
     }
 
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
@@ -839,12 +931,30 @@ ${intentRules}
 
     let capturedSessionId: string | undefined
 
+    // 兜底：Write/Edit/MultiEdit 已加入 disallowedTools，Claude 正常情况应走 save_prd。
+    // 保留这段 salvage 逻辑作为最后防线：万一将来 disallow 失效或某个 porygon/Claude 版本
+    // 不尊重 disallowedTools，仍能把磁盘上的 PRD md 吸回 DB，避免 PRD 孤立。
+    const prdsDirAbs = pathResolve(process.cwd(), 'docs/prds')
+    const writtenPrdFiles = new Set<string>()
+    const isPrdFilePath = (filePath: unknown): string | null => {
+      if (typeof filePath !== 'string' || !filePath) return null
+      const abs = pathResolve(filePath)
+      if (!abs.endsWith('.md')) return null
+      const rel = pathRelative(prdsDirAbs, abs)
+      if (rel.startsWith('..') || rel.includes('/') || rel.includes('\\')) return null
+      return abs
+    }
+
     try {
       const claudeEnv = await buildClaudeEnv()
       for await (const msg of this.porygon.query({
         prompt: opts.prompt,
         appendSystemPrompt: systemPrompt,
         ...(resumeId ? { resume: resumeId } : {}),
+        // 精准黑名单：禁 Claude Code 规划者/写代码类工具，避免 Agent 绕过 save_prd 写磁盘
+        // 或用 TodoWrite/ExitPlanMode 退化成代码规划人格。保留 Read/WebFetch/WebSearch/Glob/Grep
+        // 给 PRD Agent 澄清需求用（见 memory/feedback_disallowed_tools.md 的 Why）。
+        disallowedTools: ['Bash', 'Write', 'Edit', 'MultiEdit', 'TodoWrite', 'ExitPlanMode'],
         mcpServers: {
           'chatops-tools': {
             command: 'node',
@@ -881,6 +991,13 @@ ${intentRules}
             yield { type: 'assistant', text: msg.turnComplete ? '' : msg.text, turnComplete: !!msg.turnComplete }
             break
           case 'tool_use':
+            // 记录本轮 agent 是否用 Write/Edit/MultiEdit 写了 docs/prds/*.md，
+            // 为后面绕过 save_prd 的兜底做准备。
+            if (msg.toolName === 'Write' || msg.toolName === 'Edit' || msg.toolName === 'MultiEdit') {
+              const filePath = (msg.input as Record<string, unknown> | undefined)?.file_path
+              const abs = isPrdFilePath(filePath)
+              if (abs) writtenPrdFiles.add(abs)
+            }
             yield {
               type: 'tool_use',
               toolName: msg.toolName,
@@ -918,6 +1035,88 @@ ${intentRules}
         const { scanPendingReviewsByTaskId, runPrdReview } = prdAgent
         type ReviewProgressEvent = import('./prd/prd-agent.js').ReviewProgressEvent
         const prdIds = await scanPendingReviewsByTaskId(opts.context.taskId, runStartedAt)
+
+        // 兜底：agent 用 Write/Edit 写了 docs/prds/*.md 但没触发 save_prd → 自动入库。
+        // 只在 save_prd 完全没产出新 PRD 时启动，避免 agent 正常走 save_prd 后又写一份
+        // 副本造成重复。
+        // 会话已绑定 prdId（"继续对话"流）时走「更新绑定 PRD」分支；否则新建。
+        if (prdIds.length === 0 && writtenPrdFiles.size > 0) {
+          const { readFile } = await import('fs/promises')
+          const { basename } = await import('path')
+          const { createPrdDocument, updatePrdContent } = await import(
+            '../db/repositories/prd-documents.js'
+          )
+
+          if (opts.prdId != null) {
+            // 绑定分支：只认最后一个被写入的文件作为内容源，更新到绑定 PRD。
+            const files = Array.from(writtenPrdFiles)
+            const abs = files[files.length - 1]
+            try {
+              const content = await readFile(abs, 'utf8')
+              const h1 = content.match(/^#\s+(.+?)\s*$/m)
+              const title = h1 ? h1[1].trim() : undefined
+              const updated = await updatePrdContent(opts.prdId, {
+                contentMarkdown: content,
+                ...(title ? { title } : {}),
+                agentSessionId: opts.context.taskId,
+              })
+              if (updated) {
+                prdIds.push(opts.prdId)
+                console.warn(
+                  `[Runner] streamWebChat salvaged UPDATE from ${abs} → PRD #${opts.prdId} (agent bypassed save_prd)`
+                )
+                yield {
+                  type: 'review_progress',
+                  reviewStage: 'salvaged',
+                  prdId: opts.prdId,
+                  reviewData: {
+                    stage: 'salvaged',
+                    prdId: opts.prdId,
+                    filePath: abs,
+                    mode: 'update',
+                  },
+                }
+              }
+            } catch (err) {
+              console.error(`[Runner] streamWebChat salvage update failed for ${abs}:`, err)
+            }
+          } else {
+            for (const abs of writtenPrdFiles) {
+              try {
+                const content = await readFile(abs, 'utf8')
+                const h1 = content.match(/^#\s+(.+?)\s*$/m)
+                const title = h1 ? h1[1].trim() : basename(abs, '.md')
+                const prd = await createPrdDocument({
+                  productLineId: opts.productLineId,
+                  title,
+                  contentMarkdown: content,
+                  createdBy: opts.context.initiatorId,
+                  groupId: opts.context.groupId,
+                  platform: opts.context.platform,
+                  agentSessionId: opts.context.taskId,
+                })
+                prdIds.push(prd.id)
+                console.warn(
+                  `[Runner] streamWebChat salvaged CREATE from ${abs} → PRD #${prd.id} (agent bypassed save_prd)`
+                )
+                yield {
+                  type: 'review_progress',
+                  reviewStage: 'salvaged',
+                  prdId: prd.id,
+                  reviewData: {
+                    stage: 'salvaged',
+                    prdId: prd.id,
+                    filePath: abs,
+                    mode: 'create',
+                  },
+                }
+              } catch (err) {
+                console.error(`[Runner] streamWebChat salvage failed for ${abs}:`, err)
+              }
+            }
+          }
+        }
+
         for (const id of prdIds) {
           const queue: ReviewProgressEvent[] = []
           let finished = false

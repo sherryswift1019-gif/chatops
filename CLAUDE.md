@@ -144,6 +144,29 @@ PostgreSQL，pg 驱动直连。Schema 通过 `src/db/schema.sql` 至 `schema-v7.
 
 所有管理端点在 `/admin` 前缀下，路由文件在 `src/admin/routes/`，通过 `src/admin/index.ts` 注册为 Fastify 插件。
 
+### 前端表单：枚举字段下拉规范（2026-04-22）
+
+新增 / 审查任何管理后台表单时，按"**定义** vs **使用**"原则决定控件类型：
+
+**使用枚举（引用已有记录）→ 必须 Select 下拉**，不允许手写 Input：
+- 典型例子：审批规则里的 `action`（引用 capability.key）、`env`（引用 environment.name）；pipeline 画布节点的 `capabilityKey`；产线环境配置里的 runtime、server 选择
+- 数据源从对应 admin API 拉（`getCapabilities / getEnvironments / getTestServers / ...`）
+- 允许通配（如审批规则的 `*`）时，Select 里额外加一项作为列表首项，带明显标记（`<Tag color="purple">*</Tag> 任意 XX（通配）`）
+- **Stale 兼容**：如果记录里保存的值不在当前列表（源记录被删 / 重命名），不清空该值，Select 显示为 `<ExclamationCircleTwoTone twoToneColor="#faad14" /> {value}（不在列表中）`，允许用户保留或替换
+- `showSearch` + 自定义 `filterOption`（按 key + displayName 双字段匹配）；option label 建议 `{displayName} <small>({key})</small>` 的形式
+
+**定义枚举（创建新记录）→ 保持 Input**：
+- 典型例子：环境管理页新增环境时的 `name`；能力管理页新增 capability 时的 `key`
+- 这是用户手动输入新枚举值的地方，不能下拉
+
+**自由文本 / 动态外部数据 → 保持 Input**：
+- GitLab 路径、Docker 容器名、分支名等自由文本字段
+- 可选：字段下方 `extra` 文字给出格式提示，或支持 `{{vars.xxx}}` 模板提示
+
+**要改下拉但 API 缺失怎么办**：先加 admin GET 端点（哪怕读只读），不要因为"没 API 就留 Input"。
+
+参考实现：`web/src/pipeline-canvas/panels/NodeInspector.tsx`（capability Select + stale 兼容）、`web/src/pages/ApprovalRulesPage.tsx`（action/env 含通配符 Select）。
+
 ## Tech Stack
 
 - **Runtime**: Node.js + TypeScript (ES2022, NodeNext modules, strict mode)

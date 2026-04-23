@@ -20,18 +20,43 @@ import type {
   ServerInfo,
 } from './types.js'
 
-/** Resolve {{triggerParams.xxx}} placeholders inside capabilityParams. */
-function resolveCapabilityParams(
+/**
+ * Resolve capability param templates to real values.
+ *
+ * 整值替换（whole-string 匹配）：保留原类型。
+ *   - {{triggerParams.xxx}} → triggerParams[xxx]
+ *   - {{vars.xxx}}          → runtimeVars[xxx]
+ *
+ * 嵌入式模板（非整值匹配）、未匹配的模板：保留字面字符串。
+ *
+ * Exported for unit testing.
+ */
+export function resolveCapabilityParams(
   params: Record<string, unknown> | undefined,
   triggerParams: Record<string, unknown> | undefined,
+  runtimeVars: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (!params) return params
   const resolved: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(params)) {
     if (typeof value === 'string') {
-      const match = value.match(/^\{\{triggerParams\.(\w+)\}\}$/)
-      resolved[key] =
-        match && triggerParams ? triggerParams[match[1]] : value
+      const triggerMatch = value.match(/^\{\{triggerParams\.(\w+)\}\}$/)
+      if (triggerMatch) {
+        resolved[key] =
+          triggerParams && triggerMatch[1] in triggerParams
+            ? triggerParams[triggerMatch[1]]
+            : value
+        continue
+      }
+      const varsMatch = value.match(/^\{\{vars\.(\w+)\}\}$/)
+      if (varsMatch) {
+        resolved[key] =
+          runtimeVars && varsMatch[1] in runtimeVars
+            ? runtimeVars[varsMatch[1]]
+            : value
+        continue
+      }
+      resolved[key] = value
     } else {
       resolved[key] = value
     }
@@ -130,13 +155,17 @@ export function buildDefaultHooks(logDir: string): StageHooks {
       return last
     },
 
-    async runCapability(stage, ctx, triggerParams): Promise<StageExecutionResult> {
+    async runCapability(stage, ctx, triggerParams, runtimeVars): Promise<StageExecutionResult> {
       const capabilityKey = stage.capabilityKey
       if (!capabilityKey) {
         return { status: 'failed', output: '未配置 capabilityKey', error: 'no capabilityKey' }
       }
       const timeoutMs = (stage.timeoutSeconds ?? 1200) * 1000
-      const resolvedParams = resolveCapabilityParams(stage.capabilityParams, triggerParams)
+      const resolvedParams = resolveCapabilityParams(
+        stage.capabilityParams,
+        triggerParams,
+        runtimeVars,
+      )
       try {
         const capabilityPromise = triggerCapability({
           capabilityKey,

@@ -18,6 +18,7 @@ import {
   Row,
   Col,
   Statistic,
+  Segmented,
 } from 'antd'
 import {
   ReloadOutlined,
@@ -36,6 +37,7 @@ import {
 } from '../api/prd-documents'
 import { createPrdChatSession } from '../api/prd-chat'
 import { getProductLines } from '../api/product-lines'
+import { me } from '../api/auth'
 import type {
   PrdDocument,
   PrdReviewFinding,
@@ -80,6 +82,22 @@ const ACTION_LABELS: Record<string, string> = {
   reject: '驳回给 PM',
 }
 
+// V2.0：findings.dimension 字段承接 rules.ts 的 ruleId。前端按 ruleId 映射人类可读名。
+// 未命中时直接显示原始字符串（兼容 V1 旧数据的数字维度名 "1"/"格式完整性" 等）。
+const RULE_LABELS: Record<string, string> = {
+  chapter_complete: '章节完整',
+  source_traceable: '来源可追溯',
+  measurable_acceptance: '验收可度量',
+  no_soft_language: '避免软化用语',
+  no_impl_leak: '避免实现泄露',
+  scope_consistent: '范围一致',
+  no_contradiction: '无内部矛盾',
+  impact_enum: '影响类型合法',
+  breaking_change_detail: '破坏性变更有迁移策略',
+  closed_loop: '动作闭环 (5W)',
+  submit_review_missing: '自审契约失败',
+}
+
 const PHASE_LABELS: Record<string, string> = {
   discovery: 'Phase 1 · 项目发现',
   features: 'Phase 2 · 核心功能',
@@ -96,6 +114,8 @@ export default function PrdDocumentsPage() {
   const [loading, setLoading] = useState(false)
   const [selectedPL, setSelectedPL] = useState<number | undefined>()
   const [statusFilter, setStatusFilter] = useState<PrdStatus | undefined>()
+  const [currentUsername, setCurrentUsername] = useState<string | undefined>()
+  const [ownerFilter, setOwnerFilter] = useState<'all' | 'mine'>('all')
 
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [detail, setDetail] = useState<PrdDocument | null>(null)
@@ -116,20 +136,34 @@ export default function PrdDocumentsPage() {
 
   useEffect(() => {
     getProductLines().then(setProductLines)
+    me().then((u) => setCurrentUsername(u.username)).catch(() => {})
   }, [])
 
   useEffect(() => {
-    if (selectedPL) void load()
+    void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPL, statusFilter])
+  }, [selectedPL, statusFilter, ownerFilter, currentUsername])
+
+  // 有 reviewing / drafting 的 PRD 时短轮询：自审是后台异步走的（可能 10+ 分钟），
+  // 终态落盘后列表不会主动刷新，用户看到的状态会一直停在"自审中"。
+  // 轮询到所有行都进入终态就自动停（load 无参，会尊重当前 selectedPL/statusFilter）。
+  useEffect(() => {
+    const hasActive = data.some((p) => p.status === 'reviewing' || p.status === 'drafting')
+    if (!hasActive) return
+    const t = window.setInterval(() => {
+      void load()
+    }, 10000)
+    return () => window.clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data])
 
   async function load() {
-    if (!selectedPL) return
     setLoading(true)
     try {
       const res = await listPrdDocuments({
         productLineId: selectedPL,
         status: statusFilter,
+        createdBy: ownerFilter === 'mine' ? currentUsername : undefined,
       })
       setData(res.data)
     } finally {
@@ -196,7 +230,9 @@ export default function PrdDocumentsPage() {
       })
       message.success(`PRD #${detail.id} 已驳回给 PM`)
       setRejectModalOpen(false)
-      setDrawerOpen(false)
+      setRejectComment('')
+      const fresh = await getPrdDocument(detail.id).catch(() => null)
+      if (fresh) setDetail(fresh)
       void load()
     } catch {
       message.error('驳回失败')
@@ -256,6 +292,22 @@ export default function PrdDocumentsPage() {
         productLineId: prd.productLineId,
         prdId: prd.id,
       })
+      navigate(`/prd-chat/${res.sessionKey}`)
+    } catch {
+      message.error('创建对话失败')
+    }
+  }
+
+  // 「回到对话修改」— 新建一个 chat session，seed_rejection=true 让后端把驳回原因
+  // 作为首屏 assistant 消息落盘，同时系统提示里也会带上驳回摘要。
+  async function handleResumeChatWithReject(prd: PrdDocument) {
+    try {
+      const res = await createPrdChatSession({
+        productLineId: prd.productLineId,
+        prdId: prd.id,
+        seedRejection: true,
+      })
+      setDrawerOpen(false)
       navigate(`/prd-chat/${res.sessionKey}`)
     } catch {
       message.error('创建对话失败')
@@ -431,10 +483,19 @@ export default function PrdDocumentsPage() {
         title="PRD 文档"
         extra={
           <Space>
+            <Segmented
+              value={ownerFilter}
+              onChange={(v) => setOwnerFilter(v as 'all' | 'mine')}
+              options={[
+                { label: '全部', value: 'all' },
+                { label: '我的 PRD', value: 'mine', disabled: !currentUsername },
+              ]}
+            />
             <Select
               style={{ width: 200 }}
-              placeholder="选择产品线"
+              placeholder="全部产品线"
               value={selectedPL}
+              allowClear
               onChange={setSelectedPL}
               options={productLines.map((pl) => ({ value: pl.id, label: pl.displayName }))}
             />
@@ -449,7 +510,7 @@ export default function PrdDocumentsPage() {
                 label: STATUS_LABELS[k],
               }))}
             />
-            <Button icon={<ReloadOutlined />} onClick={load} disabled={!selectedPL}>
+            <Button icon={<ReloadOutlined />} onClick={load}>
               刷新
             </Button>
             <Button
@@ -507,6 +568,7 @@ export default function PrdDocumentsPage() {
               setRejectModalOpen(true)
             }}
             onJumpLocation={jumpToLocation}
+            onResumeWithReject={() => handleResumeChatWithReject(detail)}
             prdScrollRef={prdScrollRef}
           />
         )}
@@ -613,6 +675,7 @@ interface PrdDetailBodyProps {
   onOpenEdit: () => void
   onOpenReject: () => void
   onJumpLocation: (loc: string) => void
+  onResumeWithReject: () => void
   prdScrollRef: React.RefObject<HTMLDivElement>
 }
 
@@ -624,6 +687,7 @@ function PrdDetailBody({
   onOpenEdit,
   onOpenReject,
   onJumpLocation,
+  onResumeWithReject,
   prdScrollRef,
 }: PrdDetailBodyProps) {
   const review = prd.reviewResult
@@ -634,8 +698,39 @@ function PrdDetailBody({
   const needsAction = prd.status === 'review_blocked'
   const showSnapshot = prd.status === 'drafting' || prd.status === 'reviewing'
 
+  // 最近一次人工驳回 → 用 Alert 把原因顶在最上面，引导 PM 回到对话。
+  const history = prd.reviewHistory ?? []
+  const lastReview = history.length > 0 ? history[history.length - 1] : undefined
+  const isRejected =
+    prd.status === 'drafting' &&
+    lastReview?.result?.recommendation?.action === 'reject'
+
   return (
     <>
+      {isRejected && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="该 PRD 已被驳回，请按下方原因修改后重新提交"
+          description={
+            <div>
+              <div>
+                <b>驳回原因</b>：{lastReview?.result?.recommendation?.reason ?? '（无备注）'}
+              </div>
+              <div style={{ color: '#7A8296', marginTop: 4 }}>
+                点击「回到对话修改」将新开一个 Agent 会话，已自动附带驳回上下文。
+              </div>
+            </div>
+          }
+          action={
+            <Button type="primary" onClick={onResumeWithReject}>
+              回到对话修改
+            </Button>
+          }
+        />
+      )}
+
       {showSnapshot && <WorkflowSnapshotCard prd={prd} />}
 
       {needsAction && review && (
@@ -831,7 +926,9 @@ function ReviewTab({
           <List.Item style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
             <Space wrap>
               <Tag color={SEVERITY_COLORS[f.severity]}>{f.severity.toUpperCase()}</Tag>
-              <Tag>{f.dimension}</Tag>
+              <Tag title={f.dimension}>
+                {RULE_LABELS[f.dimension] ?? f.dimension}
+              </Tag>
               {f.ownership && <Tag color="blue">{OWNERSHIP_LABELS[f.ownership]}</Tag>}
               {f.location && (
                 <Button

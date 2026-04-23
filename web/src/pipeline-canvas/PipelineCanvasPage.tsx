@@ -7,6 +7,7 @@ import { getTestPipeline } from '../api/test-pipelines'
 import { getPipelineVariables } from '../api/pipeline-variables'
 import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getTestServers } from '../api/test-servers'
+import { getCapabilities, type Capability } from '../api/capabilities'
 import { getPipelineGraph, putPipelineGraph } from './api'
 import { usePipelineGraph } from './hooks/usePipelineGraph'
 import { useAutoLayout } from './hooks/useAutoLayout'
@@ -17,6 +18,13 @@ import { EdgeConditionPopover } from './panels/EdgeConditionPopover'
 import { CanvasToolbar } from './toolbar/CanvasToolbar'
 import type { TestPipeline } from '../types'
 import type { StageType, StageFields } from './types'
+
+export interface CapabilityOption {
+  key: string
+  displayName: string
+  category: Capability['category']
+  paramSchema: Record<string, unknown>
+}
 
 const defaultStageFields = (type: StageType, id: string): StageFields => ({
   id,
@@ -31,10 +39,53 @@ const defaultStageFields = (type: StageType, id: string): StageFields => ({
   ...(type === 'approval' ? { approverIds: [], approvalDescription: '' } : {}),
   ...(type === 'capability' ? { capabilityKey: '' } : {}),
   ...(type === 'wait_webhook' ? { webhookTag: '' } : {}),
+  ...(type === 'im_input'
+    ? {
+        imInputConfig: {
+          prompt: '请提供以下参数：',
+          paramSchema: { type: 'object', properties: {}, required: [] },
+          timeoutSeconds: 600,
+        },
+      }
+    : {}),
 })
 
 function stageTypeLabel(t: StageType): string {
-  return t === 'script' ? '脚本' : t === 'approval' ? '审批' : t === 'capability' ? 'Capability' : 'Webhook'
+  switch (t) {
+    case 'script': return '脚本'
+    case 'approval': return '审批'
+    case 'capability': return 'Capability'
+    case 'wait_webhook': return 'Webhook'
+    case 'im_input': return 'IM 输入'
+  }
+}
+
+function firstGraphIssue(nodes: ReadonlyArray<{ id: string; data: StageFields }>):
+  | { nodeId: string; message: string }
+  | null {
+  for (const n of nodes) {
+    const d = n.data
+    if (!d.name?.trim()) return { nodeId: n.id, message: '节点缺少名称' }
+    if (d.stageType === 'capability' && !d.capabilityKey?.trim()) {
+      return { nodeId: n.id, message: `节点 ${d.name}: 未选择 Capability` }
+    }
+    if (d.stageType === 'wait_webhook' && !d.webhookTag?.trim()) {
+      return { nodeId: n.id, message: `节点 ${d.name}: Webhook Tag 为空` }
+    }
+    if (d.stageType === 'im_input') {
+      if (!d.imInputConfig?.prompt?.trim()) {
+        return { nodeId: n.id, message: `节点 ${d.name}: 引导语为空` }
+      }
+      const ps = d.imInputConfig.paramSchema
+      if (!ps || typeof ps !== 'object' || Array.isArray(ps)) {
+        return { nodeId: n.id, message: `节点 ${d.name}: paramSchema 不是合法 object` }
+      }
+    }
+    if (d.stageType === 'approval' && (!d.approverIds || d.approverIds.length === 0)) {
+      return { nodeId: n.id, message: `节点 ${d.name}: 未选择审批人` }
+    }
+  }
+  return null
 }
 
 export default function PipelineCanvasPage() {
@@ -46,6 +97,7 @@ export default function PipelineCanvasPage() {
   const [variableCatalog, setVariableCatalog] = useState<{ key: string; description: string; category: string }[]>([])
   const [dingtalkUsers, setDingtalkUsers] = useState<{ userId: string; name: string }[]>([])
   const [availableRoles, setAvailableRoles] = useState<string[]>([])
+  const [capabilityOptions, setCapabilityOptions] = useState<CapabilityOption[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -57,11 +109,12 @@ export default function PipelineCanvasPage() {
     let cancelled = false
     async function load() {
       try {
-        const [p, cat, usersRes, wire] = await Promise.all([
+        const [p, cat, usersRes, wire, caps] = await Promise.all([
           getTestPipeline(pipelineId),
           getPipelineVariables(),
           getDingTalkUsers(),
           getPipelineGraph(pipelineId),
+          getCapabilities(),
         ])
         if (cancelled) return
         const users = usersRes.users.map(u => ({ userId: u.userId, name: u.name }))
@@ -71,6 +124,14 @@ export default function PipelineCanvasPage() {
         setVariableCatalog(cat)
         setDingtalkUsers(users)
         setAvailableRoles([...new Set(servers.map(s => s.role).filter(Boolean))])
+        setCapabilityOptions(
+          caps.map(c => ({
+            key: c.key,
+            displayName: c.displayName,
+            category: c.category,
+            paramSchema: c.paramSchema ?? {},
+          })),
+        )
         graph.replaceGraph(wire)
       } catch (e) {
         const err = e as { response?: { data?: { error?: string } } }
@@ -94,6 +155,12 @@ export default function PipelineCanvasPage() {
   )
 
   async function handleSave() {
+    const issue = firstGraphIssue(graph.nodes as { id: string; data: StageFields }[])
+    if (issue) {
+      message.error(issue.message)
+      setSelectedId(issue.nodeId)
+      return
+    }
     try {
       await putPipelineGraph(pipelineId, graph.toWire())
       graph.resetDirty()
@@ -180,6 +247,7 @@ export default function PipelineCanvasPage() {
           onChange={graph.updateNodeData}
           availableRoles={availableRoles}
           dingtalkUsers={dingtalkUsers}
+          capabilities={capabilityOptions}
         />
         <EdgeConditionPopover
           open={!!editingEdge}

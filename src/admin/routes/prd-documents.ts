@@ -9,6 +9,9 @@ import {
   type PrdStatus,
 } from '../../db/repositories/prd-documents.js'
 import { triggerPrdReviewAsync } from '../../agent/prd/prd-agent.js'
+import { getDingTalkUserById } from '../../db/repositories/dingtalk-users.js'
+import { notifyDm } from '../../agent/coordinator.js'
+import { config } from '../../config.js'
 
 const VALID_STATUSES: PrdStatus[] = [
   'drafting',
@@ -155,6 +158,7 @@ export async function registerPrdDocumentRoutes(app: FastifyInstance): Promise<v
 
     // reject → 打回 drafting，等 PM 重新对话
     const updated = await updatePrdStatus(id, 'drafting')
+    const rejectReason = `人工驳回: ${body.comment ?? '（无备注）'}（by ${body.decidedBy ?? 'admin'}）`
     await appendReviewHistory(id, {
       round: (prd.reviewHistory.at(-1)?.round ?? 0) + 1,
       result: {
@@ -163,11 +167,18 @@ export async function registerPrdDocumentRoutes(app: FastifyInstance): Promise<v
         findings: [],
         recommendation: {
           action: 'reject',
-          reason: `人工驳回: ${body.comment ?? '（无备注）'}（by ${body.decidedBy ?? 'admin'}）`,
+          reason: rejectReason,
         },
         reviewedAt: new Date().toISOString(),
       },
     })
+
+    // Best-effort IM 通知：PRD 的 createdBy 若匹配 dingtalk_users（说明是 IM 路径创建），
+    // 发钉钉私聊；web 后台创建的用户无钉钉映射则跳过。任何失败只 log，不影响返回。
+    void notifyPmOnReject(prd.id, prd.title, prd.createdBy, rejectReason).catch((err) => {
+      req.log.warn({ err, prdId: id }, '[review-decision] notifyPmOnReject failed')
+    })
+
     return { data: updated }
   })
 
@@ -191,4 +202,28 @@ export async function registerPrdDocumentRoutes(app: FastifyInstance): Promise<v
     }
     return { data: { id, deleted: true } }
   })
+}
+
+async function notifyPmOnReject(
+  prdId: number,
+  prdTitle: string,
+  createdBy: string,
+  reason: string
+): Promise<void> {
+  // createdBy 必须是钉钉 staffId（IM 路径创建的 PRD）。web 后台 admin 用户不在表里 → 跳过。
+  const dtUser = await getDingTalkUserById(createdBy)
+  if (!dtUser) {
+    console.log(`[prd-documents] skip DM: ${createdBy} not in dingtalk_users (prd=${prdId})`)
+    return
+  }
+
+  const lines = [
+    `📝 你的 PRD「${prdTitle}」被驳回了`,
+    '',
+    `原因：${reason}`,
+  ]
+  if (config.WEB_BASE_URL) {
+    lines.push('', `查看详情：${config.WEB_BASE_URL}/prd-documents/${prdId}`)
+  }
+  await notifyDm(dtUser.userId, lines.join('\n'))
 }

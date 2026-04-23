@@ -182,12 +182,12 @@ export interface PipelineRunResult {
 export async function runPipeline(
   pipelineId: number,
   serverAssignment: Record<string, string[]>,
-  triggerType: 'manual' | 'api' | 'scheduled' | 'im',
-  triggeredBy: string,
+  trigger: import('./trigger.js').PipelineTrigger,
   runtimeVarsInput: Record<string, string> = {},
   onComplete?: (result: PipelineRunResult) => void,
-  triggerParams?: Record<string, unknown>
 ): Promise<number> {
+  const { type: triggerType, triggeredBy } = trigger
+  const triggerParams = trigger.params
   const pipelineStartTime = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
   if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)

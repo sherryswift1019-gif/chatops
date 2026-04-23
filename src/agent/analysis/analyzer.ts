@@ -290,7 +290,8 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
     (extraParams?.version as string | undefined) ?? knowledgeRepo.codeDefaultBranch ?? 'master'
 
   const capabilityRow = await getCapabilityByKey('analyze_bug')
-  if (!capabilityRow?.systemPrompt) {
+  const effectivePrompt = capabilityRow?.systemPrompt ?? capabilityRow?.defaultSystemPrompt ?? null
+  if (!effectivePrompt) {
     return { success: false, error: 'analyze_bug 未配置 systemPrompt，请在管理后台配置' }
   }
 
@@ -328,7 +329,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
       })),
       mainRepoWorktreePath: mainWorktree.path,
       defaultBranch,
-      systemPrompt: capabilityRow.systemPrompt,
+      systemPrompt: effectivePrompt,
       signal: opts.signal,
     })
   } catch (err) {
@@ -373,7 +374,7 @@ async function handleAnalyzeBugInner(opts: TriggerOptions): Promise<TriggerResul
           projectPath: p.projectPath,
           worktreePath: wt.path,
           sourceBranch: p.sourceBranch,
-          systemPrompt: capabilityRow.systemPrompt!,
+          systemPrompt: effectivePrompt,
           signal: opts.signal,
         })
         return { projectPath: p.projectPath, outcome }
