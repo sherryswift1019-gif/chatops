@@ -121,15 +121,16 @@
 
 ### 3.5 HTML 原型生成 [P0]
 
-**描述:** 生成单 HTML 文件，包含全部设计页面和边界状态的半交互原型，保存至服务器供访问。
+**描述:** 生成单 HTML 内容（含全部设计页面和边界状态的半交互原型），作为代码资源存入 DB（对齐 PRD 文档 `prd_documents.content_markdown` 保存模式），通过动态路由 serve 供访问。
 
 **验收标准:**
 - [ ] 单 HTML 文件，内嵌 CSS/JS，零外部依赖
 - [ ] 所有设计页面通过导航/Tab 可切换查看
 - [ ] 页面内半交互：弹窗开关、Tab 切换、表单验证提示、边界状态（加载/空/错误）可点击切换
 - [ ] 硬编码假数据，内容真实（不用"Lorem Ipsum"或无意义占位文字）
-- [ ] HTML 文件保存至服务器，生成可访问 URL（URL 含随机 token，不可枚举）
-- [ ] URL 有效期 ≥ 7 天
+- [ ] HTML 内容保存至 `design_documents.prototype_html`（TEXT），不落磁盘、不用对象存储
+- [ ] 访问路由 `/prototypes/:token`：fastify 查 DB 按 token 返回 HTML（Content-Type: text/html），token 为 32 字节随机值，不可枚举
+- [ ] URL 有效期 ≥ 7 天（DB 字段 `prototype_expires_at` 控制，过期返回 410 Gone）
 - [ ] 原型覆盖的页面范围在设计文档第 8 章（HTML 原型说明）中声明
 - [ ] 视觉风格遵循产线设计系统配置（颜色、字体、间距）
 - [ ] HTML 原型在 Chrome / Safari / Firefox 最新版可正常渲染
@@ -236,22 +237,22 @@
 
 ### 3.13 Web 端对话面板 [P1]
 
-**描述:** 在 Web Admin 提供对话面板，设计师可通过 Web 与 Agent 交互，复用 PRD Agent 的 Chat 基础设施。
+**描述:** 在 Web Admin 提供对话面板，设计师可通过 Web 与 Agent 交互，参照 PRD Agent Chat 同构实现（DB 独立建表，对齐 Arch Agent 模式）。
 
 **验收标准:**
-- [ ] 复用 `PrdChatPage` 组件和 `usePrdChatStream` SSE hook，不重新开发
+- [ ] 参照 `PrdChatPage` 组件和 `usePrdChatStream` SSE hook 同构实现 `DesignChatPage` + `useDesignChatStream`，结构与行为对齐 PRD Agent
 - [ ] Web 对话面板支持查看设计文档历史和对话历史
-- [ ] 对话历史持久化到 DB，设计师可跨 session 查看
+- [ ] 对话历史持久化到 DB（独立表 `design_chat_sessions` / `design_chat_messages`），设计师可跨 session 查看
 - [ ] Web Admin 导航新增"设计文档"菜单入口
 
-**实施前提（合表方案，需在 UX Agent 开工前完成）:**
+**实施方案（分表，对齐 Arch Agent 既有模式）:**
 
-以下为一次性基础设施升级，升级完成后后续所有 Agent（Arch / Dev / Test）直接复用，无需重复改造：
+对齐 [schema-v24.sql](src/db/schema-v24.sql) 中 Arch Agent 的既有做法（`arch_chat_sessions` / `arch_chat_messages` 独立建表），UX Agent 同样独立建表，各 Agent DB 层解耦，PRD / Arch / UX 互不影响：
 
-1. **DB 迁移**：`prd_chat_sessions` → `agent_chat_sessions`（新增 `agent_kind VARCHAR NOT NULL DEFAULT 'prd'`），`prd_chat_messages` → `agent_chat_messages`（同增 `agent_kind`）；历史数据回填 `agent_kind='prd'`
-2. **后端路由泛化**：`prd-chat.ts` 重构为 `agent-chat.ts`，入参增加 `agentKind`；`streamWebChat` 按 `agentKind` 分发 capability（`create_prd` / `create_design_doc`）；原 `/admin/prd-chat` 路由保留重定向兼容
-3. **前端组件泛化**：`PrdChatPage` → `AgentChatPage`（接收 `agentKind` prop），`usePrdChatStream` → `useAgentChatStream`；`PrdChatPage` 改为 `<AgentChatPage agentKind="prd" />` 的封装，对外行为不变
-4. **UX Agent 直接使用**：`<AgentChatPage agentKind="design" />`，session_key 命名空间 `design-chat-*`，无需额外改动
+1. **DB 新增表**（schema-v25）：`design_chat_sessions` / `design_chat_messages`，结构与 `prd_chat_sessions` / `arch_chat_sessions` 同构；不修改任何现有表
+2. **后端新增路由**：`src/admin/routes/design-chat.ts`，参照 `prd-chat.ts` 实现；`streamWebChat` capability 指向 `create_design_doc`
+3. **前端新增页面**：`DesignChatPage.tsx` + `useDesignChatStream.ts`，参照 `PrdChatPage` / `usePrdChatStream` 同构实现；session_key 命名空间 `design-chat-*`
+4. **PRD / Arch Agent 既有基础设施零改动**：`prd-chat.ts` / `PrdChatPage` / `usePrdChatStream` / `prd_chat_*` 表、`arch_chat_*` 表均不受影响
 
 **来源:** 对话 Phase 3 — "Web 端对话面板放在一期一起做"
 
@@ -262,10 +263,10 @@
 | 类别 | 需求 | 指标 |
 |------|------|------|
 | 性能 | 文档生成首 token 响应 | < 3s |
-| 存储 | HTML 原型单文件大小 | < 5MB |
-| 可用性 | HTML 原型 URL 有效期 | ≥ 7 天 |
+| 存储 | HTML 原型单文件大小 | < 5MB（存 PG TEXT 字段，PG 单行理论 1GB，5MB 远在安全区） |
+| 可用性 | HTML 原型 URL 有效期 | ≥ 7 天（DB 字段 `prototype_expires_at` 控制） |
 | 可用性 | Session 恢复 | 见 §3.9（摘要持久化 + 30 分钟 TTL 后基于摘要恢复） |
-| 安全 | HTML 原型访问控制 | URL 含随机 token，不可枚举 |
+| 安全 | HTML 原型访问控制 | `/prototypes/:token` 路由，token = 32 字节随机值（base64url），不可枚举 |
 | 兼容性 | HTML 原型浏览器支持 | Chrome / Safari / Firefox 最新版正常渲染 |
 
 ---
@@ -276,7 +277,7 @@
 - **知识库系统**: 复用 `search_knowledge` 工具
 - **IM 适配层（钉钉/飞书）**: 复用现有消息发送和接收能力
 - **ClaudeRunner**: 复用现有 session 管理机制（30 分钟 TTL + session resume）
-- **Web Admin Chat 基础设施**: 复用 `PrdChatPage` / `usePrdChatStream` / `prd-chat.ts` 路由
+- **Web Admin Chat 基础设施**: 参照 `PrdChatPage` / `usePrdChatStream` / `prd-chat.ts` 模式同构实现 `DesignChatPage` / `useDesignChatStream` / `design-chat.ts`（对齐 Arch Agent 分表模式）
 - **产线配置系统**: 读取产线级设计系统配置，注入为 Agent 全局上下文
 
 ---
@@ -291,34 +292,26 @@
 | PRD 文档系统 / read_prd | 行为复用 | 复用 read_prd 工具，只读，不改动 PRD 数据或接口 | 完全兼容 | — | Phase 2 — 用户确认 |
 | search_knowledge | 行为复用 | 直接复用，不改动工具实现 | 完全兼容 | — | Phase 2 — 用户确认 |
 | IM 适配层（钉钉/飞书） | 行为复用 | 复用消息发送/接收，不改动适配器代码 | 完全兼容 | — | Phase 2 — 用户确认 |
-| PrdChatPage / usePrdChatStream / prd-chat.ts | 接口变更 | 泛化为 AgentChatPage / useAgentChatStream / agent-chat.ts，接收 agentKind 参数；PrdChatPage 改为 `<AgentChatPage agentKind="prd" />` 封装，对外行为不变 | 向后兼容（原路由保留重定向） | 回滚：revert 泛化提交，原组件文件备份保留 | Phase 3 对话 — 合表方案决策 |
-| prd_chat_sessions / prd_chat_messages | 数据结构变更 | 表重命名为 agent_chat_sessions / agent_chat_messages，新增 agent_kind 字段，历史数据回填 agent_kind='prd' | 破坏性变更 | 回滚：rename back + drop column；回填脚本幂等可重跑 | Phase 3 对话 — 合表方案决策 |
+| PrdChatPage / usePrdChatStream / prd-chat.ts | 模式参照 | 新建 DesignChatPage / useDesignChatStream / design-chat.ts 同构实现，不修改 PRD Agent 现有文件 | 完全兼容（零改动） | 删除新增文件即可回滚 | Review 修订（2026-04-23）|
+| arch_chat_sessions / arch_chat_messages | 无影响 | 分表方案下 Arch Agent 既有表保持不变 | 完全兼容 | — | Review 修订（2026-04-23）|
 | Web Admin 导航 | UI 变更 | 新增"设计文档"菜单项和页面路由 | 完全兼容 | 移除菜单项即可回滚 | Phase 3 范围确认 |
-| DB Schema | 数据结构变更 | 新增 design_documents 表，不修改任何现有表 | 完全兼容（新增表，不影响现有表） | drop table design_documents 即可回滚 | Phase 3 范围确认 |
-| 文件存储 | 接口变更 | 新增 HTML 原型文件存储能力（平台现无此能力，全新建设） | 完全兼容（新增能力，不影响现有） | 停止挂载存储目录即可 | Phase 3 范围确认 |
+| DB Schema | 数据结构变更 | 新增 `design_documents`（含 `prototype_html` TEXT / `prototype_token` TEXT UNIQUE / `prototype_expires_at` TIMESTAMPTZ 三字段）/ `design_chat_sessions` / `design_chat_messages` 三张表（schema-v25），不修改任何现有表 | 完全兼容 | drop 三张新表即可回滚 | Review 修订（2026-04-23）|
+| HTML 原型 serve 路由 | 新增 | 新增 `/prototypes/:token` 路由，fastify 查 DB 返回 HTML（Content-Type: text/html） | 完全兼容（新增路由） | 移除路由即可回滚 | Review 修订（2026-04-23）|
 
 ### 6.2 破坏性变更详述
 
-**DB 表重命名：prd_chat_sessions / prd_chat_messages**
-
-- **现状**：两张表专用于 PRD Agent 对话，无 agent_kind 字段
-- **变更后**：重命名为 `agent_chat_sessions` / `agent_chat_messages`，新增 `agent_kind VARCHAR NOT NULL DEFAULT 'prd'`，历史记录回填 `agent_kind='prd'`
-- **影响方**：`prd-chat.ts` 后端路由、`usePrdChatStream` hook、`PrdChatPage` 组件（三者在同一次迁移提交中同步修改）
-- **迁移步骤**：
-  1. 执行 `schema-v8.sql`：ALTER TABLE RENAME + ADD COLUMN + UPDATE SET agent_kind='prd'
-  2. 同步部署后端泛化代码（agent-chat.ts）和前端泛化组件（AgentChatPage）
-  3. 验证 PRD Agent Web 对话面板功能正常（回归测试见 §6.3）
-- **回滚策略**：执行 rollback SQL（RENAME TABLE back + DROP COLUMN）+ revert 对应提交；迁移脚本幂等，可重跑
+本期无破坏性变更。分表方案下所有 PRD / Arch Agent 既有表结构、路由、前端组件均零改动；UX Agent 新增的 DB 表、后端路由、前端页面均为纯新增文件。
 
 ### 6.3 回归测试建议
 
 - [ ] 产线配置：新增设计系统字段为 null 时，HTML 原型和文档生成不报错（向后兼容验证）
 - [ ] read_prd 工具：UI/UX Agent 调用后 PRD 数据不被修改（只读验证）
 - [ ] Web Admin 导航：新增菜单项不影响现有页面路由和权限
-- [ ] DB 迁移：agent_chat_sessions 表中 PRD Agent 历史对话 agent_kind 字段回填正确（全部为 'prd'）
-- [ ] PRD Agent Web 对话面板：迁移后功能回归（session 创建、消息发送、SSE 流、历史查看均正常）
-- [ ] DB 迁移：新增 design_documents 表后现有表数据完整性不受影响
+- [ ] PRD Agent Web 对话面板：UX Agent 上线后 PRD Agent session 创建 / SSE 流 / 历史查看功能回归正常（验证零影响）
+- [ ] Arch Agent 既有表：`arch_chat_*` / `arch_documents` 数据不受 v25 迁移影响
+- [ ] DB 迁移：新增 design_* 三张表后现有表数据完整性不受影响
 - [ ] IM 交付：设计文档消息发送不影响现有 PRD Agent 消息的发送路径
+- [ ] HTML 原型 serve 路由：`/prototypes/:token` 正确返回 HTML（Content-Type: text/html）；过期 token 返回 410 Gone；非法 token 返回 404
 
 ---
 
@@ -337,7 +330,7 @@
 - System Prompt（7 条铁律含 UX 基线强制）
 - IM 交付通知（设计文档摘要 + HTML 原型链接）
 - 产线级设计系统配置（全局上下文注入）
-- Web 端对话面板（复用 PRD Agent Chat 基础设施）
+- Web 端对话面板（参照 PRD Agent Chat 模式同构实现，DB 独立建表）
 
 ### 明确排除
 - HTML 原型自动自审（token 消耗高，交设计师人工 review）
@@ -349,7 +342,6 @@
 ## 8. 待定事项
 
 - [ ] `search_design_docs` 是新建独立工具还是扩展现有 `search_existing_prds`？（建议新建，职责分离，待技术评审确认）
-- [ ] HTML 原型文件存储方案：本地文件系统 + Nginx 静态服务 vs 对象存储（S3/OSS）？（需确认部署架构和运维成本）
 - [ ] 竞品研究 web search：复用现有 web_search 实现还是新建专用工具？（待确认平台现有 web search 能力）
 
 ---
@@ -371,7 +363,9 @@
 | 上下文持久化新增 4 个设计专属字段 | 标准字段不足以支持设计对话恢复（方向选择、竞品结论不可丢失） | Phase 2 对话 — Agent 决策，用户授权 |
 | Agent 定位：结构跟随 PRD，设计主动提议，用户最终拍板 | 用户非设计专业，Agent 专业判断是核心价值；但结构属于业务决策 | Phase 2 对话 — Agent 决策，用户确认 |
 | 铁律 7 UX 基线强制（5 条具体规则） | 用户提出 UX 易用性要求；Agent 将原则落地为可检查的具体规则 | Phase 2 补充对话 |
-| Web 端对话面板放一期，复用 PRD Agent 基础设施 | 用户明确要求一期做；git 状态显示 PRD Chat 基础设施已存在可复用 | Phase 3 对话 |
+| Web 端对话面板放一期 | 用户明确要求一期做；git 状态显示 PRD Chat 基础设施已存在可参照 | Phase 3 对话 |
 | 竞品研究由 Agent 主动触发 | 用户希望 Agent 自己搜索，不需要设计师指定竞品 | Phase 2 对话 — 用户决策 |
-| Chat 基础设施采用合表方案（agent_chat_sessions + agent_kind 字段），一次性泛化 PrdChatPage → AgentChatPage | 后续规划 Arch / Dev / Test Agent；若各自建表，4 套重复基础设施难以维护；合表方案使每个新 Agent 只需注册 agentKind，无需改动基础设施 | Phase 3 对话 — 用户决策（2026-04-22）|
+| Chat 基础设施采用分表方案（`design_chat_sessions` / `design_chat_messages` 独立建表，前后端同构新建） | 对齐 [schema-v24.sql](src/db/schema-v24.sql) 中 Arch Agent 既有做法 —— 原定合表方案（Phase 3 对话）与代码库现状冲突，Arch Agent 一期已独立建表；继续合表需回迁 `arch_chat_*`，工作量大于收益。分表后各 Agent DB 层完全解耦，PRD / Arch / UX 三套互不影响，UI 层复制成本可接受 | Phase 3 对话（2026-04-22） → Review 修订（2026-04-23）|
+| HTML 原型采用 DB 存储（`design_documents.prototype_html` TEXT），对齐 PRD 文档 `prd_documents.content_markdown` 保存模式 | 平台当前零对象存储集成，且无 Nginx 层（fastify 直暴端口）；DB 存储随 PG 备份自然持久化，无需新增 volume / 对象存储 SDK / 凭据管理；5MB 单文件远在 PG TEXT 安全区 | Review 修订（2026-04-23） — 用户决策 |
+| HTML 原型 URL 使用 `/prototypes/:token` 动态路由，token 存 DB | 对齐 PRD 文档访问模式（动态路由 + DB 查询），统一鉴权/审计路径；不走静态文件 serve 避免缓存/权限绕过 | Review 修订（2026-04-23） |
 | 3.7 验收标准改为能力维度（不锁定工具名 `search_design_docs`），工具名随 §8 实现方案确定 | §8 列为待定（新建独立工具 vs 扩展 `search_existing_prds` 加 `kind` 参数），两种方案工具名不同；在 3.7 锁定工具名会导致若走扩展方案时验收标准天然无法通过 | 自审驳回 blocker 修复（2026-04-22）|
