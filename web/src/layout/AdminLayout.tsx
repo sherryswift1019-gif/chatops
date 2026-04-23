@@ -33,6 +33,7 @@ const PAGE_NAMES: Record<string, string> = {
   '/product-knowledge': '知识库配置',
   '/metrics': '价值仪表盘',
   '/prd-documents': 'PRD 文档',
+  '/prd-metrics': 'PRD 指标',
   '/prd-chat': 'PRD 对话',
 }
 
@@ -62,6 +63,7 @@ const menuItems = [
     children: [
       { key: '/bug-runs', icon: <BugOutlined />, label: 'Bug 修复实例' },
       { key: '/prd-documents', icon: <FileTextOutlined />, label: 'PRD 文档' },
+      { key: '/prd-metrics', icon: <DashboardOutlined />, label: 'PRD 指标' },
       { key: '/product-knowledge', icon: <BookOutlined />, label: '知识库配置' },
       { key: '/metrics', icon: <DashboardOutlined />, label: '价值仪表盘' },
     ],

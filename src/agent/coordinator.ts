@@ -502,6 +502,15 @@ export async function checkAndTriggerHandover(
 
 // 通知回调（server.ts 仍注入；当前链路已由 notify_bug capability 负责，保留 API 兼容性）
 type NotifyDmFn = (userId: string, message: string) => Promise<void>
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let notifyDmFn: NotifyDmFn | null = null
 export function setNotifyDmFn(fn: NotifyDmFn): void { notifyDmFn = fn }
+
+// 主动给用户发 IM 私聊。无 adapter 注入时 noop（测试/未配置 IM 的场景）。
+// 调用方应用 catch 包住避免发送失败影响主流程。
+export async function notifyDm(userId: string, message: string): Promise<void> {
+  if (!notifyDmFn) {
+    console.warn('[coordinator] notifyDm not configured, skipping DM to', userId)
+    return
+  }
+  await notifyDmFn(userId, message)
+}

@@ -92,18 +92,128 @@ export function AssistantMessage({ content, streaming }: { content: string; stre
   )
 }
 
-export function ToolCallBubble({ msg, result }: { msg: PrdChatMessage; result?: PrdChatMessage }) {
+function displayToolName(toolName: string | null): string {
+  if (!toolName) return '未知工具'
+  // 去掉 MCP 前缀：mcp__<server>__<tool> → <tool>
+  const m = toolName.match(/^mcp__[^_]+(?:__[^_]+)*?__(.+)$/)
+  return m ? m[1] : toolName
+}
+
+function truncate(s: string, n = 60): string {
+  if (!s) return ''
+  return s.length > n ? s.slice(0, n) + '…' : s
+}
+
+function summarizeToolCall(toolName: string | null, input: unknown): string {
+  if (!toolName || !input || typeof input !== 'object') return ''
+  const arg = input as Record<string, unknown>
+  const bare = displayToolName(toolName)
+
+  const shortPath = (p: unknown): string => {
+    const s = typeof p === 'string' ? p : ''
+    if (!s) return ''
+    const parts = s.split('/')
+    return parts.length > 3 ? '…/' + parts.slice(-2).join('/') : s
+  }
+
+  switch (bare) {
+    case 'Read': {
+      const fp = shortPath(arg.file_path)
+      return fp ? `读取 ${fp}` : '读取文件'
+    }
+    case 'Write': {
+      const fp = shortPath(arg.file_path)
+      return fp ? `写入 ${fp}` : '写入文件'
+    }
+    case 'Edit':
+    case 'MultiEdit': {
+      const fp = shortPath(arg.file_path)
+      return fp ? `编辑 ${fp}` : '编辑文件'
+    }
+    case 'Bash': {
+      const cmd = typeof arg.command === 'string' ? arg.command : ''
+      const desc = typeof arg.description === 'string' ? arg.description : ''
+      return desc ? desc : cmd ? `执行: ${truncate(cmd, 80)}` : '执行命令'
+    }
+    case 'Glob': {
+      const pat = typeof arg.pattern === 'string' ? arg.pattern : ''
+      return pat ? `查找文件: ${pat}` : '查找文件'
+    }
+    case 'Grep': {
+      const pat = typeof arg.pattern === 'string' ? arg.pattern : ''
+      return pat ? `搜索: ${truncate(pat, 60)}` : '搜索内容'
+    }
+    case 'TodoWrite': {
+      const todos = Array.isArray(arg.todos) ? arg.todos : []
+      return `更新任务清单（${todos.length} 项）`
+    }
+    case 'WebFetch': {
+      const url = typeof arg.url === 'string' ? arg.url : ''
+      return url ? `抓取网页: ${truncate(url, 60)}` : '抓取网页'
+    }
+    case 'WebSearch': {
+      const q = typeof arg.query === 'string' ? arg.query : ''
+      return q ? `搜索: ${truncate(q, 60)}` : '联网搜索'
+    }
+    case 'Task': {
+      const desc = typeof arg.description === 'string' ? arg.description : ''
+      return desc ? `子任务: ${truncate(desc, 60)}` : '启动子任务'
+    }
+    case 'read_prd': {
+      const id = arg.prdId ?? arg.prd_id
+      return id != null ? `读取 PRD #${id}` : '读取 PRD'
+    }
+    case 'save_prd': {
+      const id = arg.prdId ?? arg.prd_id
+      const title = typeof arg.title === 'string' ? arg.title : ''
+      if (id != null && title) return `保存 PRD #${id}「${truncate(title, 20)}」`
+      if (id != null) return `保存 PRD #${id}`
+      if (title) return `保存 PRD「${truncate(title, 20)}」`
+      return '保存 PRD'
+    }
+    case 'search_existing_prds': {
+      const kw = typeof arg.keyword === 'string' ? arg.keyword : (typeof arg.query === 'string' ? arg.query : '')
+      return kw ? `搜索 PRD: ${truncate(kw, 40)}` : '搜索已有 PRD'
+    }
+    case 'search_knowledge': {
+      const q = typeof arg.query === 'string' ? arg.query : ''
+      return q ? `检索知识库: ${truncate(q, 40)}` : '检索知识库'
+    }
+    case 'update_prd_context': {
+      return '更新 PRD 上下文'
+    }
+    default:
+      return ''
+  }
+}
+
+export function ToolCallBubble({
+  msg,
+  result,
+  completed,
+}: {
+  msg: PrdChatMessage
+  result?: PrdChatMessage
+  completed?: boolean
+}) {
   let parsed: unknown = null
   try {
     parsed = JSON.parse(msg.content)
   } catch {
     parsed = msg.content
   }
+  const summary = summarizeToolCall(msg.toolName, parsed)
+  // Porygon 的 Claude 适配器不映射 user 事件里的 tool_result 块，所以 result 几乎永远为空。
+  // 改用"后续是否已有其他持久化消息 / 流式是否结束"作为完成信号。
+  const isDone = Boolean(result) || Boolean(completed)
   const header = (
-    <Space size={8}>
+    <Space size={8} wrap style={{ rowGap: 2 }}>
       <ToolOutlined style={{ color: '#6F42C1' }} />
-      <span style={{ fontWeight: 500 }}>{msg.toolName ?? 'tool'}</span>
-      <Tag color={result ? 'green' : 'processing'}>{result ? '已完成' : '调用中'}</Tag>
+      <span style={{ fontWeight: 500 }}>{displayToolName(msg.toolName)}</span>
+      {summary && (
+        <span style={{ color: '#5C6578', fontSize: 12.5 }}>{summary}</span>
+      )}
+      <Tag color={isDone ? 'green' : 'processing'}>{isDone ? '已完成' : '调用中'}</Tag>
     </Space>
   )
   return (
@@ -218,6 +328,12 @@ const REVIEW_PROGRESS_STYLES: Record<string, ReviewProgressStyle> = {
     background: '#FFF2F0',
     textColor: '#A8071A',
   },
+  salvaged: {
+    icon: <WarningOutlined />,
+    borderColor: '#FFD591',
+    background: '#FFF7E6',
+    textColor: '#D46B08',
+  },
 }
 
 export function ReviewProgressBubble({ msg, active }: { msg: PrdChatMessage; active?: boolean }) {
@@ -319,8 +435,25 @@ export function ChatMessageList({ messages, emptyHint }: Props) {
     setAutoScroll(nearBottom)
   }
 
-  // Group tool_result into its matching tool_use for paired display
-  const grouped: Array<{ item: ChatListItem; resultFor?: PrdChatMessage }> = []
+  // Group tool_result into its matching tool_use for paired display.
+  //
+  // 完成态判定：Porygon 0.10 的 Claude 适配器不处理 CLI 发回的 `user` 事件，
+  // 而 Claude 的 tool_result 块正好封装在 user 事件里，所以后端永远拿不到工具输出、
+  // DB 里也不存在 role='tool_result' 的行。原来仅靠 resultFor 匹配判完成，会让所有
+  // tool_use 永远停在"调用中"。这里用 UI 层能看到的信号补一条：
+  //   - 后面已经出现过其它持久化消息（Claude 已经在干下一件事），或
+  //   - 整段流式已结束（loading 占位消失），
+  // 就视为该 tool 已完成。tool_result 若哪天能真拿到，仍会优先用它（还能展示 Output）。
+  let lastPersistedIdx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (!isStreaming(messages[i])) {
+      lastPersistedIdx = i
+      break
+    }
+  }
+  const hasStreamingPlaceholder = messages.some(isStreaming)
+
+  const grouped: Array<{ item: ChatListItem; resultFor?: PrdChatMessage; completed?: boolean }> = []
   const skip = new Set<number>()
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i]
@@ -335,7 +468,8 @@ export function ChatMessageList({ messages, emptyHint }: Props) {
           !skip.has(x.id as number)
       ) as PrdChatMessage | undefined
       if (match) skip.add(match.id as number)
-      grouped.push({ item: m, resultFor: match })
+      const completed = Boolean(match) || i < lastPersistedIdx || !hasStreamingPlaceholder
+      grouped.push({ item: m, resultFor: match, completed })
       continue
     }
     grouped.push({ item: m })
@@ -343,6 +477,12 @@ export function ChatMessageList({ messages, emptyHint }: Props) {
 
   // 找出"活跃"的 review_progress：最新的一条，且尚未到终态（review_finalized / review_error）。
   // 该条会显示 spinner + 已用时，用来告诉用户 agent 当前正在这个阶段工作。
+  //
+  // 超时保险丝：review 链路的 SSE 事件如果因为客户端断连没落盘（见 prd-chat.ts 的
+  // clientClosed 处理），历史加载回来就只剩一条 review_started，导致 spinner 永远转。
+  // runPrdReview 的最大时长受 MAX_REPAIR_ROUNDS(2) × MCP maxTurns(30) 限制，实际极少
+  // 超过 20 分钟。所以超过 REVIEW_ACTIVE_TIMEOUT_MS 还没到终态事件，直接视为已结束。
+  const REVIEW_ACTIVE_TIMEOUT_MS = 20 * 60 * 1000
   let activeReviewId: number | string | null = null
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]
@@ -351,6 +491,8 @@ export function ChatMessageList({ messages, emptyHint }: Props) {
     if (m.metadata?.kind !== 'review_progress') continue
     const stage = String(m.metadata?.stage ?? '')
     if (stage === 'review_finalized' || stage === 'review_error') break
+    const startedAt = Date.parse((m as PrdChatMessage).createdAt)
+    if (Number.isFinite(startedAt) && Date.now() - startedAt > REVIEW_ACTIVE_TIMEOUT_MS) break
     activeReviewId = m.id
     break
   }
@@ -380,7 +522,7 @@ export function ChatMessageList({ messages, emptyHint }: Props) {
           {emptyHint}
         </div>
       )}
-      {grouped.map(({ item, resultFor }) => {
+      {grouped.map(({ item, resultFor, completed }) => {
         if (isStreaming(item)) {
           return (
             <AssistantMessage key={item.id} content={item.content} streaming />
@@ -396,7 +538,7 @@ export function ChatMessageList({ messages, emptyHint }: Props) {
           return <AssistantMessage key={item.id} content={item.content} />
         }
         if (item.role === 'tool_use') {
-          return <ToolCallBubble key={item.id} msg={item} result={resultFor} />
+          return <ToolCallBubble key={item.id} msg={item} result={resultFor} completed={completed} />
         }
         if (item.role === 'error') {
           return <ErrorMessage key={item.id} content={item.content} />

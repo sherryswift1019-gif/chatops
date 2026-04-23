@@ -7,6 +7,7 @@ import {
   CREATE_PRD_SYSTEM_PROMPT,
   REVIEW_PRD_SYSTEM_PROMPT,
 } from '../agent/prd/prompts.js'
+import { CREATE_ARCH_SYSTEM_PROMPT } from '../agent/arch/prompts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
@@ -88,6 +89,15 @@ const schemaV22 = readFileSync(join(__dirname, 'schema-v22.sql'), 'utf8')
 await pool.query(schemaV22)
 console.log('[migrate] schema-v22 applied')
 
+const schemaV23 = readFileSync(join(__dirname, 'schema-v23.sql'), 'utf8')
+await pool.query(schemaV23)
+console.log('[migrate] schema-v23 applied')
+
+const schemaV24 = readFileSync(join(__dirname, 'schema-v24.sql'), 'utf8')
+await pool.query(schemaV24)
+console.log('[migrate] schema-v24 applied')
+
+
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
 // - system_prompt: refreshed only when it still equals the previous default
@@ -124,4 +134,4 @@ await pool.query(
 )
 
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v22, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22)')
+console.log('✅ Database schema applied (v1 ~ v24, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24)')

@@ -1,11 +1,16 @@
 import client from './client'
 import type { PrdChatMessage, PrdChatSession } from '../types'
 
-export const createPrdChatSession = (body: { productLineId: number; prdId?: number }) =>
+export const createPrdChatSession = (body: {
+  productLineId: number
+  prdId?: number
+  seedRejection?: boolean
+}) =>
   client
     .post<{ data: PrdChatSession }>('/prd-chat/sessions', {
       product_line_id: body.productLineId,
       prd_id: body.prdId,
+      seed_rejection: body.seedRejection,
     })
     .then((r) => r.data.data)
 

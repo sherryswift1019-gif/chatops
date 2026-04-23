@@ -49,6 +49,13 @@ import './tools/save-prd.js'
 import './tools/read-prd.js'
 import './tools/update-prd-context.js'
 import './tools/search-existing-prds.js'
+import './tools/submit-review.js'
+
+// 架构设计 Agent 工具
+import './tools/save-arch.js'
+import './tools/read-arch.js'
+import './tools/update-arch-context.js'
+import './tools/search-existing-arch.js'
 
 const server = new Server(
   { name: 'chatops-tools', version: '1.0.0' },

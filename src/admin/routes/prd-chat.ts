@@ -11,7 +11,9 @@ import {
   updateChatSessionPorygonId,
 } from '../../db/repositories/prd-chat.js'
 import { getProductLineById } from '../../db/repositories/product-lines.js'
+import { getPrdDocumentById } from '../../db/repositories/prd-documents.js'
 import { scanPendingReviewsByTaskId } from '../../agent/prd/prd-agent.js'
+import { buildRejectSeedText } from '../../agent/prd/reject-seed.js'
 
 function buildReviewProgressContent(stage: string, ev: Record<string, unknown>): string {
   const prdId = Number(ev.prdId ?? 0)
@@ -55,6 +57,15 @@ function buildReviewProgressContent(stage: string, ev: Record<string, unknown>):
     }
     case 'review_error':
       return `💥 PRD #${prdId} 自审异常：${String(ev.error ?? 'unknown')}`
+    case 'salvaged': {
+      const fp = typeof ev.filePath === 'string' ? ev.filePath : ''
+      const tail = fp ? ` 来源：${fp.replace(/^.*\/docs\/prds\//, 'docs/prds/')}` : ''
+      const mode = typeof ev.mode === 'string' ? ev.mode : 'create'
+      if (mode === 'update') {
+        return `⚠️ 检测到 agent 用 Write 绕过 save_prd，系统已将内容自动更新到 PRD #${prdId}。${tail}`
+      }
+      return `⚠️ 检测到 agent 用 Write 绕过 save_prd，系统已自动入库为 PRD #${prdId}。${tail}`
+    }
     default:
       return `ℹ️ 自审进度：${stage}（PRD #${prdId}）`
   }
@@ -68,7 +79,11 @@ export async function registerPrdChatRoutes(
 
   // 新建会话
   app.post('/prd-chat/sessions', async (req, reply) => {
-    const body = req.body as { product_line_id?: number; prd_id?: number | null }
+    const body = req.body as {
+      product_line_id?: number
+      prd_id?: number | null
+      seed_rejection?: boolean
+    }
     const productLineId = Number(body.product_line_id)
     if (!productLineId) {
       return reply.status(400).send({ error: { code: 'INVALID_ARG', message: 'product_line_id required' } })
@@ -86,6 +101,26 @@ export async function registerPrdChatRoutes(
       prdId: body.prd_id ?? null,
       createdBy: username,
     })
+
+    // 若请求携带 seed_rejection 且有 prd_id → 从 review_history 里取驳回原因/blockers，
+    // 写一条 assistant 消息作为会话首屏承接。Claude 的系统提示里也会带上（buildPrdContext）。
+    if (body.seed_rejection && body.prd_id != null) {
+      try {
+        const prd = await getPrdDocumentById(body.prd_id)
+        const seedText = prd ? buildRejectSeedText(prd) : null
+        if (seedText) {
+          await appendChatMessage({
+            sessionKey,
+            role: 'assistant',
+            content: seedText,
+            metadata: { kind: 'reject_seed', prdId: body.prd_id },
+          })
+        }
+      } catch (err) {
+        req.log.warn({ err, prdId: body.prd_id }, '[prd-chat/sessions] seed_rejection failed')
+      }
+    }
+
     return { data: session }
   })
 
@@ -130,6 +165,7 @@ export async function registerPrdChatRoutes(
     })
 
     const send = (event: string, data: unknown) => {
+      if (clientClosed) return
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
     }
 
@@ -172,6 +208,12 @@ export async function registerPrdChatRoutes(
       const taskId = `web-prd-${key}`
       let capturedPorygonId: string | undefined
 
+      // clientClosed 处理策略：
+      //   - 主对话事件（stream_chunk/assistant/tool_use/tool_result/error）：客户端断连
+      //     即视为用户放弃，跳出循环避免继续烧 Claude API。
+      //   - review_progress：review 已作为独立 Promise 在跑，客户端即便断了也必须把
+      //     进度事件（尤其 review_finalized）落盘，否则下次打开会话会永远卡在
+      //     "Agent 正在处理" 的 spinner。所以仅跳过 send，不跳过 append 也不 break。
       for await (const evt of runner.streamWebChat({
         prompt: text,
         context: {
@@ -186,8 +228,9 @@ export async function registerPrdChatRoutes(
         sessionKey: key,
         resumeSessionId: session.porygonSessionId ?? undefined,
         productLineId: session.productLineId,
+        prdId: session.prdId ?? undefined,
       })) {
-        if (clientClosed) break
+        if (clientClosed && evt.type !== 'review_progress' && evt.type !== 'done') break
 
         switch (evt.type) {
           case 'stream_chunk':
@@ -236,7 +279,8 @@ export async function registerPrdChatRoutes(
             break
           }
           case 'review_progress': {
-            // 先 flush 前面的 assistant 文本，避免 bubble 顺序错乱
+            // 即使 clientClosed，仍要 append — 保证 review_finalized/review_error 落盘，
+            // 下次用户打开会话能看到终态。send 在 clientClosed 时自己会 noop。
             await flushAssistant()
             const ev = (evt.reviewData ?? {}) as Record<string, unknown>
             const stage = String(evt.reviewStage ?? ev.stage ?? '')

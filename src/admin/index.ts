@@ -27,6 +27,7 @@ import { registerAuditLogRoutes } from './routes/audit-log.js'
 import { registerOnboardingRoutes } from './routes/onboarding.js'
 import { registerPrdDocumentRoutes } from './routes/prd-documents.js'
 import { registerPrdChatRoutes } from './routes/prd-chat.js'
+import { registerPrdMetricsRoutes } from './routes/prd-metrics.js'
 
 export async function adminPlugin(
   app: FastifyInstance,
@@ -71,6 +72,7 @@ export async function adminPlugin(
   await registerAuditLogRoutes(app)
   await registerOnboardingRoutes(app)
   await registerPrdDocumentRoutes(app)
+  await registerPrdMetricsRoutes(app)
   if (opts.runner) {
     await registerPrdChatRoutes(app, { runner: opts.runner })
   }

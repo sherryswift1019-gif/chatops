@@ -50,6 +50,11 @@ import './agent/tools/save-prd.js'
 import './agent/tools/read-prd.js'
 import './agent/tools/update-prd-context.js'
 import './agent/tools/search-existing-prds.js'
+import './agent/tools/submit-review.js'
+import './agent/tools/save-arch.js'
+import './agent/tools/read-arch.js'
+import './agent/tools/update-arch-context.js'
+import './agent/tools/search-existing-arch.js'
 
 // 研发 AI 助手 Agent handler 注册
 import { registerAnalysisBugHandler } from './agent/analysis/analyzer.js'

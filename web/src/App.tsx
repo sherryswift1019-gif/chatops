@@ -25,6 +25,7 @@ const ProductKnowledgePage   = lazy(() => import('./pages/ProductKnowledgePage')
 const MetricsPage            = lazy(() => import('./pages/MetricsPage'))
 const PrdDocumentsPage       = lazy(() => import('./pages/PrdDocumentsPage'))
 const PrdChatPage            = lazy(() => import('./pages/PrdChatPage'))
+const PrdMetricsPage         = lazy(() => import('./pages/PrdMetricsPage'))
 
 const FONT = "'Urbanist', -apple-system, BlinkMacSystemFont, sans-serif"
 
@@ -216,6 +217,9 @@ export default function App() {
             } />
             <Route path="/prd-documents" element={
               <Suspense fallback={null}><PrdDocumentsPage /></Suspense>
+            } />
+            <Route path="/prd-metrics" element={
+              <Suspense fallback={null}><PrdMetricsPage /></Suspense>
             } />
             <Route path="/prd-chat/:sessionKey" element={
               <Suspense fallback={null}><PrdChatPage /></Suspense>

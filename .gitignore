@@ -11,4 +11,4 @@ _bmad/
 _bmad-output/
 test-results/
 playwright-report/
-web/tsconfig.tsbuildinfo
+*.tsbuildinfo

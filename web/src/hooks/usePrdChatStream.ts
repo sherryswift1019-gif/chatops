@@ -179,7 +179,10 @@ export function usePrdChatStream(sessionKey: string) {
 
       es.addEventListener('review_progress', (e: MessageEvent) => {
         const data = JSON.parse(e.data) as PrdChatMessage
-        insertPersistedMessage(data)
+        // review_progress 发生在 assistant 正文之后（后端 flushAssistant 在前），
+        // 必须 append 到末尾；不能走 insertPersistedMessage —— 那个会塞在 streaming 占位之前，
+        // 导致流式期间状态栏夹在工具调用与 assistant 正文中间，与刷新后的 DB 顺序不一致。
+        setState((prev) => ({ ...prev, messages: [...prev.messages, data] }))
         // 若 review_finalized → 刷新 session 以更新 prdId 状态关联
         const stage = String(data.metadata?.stage ?? '')
         if (stage === 'review_finalized') {

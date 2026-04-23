@@ -64,4 +64,11 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   read_prd: ['developer', 'tester', 'ops', 'admin'],
   update_prd_context: ['developer', 'tester', 'ops', 'admin'],
   search_existing_prds: ['developer', 'tester', 'ops', 'admin'],
+  submit_review: ['developer', 'tester', 'ops', 'admin'],
+
+  // 架构设计 Agent 工具
+  save_arch: ['developer', 'tester', 'ops', 'admin'],
+  read_arch: ['developer', 'tester', 'ops', 'admin'],
+  update_arch_context: ['developer', 'tester', 'ops', 'admin'],
+  search_existing_arch: ['developer', 'tester', 'ops', 'admin'],
 }

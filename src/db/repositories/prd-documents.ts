@@ -291,3 +291,84 @@ export async function deletePrdDocument(id: number): Promise<boolean> {
   const { rowCount } = await pool.query('DELETE FROM prd_documents WHERE id = $1', [id])
   return (rowCount ?? 0) > 0
 }
+
+// =============================================================================
+// V2.0 baseline metrics 埋点写回（schema-v18 的 metrics JSONB 列）
+//
+// 约定：
+//   - llmCallsDelta 是加法（存量 + delta），用于 create/review/repair 计数增量。
+//   - reviewDurationMs / rulesVersion 是覆盖写。
+//   - 单写者前提：save_prd 单次调用 + runPrdReview 每个 PRD 串行，冲突面极小。
+//     为稳妥仍走 SELECT FOR UPDATE 事务，避免并发重试时丢计数。
+// =============================================================================
+
+export interface PrdMetricsPatch {
+  llmCallsDelta?: { create?: number; review?: number; repair?: number }
+  reviewDurationMs?: number
+  rulesVersion?: string
+}
+
+/**
+ * 纯函数：对现有 metrics JSON 应用 patch，返回新 metrics。
+ * 单独导出以便单测，不碰 DB。
+ */
+export function computeMergedMetrics(
+  existing: Record<string, unknown>,
+  patch: PrdMetricsPatch
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing }
+  if (patch.llmCallsDelta) {
+    const cur = (existing.llmCalls ?? {}) as Record<string, unknown>
+    const next: Record<string, number> = {}
+    for (const k of ['create', 'review', 'repair'] as const) {
+      const curVal = typeof cur[k] === 'number' ? (cur[k] as number) : 0
+      const delta = patch.llmCallsDelta[k]
+      if (delta !== undefined || curVal !== 0) {
+        next[k] = curVal + (delta ?? 0)
+      }
+    }
+    if (Object.keys(next).length > 0) merged.llmCalls = next
+  }
+  if (patch.reviewDurationMs !== undefined) {
+    merged.reviewDurationMs = patch.reviewDurationMs
+  }
+  if (patch.rulesVersion !== undefined) {
+    merged.rulesVersion = patch.rulesVersion
+  }
+  return merged
+}
+
+/**
+ * SELECT FOR UPDATE → JS 合并 → UPDATE。
+ * 写入失败只打 log、不抛，避免埋点毛刺阻塞主流程。
+ */
+export async function mergePrdMetrics(
+  id: number,
+  patch: PrdMetricsPatch
+): Promise<void> {
+  const pool = getPool()
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const cur = await client.query<{ metrics: Record<string, unknown> }>(
+      'SELECT metrics FROM prd_documents WHERE id = $1 FOR UPDATE',
+      [id]
+    )
+    if (cur.rowCount === 0) {
+      await client.query('ROLLBACK')
+      return
+    }
+    const existing = (cur.rows[0].metrics ?? {}) as Record<string, unknown>
+    const merged = computeMergedMetrics(existing, patch)
+    await client.query(
+      'UPDATE prd_documents SET metrics = $2::jsonb, updated_at = NOW() WHERE id = $1',
+      [id, JSON.stringify(merged)]
+    )
+    await client.query('COMMIT')
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {})
+    console.error(`[prd-repo] mergePrdMetrics(${id}) 失败:`, e)
+  } finally {
+    client.release()
+  }
+}
