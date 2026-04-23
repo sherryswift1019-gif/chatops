@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "chatops-skills",
+  "description": "ChatOps 团队内部 Claude Code 技能市场，覆盖 PRD 评审、文档审查等产研协作工具",
+  "owner": {
+    "name": "ChatOps Team"
+  },
+  "plugins": [
+    {
+      "name": "prd-review",
+      "description": "资深产品视角结构化评审 PRD / 产品需求文档，从完整性、清晰度与可测性、用户价值与业务指标、边界条件、规范符合度五个维度打分并给出逐条修改建议",
+      "category": "product",
+      "source": "./plugins/prd-review"
+    }
+  ]
+}
