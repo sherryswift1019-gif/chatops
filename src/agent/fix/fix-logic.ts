@@ -13,6 +13,7 @@ import { getClaudeExecutor } from '../claude-executor.js'
 import { gitlabGetIssue } from '../analysis/gitlab-issue.js'
 import { mask } from '../masking/sensitive-info.js'
 import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 /**
  * 判断 Claude 输出是否表示修复成功。
@@ -31,8 +32,9 @@ export function isFixSuccessful(output: string): boolean {
 }
 
 /** 根据 projectPath 拼 GitLab 克隆 URL */
-export function projectPathToGitUrl(projectPath: string): string {
-  const base = (process.env.GITLAB_URL ?? '').replace(/\/$/, '')
+export async function projectPathToGitUrl(projectPath: string): Promise<string> {
+  const { url } = await resolveGitlabConfig()
+  const base = (url ?? '').replace(/\/$/, '')
   return `${base}/${projectPath}.git`
 }
 
@@ -94,7 +96,7 @@ export async function runFixForProject(input: RunFixForProjectInput): Promise<Ru
     product: `pl-${input.productLineId}`,
     version: input.sourceBranch,
     sessionId: `fix-${input.reportId}-${input.projectPath.replace(/\//g, '-')}-${input.attempt}-${key}`,
-    repoUrl: projectPathToGitUrl(input.projectPath),
+    repoUrl: await projectPathToGitUrl(input.projectPath),
     projectPath: input.projectPath,
   })
 

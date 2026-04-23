@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 /** 更新 GitLab Issue 的标签（添加/移除） */
 export async function updateIssueLabels(
@@ -6,8 +7,7 @@ export async function updateIssueLabels(
   issueIid: number,
   labels: { add?: string[]; remove?: string[] }
 ): Promise<void> {
-  const gitlabUrl = process.env.GITLAB_URL
-  const gitlabToken = process.env.GITLAB_TOKEN
+  const { url: gitlabUrl, token: gitlabToken } = await resolveGitlabConfig()
   if (!gitlabUrl || !gitlabToken) return
 
   await axios.put(
@@ -27,8 +27,7 @@ export async function updateMrLabels(
   mrIid: number,
   labels: { add?: string[]; remove?: string[] }
 ): Promise<void> {
-  const gitlabUrl = process.env.GITLAB_URL
-  const gitlabToken = process.env.GITLAB_TOKEN
+  const { url: gitlabUrl, token: gitlabToken } = await resolveGitlabConfig()
   if (!gitlabUrl || !gitlabToken) return
 
   await axios.put(

@@ -1,14 +1,14 @@
 /**
  * GitLab label 添加封装（handover 流程用）。
- * 复用环境变量 GITLAB_URL / GITLAB_TOKEN（与 gitlab-issue.ts 一致）。
+ * 读配置走 resolveGitlabConfig（DB 优先，env 回退）。
  */
 import axios from 'axios'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
-function getGitlabEnv(): { url: string; token: string } {
-  const url = process.env.GITLAB_URL
-  const token = process.env.GITLAB_TOKEN
+async function getGitlabEnv(): Promise<{ url: string; token: string }> {
+  const { url, token } = await resolveGitlabConfig()
   if (!url || !token) {
-    throw new Error('缺少 GITLAB_URL 或 GITLAB_TOKEN 环境变量')
+    throw new Error('缺少 GitLab url 或 token 配置（system_config.gitlab / GITLAB_URL / GITLAB_TOKEN）')
   }
   return { url, token }
 }
@@ -22,7 +22,7 @@ export async function gitlabAddIssueLabel(
   issueIid: number,
   label: string,
 ): Promise<void> {
-  const { url, token } = getGitlabEnv()
+  const { url, token } = await getGitlabEnv()
   await axios.put(
     `${url}/api/v4/projects/${encodeURIComponent(projectPath)}/issues/${issueIid}`,
     { add_labels: label },

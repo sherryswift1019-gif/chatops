@@ -15,6 +15,7 @@ import { getCapabilityByKey } from '../../db/repositories/capabilities.js'
 import { getClaudeExecutor } from '../claude-executor.js'
 import { acquire, release, makeWorktreeKey } from '../worktree/manager.js'
 import { projectPathToGitUrl } from '../fix/fix-logic.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { isClaudeMock, popMockResponseValidated } from '../mocks/e2e-store.js'
 
 export interface RunClaudeReviewInput {
@@ -33,8 +34,7 @@ export interface ClaudeReviewResult {
 }
 
 async function fetchMrDiff(projectPath: string, mrIid: number): Promise<string> {
-  const gitlabUrl = process.env.GITLAB_URL
-  const gitlabToken = process.env.GITLAB_TOKEN
+  const { url: gitlabUrl, token: gitlabToken } = await resolveGitlabConfig()
   if (!gitlabUrl || !gitlabToken) return ''
 
   const resp = await axios.get(
@@ -78,7 +78,7 @@ export async function runClaudeReview(input: RunClaudeReviewInput): Promise<Clau
     product: `pl-${productLineId}`,
     version: fixBranch,
     sessionId: `review-${projectPath.replace(/\//g, '-')}-${mrIid}-${key}`,
-    repoUrl: projectPathToGitUrl(projectPath),
+    repoUrl: await projectPathToGitUrl(projectPath),
     projectPath,
   })
 
