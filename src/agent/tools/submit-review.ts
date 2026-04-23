@@ -134,6 +134,23 @@ export function validateSubmitReviewPayload(
   }
   const r = raw as Record<string, unknown>
 
+  // 容错：LLM 常把复杂嵌套字段误作 JSON 字符串传入（findings/recommendation）。
+  // 在正式 schema 校验前尝试 parse 一次；仍失败则交给下方 Array.isArray/typeof 校验报错。
+  if (typeof r.findings === 'string') {
+    try {
+      const parsed = JSON.parse(r.findings)
+      if (Array.isArray(parsed)) r.findings = parsed
+    } catch { /* 留给下方校验报 "必须是数组" */ }
+  }
+  if (typeof r.recommendation === 'string') {
+    try {
+      const parsed = JSON.parse(r.recommendation)
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        r.recommendation = parsed
+      }
+    } catch { /* 留给下方校验报错 */ }
+  }
+
   // status
   if (typeof r.status !== 'string' || !STATUS_ENUM.includes(r.status as SubmitReviewStatus)) {
     errors.push(`status 必须为 ${STATUS_ENUM.join('/')} 之一，收到 ${JSON.stringify(r.status)}`)

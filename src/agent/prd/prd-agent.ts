@@ -109,7 +109,7 @@ function mapSubmittedToResult(
 }
 
 function buildReviewPrompt(prd: PrdDocument): string {
-  return `请审查以下 PRD 文档。审查完成后**必须调用 submit_review 工具**提交结构化结果（这是唯一合法出口；不要输出 JSON 代码块或自由文本）。
+  return `请审查以下 PRD 文档。审查完成后**必须调用 \`mcp__chatops-tools__submit_review\` 工具**提交结构化结果（这是唯一合法出口；不要输出 JSON 代码块或自由文本；工具必须使用这个完整名字，不要用短名 submit_review）。
 
 PRD ID: ${prd.id}
 标题: ${prd.title}
@@ -122,9 +122,9 @@ ${prd.contentMarkdown}
 }
 
 function buildReviewReminderPrompt(prd: PrdDocument): string {
-  return `你上一轮没有调用 submit_review 工具（或调用被 schema 拒绝）。这是审查的唯一合法出口，请立刻调用 submit_review({ status, findings, recommendation })。
+  return `你上一轮没有调用 \`mcp__chatops-tools__submit_review\` 工具（或调用被 schema 拒绝，或错误地用了短名 \`submit_review\` 导致被 CLI 判定为未注册工具）。这是审查的唯一合法出口，请立刻**以完整名字**调用 \`mcp__chatops-tools__submit_review({ status, findings, recommendation })\`。
 
-禁止输出任何 JSON 代码块或自由文本；直接进行 tool-call。
+禁止输出任何 JSON 代码块或自由文本；直接进行 tool-call，且 tool name 必须是 \`mcp__chatops-tools__submit_review\`。
 
 PRD ID: ${prd.id}
 标题: ${prd.title}

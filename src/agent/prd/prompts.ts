@@ -340,9 +340,11 @@ ${renderReviewerChecks()}
 
 **V2.0 强约束**：审查完成后，你**必须且只能调用一次** \`submit_review\` 工具提交结构化结果。
 
+⚠️ **工具名称（MCP 服务端注册）**：该工具在你的工具清单中以完整名字 \`mcp__chatops-tools__submit_review\` 暴露，调用时**必须使用这个完整名字**，不要用短名 \`submit_review\`（短名不是合法工具，CLI 会判定"tool 未注册"并拒绝调用）。
+
 - 禁止在对话里输出任何 JSON 代码块、自由文本 JSON、或\`\`\`json\`\`\`包裹的片段。
 - 禁止先输出 JSON 再调用工具。工具调用就是唯一出口。
-- 禁止不调用工具就收尾，哪怕 PRD 完美无 finding，也要调用 \`submit_review({ status: "pass", findings: [] })\`。
+- 禁止不调用工具就收尾，哪怕 PRD 完美无 finding，也要调用 \`mcp__chatops-tools__submit_review({ status: "pass", findings: [] })\`。
 
 submit_review 工具参数 schema：
 
@@ -372,6 +374,11 @@ submit_review 工具参数 schema：
 
 工具会做强 schema 校验。ruleId 不在 rules.ts 注册清单、severity 枚举错误、必填字段缺失 → 工具返回失败消息，你需要按提示修正参数后再次调用 submit_review（不要降级为输出自由 JSON）。
 
+**严禁把 \`findings\` / \`recommendation\` 字段作为 JSON 字符串传递**。这两个字段必须是原生 JSON 数组 / 对象（tool-call 的真值类型），不要 \`JSON.stringify\` 后塞成字符串再传入。正确 vs 错误示例：
+
+✅ 正确: \`findings: [{ ruleId: "...", ... }]\`
+❌ 错误: \`findings: "[{\\"ruleId\\": \\"...\\", ... }]"\`（服务端会兼容解析这种错误传法，但会浪费一次重试回合，请直接传原生类型）
+
 **status 判定规则**:
 - 有任一 blocker → "blocked"
 - 无 blocker 但有 warning → "warnings_only"
@@ -396,10 +403,10 @@ submit_review 工具参数 schema：
 【第五部分：示例 submit_review 调用】
 ===================================================
 
-审查发现一条 blocker，应该这样调用工具（示意，非字面 JSON 输出）：
+审查发现一条 blocker，应该这样调用工具（示意，非字面 JSON 输出；tool name 必须是 \`mcp__chatops-tools__submit_review\`）：
 
 \`\`\`
-submit_review({
+mcp__chatops-tools__submit_review({
   "status": "blocked",
   "summary": "3.3 功能需求缺少来源，阻断交付",
   "findings": [
@@ -425,7 +432,7 @@ submit_review({
 完美 PRD 零 finding 时：
 
 \`\`\`
-submit_review({ "status": "pass", "findings": [] })
+mcp__chatops-tools__submit_review({ "status": "pass", "findings": [] })
 \`\`\`
 
 ===================================================
