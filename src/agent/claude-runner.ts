@@ -357,7 +357,11 @@ export class ClaudeRunner {
       }
 
       // 4c: 检查用户 role 是否有权使用该能力的核心工具
-      if (productLineId) {
+      // 跳过条件：capability.toolNames=[] —— 说明走 handler-path（如 prd_submit），
+      // 该 capability 完全不依赖任何 tool，权限控制由 handler 内部处理（PRD §3.1
+      // 的兜底：不合法指令/跨 repo/邮箱未同步/路径不符规范都在 handler 里拒绝）。
+      // 若 toolNames 非空，按原逻辑检查角色是否有匹配的 tool。
+      if (productLineId && capability.toolNames.length > 0) {
         const permitted = await getPermittedTools(userRole as Role, productLineId)
         const permittedNames = new Set(permitted.map(t => t.name))
         const hasAnyCapTool = capability.toolNames.some(name => permittedNames.has(name))
