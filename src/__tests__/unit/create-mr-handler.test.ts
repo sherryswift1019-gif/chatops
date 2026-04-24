@@ -93,10 +93,11 @@ async function seedL2Report(opts: {
 }
 
 describe('create_mr handler', () => {
+  // CI postgres 并发下 resetTestDb（DROP + 多个 schema 文件）偶尔 >10s 默认 hookTimeout
   beforeEach(async () => {
     await resetTestDb()
     vi.mocked(gitlabCreateMr).mockReset()
-  })
+  }, 30_000)
 
   it('creates MR for each project with fix_attempt success', async () => {
     const reportId = await seedL2Report({

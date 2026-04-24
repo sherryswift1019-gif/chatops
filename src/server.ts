@@ -64,6 +64,12 @@ import { registerBuiltinApprovalResolvers } from './agent/approval/resolvers.js'
 import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
 import { registerNotifyHandler } from './agent/notify/notify-handler.js'
 import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
+import {
+  registerPrdSubmitHandler,
+  registerPrdCreateMrHandler,
+  registerPrdAiReviewHandler,
+  registerPrdNotifyHandler,
+} from './agent/prd-submit/index.js'
 import { setPrdClaudeRunner } from './agent/prd/prd-agent.js'
 import { sweepOrphanReviewingPrds } from './db/repositories/prd-documents.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
@@ -213,6 +219,12 @@ async function main(): Promise<void> {
   registerCreateMrHandler()
   registerNotifyHandler()
   registerRequestHandoverHandler()
+
+  // PRD 主动提交 MR pipeline handlers（prd_submit 走 handler-path，内部自己 runPipeline）
+  registerPrdSubmitHandler()
+  registerPrdCreateMrHandler()
+  registerPrdAiReviewHandler()
+  registerPrdNotifyHandler()
 
   // 注册 pipeline approval resolver（审批人动态查询策略）
   // L3 "方案审批" stage 通过 approverIdsResolver='primary_project_owner' 路由到这里
