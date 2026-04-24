@@ -138,6 +138,14 @@ const SCHEMA_FILES = [
   'schema-v18.sql',
   'schema-v19.sql',
   'schema-v20.sql',
+  'schema-v21.sql',
+  'schema-v22.sql',
+  'schema-v23.sql',
+  'schema-v24.sql',
+  'schema-v25.sql',
+  'schema-v26.sql',
+  // v27 不存在（跳号）
+  'schema-v28.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
