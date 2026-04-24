@@ -244,4 +244,46 @@ export async function e2eRoutes(app: FastifyInstance): Promise<void> {
     })
     return reply.send({ ok: true, result })
   })
+
+  /**
+   * 完整模拟一条 IM 入站消息 —— **真走** MockIMAdapter.simulateIncomingMessage
+   * → SessionManager → TaskQueue → ClaudeRunner.run() → intent 检测 → handler → pipeline
+   *
+   * 用途：钉钉 Stream 投递不稳时（长消息/特殊字符常丢），稳定重现
+   * "用户在群里 @机器人 发指令"的全流程。
+   *
+   * Body: { text, groupId, userId, userName? }
+   * 需 server 以 E2E_MODE=1 启动（MockIMAdapter 替代真钉钉 Stream）。
+   */
+  app.post<{
+    Body: {
+      text: string
+      groupId: string
+      userId: string
+      userName?: string
+    }
+  }>('/_e2e/im/simulate', async (req, reply) => {
+    const { text, groupId, userId, userName } = req.body ?? ({} as any)
+    if (!text || !groupId || !userId) {
+      return reply.status(400).send({ error: 'text, groupId, userId required' })
+    }
+    const { getMockIMAdapter } = await import('../../adapters/im/mock.js')
+    const adapter = getMockIMAdapter()
+    if (!adapter) {
+      return reply.status(500).send({
+        error: 'MockIMAdapter not available; server must be started with E2E_MODE=1',
+        simulated: false,
+      })
+    }
+    const simulated = await adapter.simulateIncomingMessage({
+      platform: 'dingtalk',
+      groupId,
+      userId,
+      userName: userName ?? userId,
+      text,
+      timestamp: Date.now(),
+      rawPayload: { e2e: true },
+    })
+    return reply.send({ ok: true, simulated })
+  })
 }
