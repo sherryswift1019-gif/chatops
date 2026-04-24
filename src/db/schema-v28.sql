@@ -46,39 +46,50 @@ ALTER TABLE dingtalk_users ADD COLUMN IF NOT EXISTS email TEXT;
 CREATE INDEX IF NOT EXISTS idx_dingtalk_users_email_lower
   ON dingtalk_users (LOWER(email));
 
--- ─── 3. 4 个 capability（DELETE + INSERT 固定 id，仿 v26）──
+-- ─── 3. 4 个 capability（INSERT ON CONFLICT DO NOTHING，保留 admin 编辑）─
 
-DELETE FROM capabilities
- WHERE key IN ('prd_submit', 'prd_create_mr', 'prd_ai_review_mr', 'prd_notify');
+-- 不用 v26 的 DELETE + INSERT 模式：v26 的 6 条 capability 是"代码是 prompt 唯一真相源，
+-- admin 手改下次 migrate 被覆盖"；但本 feature 的 prd_ai_review_mr 需要 admin 可编辑
+-- prompt（PRD §3.4 + §9.2）。DELETE 会把 admin 手改的 system_prompt 一起干掉，
+-- 让下面 migrate.ts 的两段式 UPDATE 每次都从 NULL 重新注入代码版 prompt。
+-- 改成 ON CONFLICT DO NOTHING：首次 migrate 新建 row，后续 migrate 对已存在 row
+-- 是 no-op；system_prompt 的注入/覆盖完全交给 migrate.ts 的两段式 UPDATE 策略
+-- 决定（见 create_prd / review_prd 已有模式）。
+-- 代价：display_name / description 的更新需要通过手工 UPDATE 或 admin 后台；
+-- 这 4 条 capability 的元数据 MVP 不太可能变动。
 
 -- prd_submit: IM @agent 入口，handler-path，不设 default_pipeline_id
 INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt, default_system_prompt)
 VALUES (1776868081, 'prd_submit', 'PRD MR 提交（入口）',
   'IM @agent 触发：解析指令 + URL + authorEmail 反查 → 显式启动 PRD MR pipeline',
   'action', '[]'::jsonb, false, true,
-  NULL, NULL);
+  NULL, NULL)
+ON CONFLICT (key) DO NOTHING;
 
 -- prd_create_mr: pipeline stage 1，负责 commit log 派生标题 + 新建或复用 MR + 强制 Draft
 INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt, default_system_prompt)
 VALUES (1776868082, 'prd_create_mr', 'PRD 创建 MR',
   '派生 MR 标题（commit log 或 override）+ 新建或复用 open MR；始终置 Draft 状态（merge 闸门）',
   'action', '[]'::jsonb, false, true,
-  NULL, NULL);
+  NULL, NULL)
+ON CONFLICT (key) DO NOTHING;
 
 -- prd_ai_review_mr: pipeline stage 2，Claude review + JSON 解析 + pass 时解除 Draft
--- system_prompt 由 migrate.ts 从 prompts.ts 注入（两段式 UPDATE 保留 admin 编辑）
+-- system_prompt 由 migrate.ts 从 prompts.ts 注入；admin 后台可编辑，两段式 UPDATE 保留
 INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt, default_system_prompt)
 VALUES (1776868083, 'prd_ai_review_mr', 'PRD AI Review',
   '读 MR diff + Claude 结构化 review（JSON 输出）+ 回写 MR 评论；pass 时移除 Draft 前缀解锁 merge',
   'action', '[]'::jsonb, false, true,
-  NULL, NULL);
+  NULL, NULL)
+ON CONFLICT (key) DO NOTHING;
 
 -- prd_notify: pipeline stage 3，按 submissionId 汇总事件 + DM 提交者
 INSERT INTO capabilities (id, key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt, default_system_prompt)
 VALUES (1776868084, 'prd_notify', 'PRD DM 回报',
   '汇总 prd_submit_events 后按 authorEmail → dingtalk_users.email → user_id 查到钉钉账号并 DM',
   'action', '[]'::jsonb, false, true,
-  NULL, NULL);
+  NULL, NULL)
+ON CONFLICT (key) DO NOTHING;
 
 -- ─── 4. Pipeline 种子（3 stage，全部 onFailure:continue）────
 

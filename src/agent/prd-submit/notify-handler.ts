@@ -141,7 +141,12 @@ function buildMessage(ctx: ScenarioContext): string {
   }
 
   if (ctx.kind === 'prd_submit_blocked') {
-    const findingsSummary = ctx.findings.slice(0, 3).map((f, i) => {
+    // PRD §3.4 "findings 按 severity 取前 3 条" —— blocker 最优先，保证 DM 能看到最严重的问题
+    const severityRank: Record<string, number> = { blocker: 0, warning: 1, info: 2 }
+    const sortedFindings = [...ctx.findings].sort(
+      (a, b) => (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3),
+    )
+    const findingsSummary = sortedFindings.slice(0, 3).map((f, i) => {
       const sev = f.severity ? `[${f.severity}]` : ''
       return `${i + 1}. ${sev} ${f.title}`
     }).join('\n')

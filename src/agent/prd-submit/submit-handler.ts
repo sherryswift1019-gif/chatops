@@ -26,6 +26,7 @@ import { registerCapabilityHandler } from '../coordinator.js'
 import { getPool } from '../../db/client.js'
 import { createEvent } from '../../db/repositories/prd-submit-events.js'
 import { assertSameProject } from './url-parser.js'
+import { getClaudeExecutor } from '../claude-executor.js'
 
 interface ParsedCommand {
   workUrl: string
@@ -35,19 +36,18 @@ interface ParsedCommand {
 }
 
 /**
- * 两级解析：
- *   Level 1 — 正则快速路径（标题可选）
- *   Level 2 — 失败时返回 null（M3 可考虑接 Claude fallback；MVP 先不上，避免
- *     两级解析 + Claude 失败路径时的 UX 歧义，先让用户按示例重写）
- *
- * 正则要求 4 个字段以**任意顺序**出现；`标题=` 在引号内（支持中英文引号）。
+ * Level 1 — 正则快速路径（标题可选）。
+ * 抽 4 个字段以**任意顺序**出现；`标题=` 支持 ASCII 双引号和中文全角弯引号。
+ * 返回 null 表示 workUrl/mrUrl/mrFile 至少一个未命中。
  */
 function parseCommand(raw: string): ParsedCommand | null {
-  // 正则抽单个字段，值到下一个中文全角或半角空格为止
+  // 抽单个字段，值到下一个空白为止
   const workMatch = raw.match(/工作地址=(\S+)/)
   const mrMatch = raw.match(/MR地址=(\S+)/)
   const fileMatch = raw.match(/MR文件=(\S+)/)
-  const titleMatch = raw.match(/标题=["""]([^""""]+)["""]/)
+  // 引号支持三类：ASCII `"` (U+0022)、左弯 `“`、右弯 `”`；
+  // 字符类里去重 ASCII `"` 其实冗余但无害；关键是 Unicode 引号必须显式写
+  const titleMatch = raw.match(/标题=["“]([^"“”]+)["”]/)
 
   if (!workMatch || !mrMatch || !fileMatch) return null
 
@@ -56,6 +56,88 @@ function parseCommand(raw: string): ParsedCommand | null {
     mrUrl: mrMatch[1],
     mrFile: fileMatch[1],
     title: titleMatch ? titleMatch[1].trim() : null,
+  }
+}
+
+/**
+ * Level 2 — Claude fallback（当 Level 1 正则失败时）。
+ *
+ * 策略：对 Claude 下达**严格约束**：
+ *   - 只返回裸 JSON，不含代码块围栏
+ *   - 如果消息里找不到必填字段，不准凭空编造 URL，而是回 {"error":...}
+ *   - 20s 超时（entry path 预算内）
+ *
+ * 失败路径：任何 parse/校验失败均返回 null，由调用方回 USAGE_HINT。
+ * 不让 Claude 的错误直接冒泡给用户，保留"格式示例提示"作最终降级。
+ */
+async function claudeFallbackParse(raw: string): Promise<ParsedCommand | null> {
+  const prompt = `你是一个 IM 指令解析器。用户刚发了一条消息，从中提取 4 个字段：
+
+- workUrl: GitLab 工作分支的 tree URL（形如 http://<host>/<group>/<repo>/-/tree/<branch>）
+- mrUrl: GitLab 目标分支的 tree URL（同格式）
+- mrFile: 仓库内相对文件路径（形如 docs/prds/xxx.md）
+- title: 可选 MR 标题（没写就返回 null）
+
+**只返回一段裸 JSON**，不含代码块围栏（无 \`\`\`），不含前后文字，不含 markdown：
+{"workUrl":"...","mrUrl":"...","mrFile":"...","title":"..."|null}
+
+如果消息里找不到明确的 workUrl / mrUrl / mrFile（**不要凭空编造 URL**），返回：
+{"error":"missing_field","missing":"具体哪些字段缺"}
+
+---
+
+用户消息：
+${raw}`
+
+  try {
+    const out = await getClaudeExecutor().run({
+      prompt,
+      allowedTools: '', // 禁所有工具，这是纯 NLP 任务
+      timeoutMs: 20_000,
+    })
+    const trimmed = out.trim()
+    // 允许两种格式：整段 JSON，或 `{ ... }` 子串
+    let obj: Record<string, unknown> | null = null
+    try {
+      obj = JSON.parse(trimmed) as Record<string, unknown>
+    } catch {
+      const first = trimmed.indexOf('{')
+      const last = trimmed.lastIndexOf('}')
+      if (first >= 0 && last > first) {
+        try {
+          obj = JSON.parse(trimmed.slice(first, last + 1)) as Record<string, unknown>
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!obj) {
+      console.warn('[prd_submit] Claude fallback 未返回 JSON; raw len:', trimmed.length)
+      return null
+    }
+    if (obj.error) {
+      console.log('[prd_submit] Claude fallback 明确标 error:', obj.error, obj.missing ?? '')
+      return null
+    }
+    if (
+      typeof obj.workUrl !== 'string' ||
+      typeof obj.mrUrl !== 'string' ||
+      typeof obj.mrFile !== 'string'
+    ) {
+      console.warn('[prd_submit] Claude fallback 字段类型错', Object.keys(obj))
+      return null
+    }
+
+    return {
+      workUrl: obj.workUrl,
+      mrUrl: obj.mrUrl,
+      mrFile: obj.mrFile,
+      title: typeof obj.title === 'string' ? obj.title.trim() : null,
+    }
+  } catch (err) {
+    console.warn('[prd_submit] Claude fallback 抛错:', err instanceof Error ? err.message : String(err))
+    return null
   }
 }
 
@@ -87,8 +169,16 @@ export async function handlePrdSubmit(opts: TriggerOptions): Promise<TriggerResu
   const rawMessage = (opts.extraParams?.message as string | undefined) ?? ''
   const userId = opts.context.initiatorId
 
-  // Step 1: 解析指令
-  const parsed = parseCommand(rawMessage)
+  // Step 1: 两级解析指令
+  //   Level 1 — 正则
+  //   Level 2 — Claude fallback (只当 Level 1 完全 miss 时触发)
+  let parsed = parseCommand(rawMessage)
+  let parseStrategy: 'regex' | 'claude' | null = parsed ? 'regex' : null
+  if (!parsed) {
+    console.log('[prd_submit] 正则解析 miss，尝试 Claude fallback')
+    parsed = await claudeFallbackParse(rawMessage)
+    if (parsed) parseStrategy = 'claude'
+  }
   if (!parsed) {
     return { success: true, output: USAGE_HINT }
   }
@@ -141,6 +231,7 @@ export async function handlePrdSubmit(opts: TriggerOptions): Promise<TriggerResu
       targetBranch,
       mrFilePath: parsed.mrFile,
       titleOverride: parsed.title,
+      parseStrategy, // 'regex' | 'claude'，便于观察 Claude fallback 触发频率
       rawCommand: rawMessage.slice(0, 500), // 防止超长消息塞爆 JSONB
     },
   })
