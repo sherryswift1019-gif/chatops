@@ -71,8 +71,33 @@ function tryParseJson(raw: string): PrdReviewResult | null {
 function isValidReviewResult(obj: Record<string, unknown>): boolean {
   if (obj.decision !== 'pass' && obj.decision !== 'blocked') return false
   if (!Array.isArray(obj.findings)) return false
-  if (typeof obj.markdown !== 'string') return false
+  // markdown 字段可选——Claude 偶尔会省略它只给 decision+findings。
+  // 缺失时 normalizeReviewResult 会从 findings 合成一段。
   return true
+}
+
+/**
+ * 从 decision + findings 合成一段供 MR 评论展示的 Markdown。
+ * 仅在 Claude 返回的 JSON 含 decision+findings 但漏 markdown 字段时触发。
+ */
+function synthesizeMarkdown(
+  decision: 'pass' | 'blocked',
+  findings: ReviewFinding[],
+): string {
+  const header = decision === 'pass'
+    ? '**结论**: ✅ pass'
+    : '**结论**: ⚠️ blocked'
+  if (findings.length === 0) {
+    return `${header}\n\n_Claude 未给出具体 findings_`
+  }
+  const lines = [header, '', '**Findings**:']
+  for (const f of findings) {
+    const sev = f.severity === 'blocker' ? '🛑 blocker'
+      : f.severity === 'warning' ? '⚠️ warning'
+      : 'ℹ️ info'
+    lines.push(`- [${sev}] **${f.title}**${f.detail ? `\n  ${f.detail}` : ''}`)
+  }
+  return lines.join('\n')
 }
 
 function normalizeReviewResult(obj: Record<string, unknown>): PrdReviewResult {
@@ -88,10 +113,14 @@ function normalizeReviewResult(obj: Record<string, unknown>): PrdReviewResult {
       detail: typeof rec.detail === 'string' ? rec.detail : undefined,
     }
   })
+  const decision = obj.decision as 'pass' | 'blocked'
+  const markdown = typeof obj.markdown === 'string' && obj.markdown.trim()
+    ? obj.markdown
+    : synthesizeMarkdown(decision, findings)
   return {
-    decision: obj.decision as 'pass' | 'blocked',
+    decision,
     findings,
-    markdown: obj.markdown as string,
+    markdown,
   }
 }
 
