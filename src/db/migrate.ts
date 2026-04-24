@@ -8,6 +8,7 @@ import {
   REVIEW_PRD_SYSTEM_PROMPT,
 } from '../agent/prd/prompts.js'
 import { CREATE_ARCH_SYSTEM_PROMPT } from '../agent/arch/prompts.js'
+import { PRD_REVIEW_SYSTEM_PROMPT } from '../agent/prd-submit/prompts.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
@@ -105,6 +106,10 @@ const schemaV26 = readFileSync(join(__dirname, 'schema-v26.sql'), 'utf8')
 await pool.query(schemaV26)
 console.log('[migrate] schema-v26 applied')
 
+const schemaV28 = readFileSync(join(__dirname, 'schema-v28.sql'), 'utf8')
+await pool.query(schemaV28)
+console.log('[migrate] schema-v28 applied')
+
 
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
@@ -141,5 +146,23 @@ await pool.query(
   ['review_prd', REVIEW_PRD_SYSTEM_PROMPT]
 )
 
+// prd_ai_review_mr (v28): PRD 主动提交链路的 MR diff review prompt。
+// 与 create_prd / review_prd 同模式两段式 UPDATE。
+await pool.query(
+  `UPDATE capabilities
+     SET system_prompt = $2,
+         default_system_prompt = $2,
+         updated_at = NOW()
+   WHERE key = $1
+     AND (system_prompt IS NULL OR system_prompt = default_system_prompt)`,
+  ['prd_ai_review_mr', PRD_REVIEW_SYSTEM_PROMPT]
+)
+await pool.query(
+  `UPDATE capabilities
+     SET default_system_prompt = $2, updated_at = NOW()
+   WHERE key = $1 AND default_system_prompt IS DISTINCT FROM $2`,
+  ['prd_ai_review_mr', PRD_REVIEW_SYSTEM_PROMPT]
+)
+
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v26, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26)')
+console.log('✅ Database schema applied (v1 ~ v26 + v28, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26 + PRD active submit MR v28)')
