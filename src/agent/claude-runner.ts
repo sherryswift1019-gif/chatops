@@ -371,7 +371,7 @@ export class ClaudeRunner {
       }
 
       // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent capability 走 handler
-      const HANDLER_CAPABILITIES = new Set(['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr', 'search_knowledge'])
+      const HANDLER_CAPABILITIES = new Set(['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr', 'search_knowledge', 'prd_submit'])
 
       if (HANDLER_CAPABILITIES.has(intent.capability)) {
         console.log(`[Runner] Agent capability: ${intent.capability}, routing to handler`)
