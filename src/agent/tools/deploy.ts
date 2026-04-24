@@ -90,7 +90,8 @@ async function resolveImageTag(gitlabPath: string, branch: string): Promise<{ ta
       { headers: { 'PRIVATE-TOKEN': gitlab.token }, httpsAgent: agent, timeout: 10000 }
     )
     const shortId = res.data.commit.short_id.slice(0, 8)
-    const tag = `${branch}_${shortId}`
+    const tagBranch = branch.replace(/\//g, '-')
+    const tag = `${tagBranch}_${shortId}`
     deployLog(`resolveImageTag: ${gitlabPath} branch=${branch} → commit=${shortId} → tag=${tag}`)
     return { tag, commitId: res.data.commit.id, shortId }
   } catch (err: unknown) {
