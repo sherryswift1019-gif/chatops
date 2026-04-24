@@ -56,8 +56,11 @@ export async function resolveMrTitle(
       },
     )
     const commits = (resp.data?.commits ?? []) as Array<{ title?: string }>
-    // commits 数组 GitLab 返回按时间倒序（最新在前）。取第一个非 fixup 类。
-    const picked = commits.find(c => c.title && !FIXUP_PREFIX_RE.test(c.title.trim()))
+    // GitLab /repository/compare 返回 commits 是 `git log from..to` 的顺序：
+    // **最老在前，最新在后**（与之前 PRD 注释里的"倒序"假设相反）。
+    // 取最新一次非 fixup 类 commit 的 title 作为 MR 标题——这通常是 PM 刚 push 的
+    // 实质修改，也对齐 GitLab UI 开 MR 时的默认标题行为。
+    const picked = [...commits].reverse().find(c => c.title && !FIXUP_PREFIX_RE.test(c.title.trim()))
     if (picked?.title) {
       return { title: `[PRD] ${picked.title.trim()}`, source: 'commit' }
     }

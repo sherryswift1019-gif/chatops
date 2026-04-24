@@ -224,8 +224,8 @@ PM 第一次 @agent 后已开 MR（此刻假设已 un-draft，已可合并）。
    GET /api/v4/projects/{encodeURIComponent(projectPath)}/repository/compare
        ?from={targetBranch}&to={sourceBranch}
    ```
-   - 返回 `commits[]`（按时间倒序）
-   - 取第一个 **非 fixup 类** commit 的 `title`（过滤 `^(fixup!|squash!|wip:|WIP:)`）
+   - 返回 `commits[]`（GitLab API 实测是**时间正序**：最老在前、最新在后——这是 `git log from..to` 的行为）
+   - **从尾端找**最新一个 **非 fixup 类** commit 的 `title`（过滤 `^(fixup!|squash!|wip:|WIP:)`）——对齐 GitLab UI 开 MR 时的默认取最新 commit 作为标题的行为
    - 都没有 → 回退到 `[PRD] ${slug}`（slug 来自 MR文件 basename）
    - 成功派生 → 最终 `baseTitle = '[PRD] ' + commitTitle`
    - 显式传入 → `baseTitle = '[PRD] ' + triggerParams.title`

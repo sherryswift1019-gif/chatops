@@ -259,7 +259,7 @@ export async function setMrDraft(
 
 **resolveMrTitle 实现要点**：
 - `override != null` → 返回 `{title:'[PRD] '+override, source:'override'}`
-- 否则调 `GET /projects/{urlEncode}/repository/compare?from={targetBranch}&to={sourceBranch}`，取 `commits[]` 第一个**非 fixup** 的 `title`（正则过滤 `^(fixup!|squash!|wip:|WIP:)`）
+- 否则调 `GET /projects/{urlEncode}/repository/compare?from={targetBranch}&to={sourceBranch}`；**从尾端**找最新一个**非 fixup** 的 `title`（GitLab 返回的 commits 是时间正序——`git log from..to` 的顺序；正则过滤 `^(fixup!|squash!|wip:|WIP:)`）
 - 都没有 → `{title:'[PRD] '+slug, source:'fallback'}`
 
 **handler 流程**（对应 PRD §3.2）：
