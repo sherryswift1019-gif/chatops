@@ -138,14 +138,13 @@ const SCHEMA_FILES = [
   'schema-v18.sql',
   'schema-v19.sql',
   'schema-v20.sql',
-  'schema-v21.sql',
-  'schema-v22.sql',
-  'schema-v23.sql',
-  'schema-v24.sql',
-  'schema-v25.sql',
-  'schema-v26.sql',
-  // v27 不存在（跳号）
-  'schema-v28.sql',
+  // 注意：不要补齐 v21-v28。团队 schema 文件设计上 DDL 和 seed 数据
+  // 混在同一文件（如 v25 塞入 pam 产线 + pas project + L1-L4 pipeline 模板），
+  // 跑完会污染"空产线 / 0 project"的测试预期（analyzer.test.ts /
+  // bug-analysis-reports-repo.test.ts 等）。resetTestDb 的前提是纯 DDL，
+  // 混用 seed 会打穿这个假设。v21+ 新建的表（prd_submit_events / arch_*）
+  // 目前没有单元测试依赖；globalSetup 的 pg-container.ts 会扫全部文件
+  // 支持首次 bootstrap，业务代码运行时 migrate.ts 也会跑全套。
 ]
 
 export async function resetTestDb(): Promise<void> {
