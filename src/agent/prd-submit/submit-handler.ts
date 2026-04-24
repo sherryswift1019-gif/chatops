@@ -262,7 +262,7 @@ export async function handlePrdSubmit(opts: TriggerOptions): Promise<TriggerResu
 
     return {
       success: true,
-      output: `✅ 收到 PRD MR 提交请求（submissionId=${submissionId}）\n结果将通过 DM 单聊发送给你（${authorEmail}）`,
+      output: `✅ 收到 PRD MR 提交请求（submissionId=${submissionId}），结果将通过 DM 单聊发送给你`,
       data: { runId, submissionId },
     }
   } catch (err) {

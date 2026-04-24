@@ -17,6 +17,7 @@ import { registerCapabilityHandler } from '../coordinator.js'
 import { createEvent } from '../../db/repositories/prd-submit-events.js'
 import { gitlabCreateMr } from '../mr/gitlab-mr.js'
 import { resolveMrTitle, findOpenMr, setMrDraft } from './mr-api.js'
+import { extractErrorMessage } from './errors.js'
 
 interface Params {
   submissionId: string
@@ -122,7 +123,7 @@ export async function handlePrdCreateMr(opts: TriggerOptions): Promise<TriggerRe
       data: { mrIid, mrUrl, reused },
     }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = extractErrorMessage(err)
     console.error(`[prd_create_mr] 失败:`, msg)
     await createEvent({
       submissionId,

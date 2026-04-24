@@ -24,6 +24,7 @@ import { gitlabPostMrNote } from '../review/gitlab-mr-note.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { runClaudePrdReview, type PrdReviewResult } from './claude-prd-review.js'
 import { setMrDraft } from './mr-api.js'
+import { extractErrorMessage } from './errors.js'
 
 interface Params {
   submissionId: string
@@ -132,7 +133,7 @@ export async function handlePrdAiReviewMr(opts: TriggerOptions): Promise<Trigger
   try {
     mrDiff = await fetchMrDiff(projectPath, mrIid)
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = extractErrorMessage(err)
     await createEvent({
       submissionId, projectPath,
       code: 'prd_ai_review_mr', status: 'failed',
@@ -160,7 +161,7 @@ export async function handlePrdAiReviewMr(opts: TriggerOptions): Promise<Trigger
       signal: opts.signal,
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = extractErrorMessage(err)
     console.error(`[prd_ai_review_mr] Claude runner 失败:`, msg)
     await createEvent({
       submissionId, projectPath,
@@ -178,21 +179,21 @@ export async function handlePrdAiReviewMr(opts: TriggerOptions): Promise<Trigger
       body: buildReviewNoteBody(review),
     })
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    // POST note 失败不致命；review 本身已完成，记事件但继续尝试 un-draft
-    console.error(`[prd_ai_review_mr] POST note 失败:`, msg)
+    // POST note 失败不致命；review 本身已完成，记日志但继续尝试 un-draft
+    console.error(`[prd_ai_review_mr] POST note 失败:`, extractErrorMessage(err))
   }
 
   // 6. Draft 闸门切换：pass 才 un-draft
   let draftCleared = false
+  let draftClearError: string | null = null
   if (review.decision === 'pass') {
     try {
       await setMrDraft(projectPath, mrIid, baseTitle, false)
       draftCleared = true
       console.log(`[prd_ai_review_mr] MR !${mrIid} 已解除 Draft（可合并）`)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[prd_ai_review_mr] un-draft PUT 失败（review 仍视为成功）:`, msg)
+      draftClearError = extractErrorMessage(err)
+      console.error(`[prd_ai_review_mr] un-draft PUT 失败（review 仍视为成功）:`, draftClearError)
       // 不抛错；notify stage 的 DM 会告知用户"review 通过但解除 Draft 失败"
     }
   }
@@ -207,6 +208,7 @@ export async function handlePrdAiReviewMr(opts: TriggerOptions): Promise<Trigger
       findings: review.findings,
       parseFailed: review.parseFailed ?? false,
       draftCleared,
+      ...(draftClearError ? { draftClearError } : {}),
     },
   })
 

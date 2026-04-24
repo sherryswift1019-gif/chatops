@@ -25,6 +25,7 @@ import {
 } from '../../db/repositories/prd-submit-events.js'
 import { PipelineApprovalManager } from '../../pipeline/approval-manager.js'
 import type { IMAdapter } from '../../adapters/im/types.js'
+import { extractErrorMessage } from './errors.js'
 
 interface Params {
   submissionId: string
@@ -239,7 +240,7 @@ export async function handlePrdNotify(opts: TriggerOptions): Promise<TriggerResu
     })
     return { success: true, output: `DM 已发送 (${scenario.kind}) → userId=${userId}` }
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
+    const msg = extractErrorMessage(err)
     console.error('[prd_notify] DM failed:', msg)
     await createEvent({
       submissionId, projectPath,
