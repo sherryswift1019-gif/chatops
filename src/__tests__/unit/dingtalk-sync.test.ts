@@ -47,9 +47,13 @@ function setupDingTalkMocks(opts: {
     if (url.includes('oauth2/accessToken')) {
       return { data: { accessToken: 'tok-fake', expireIn: 7200 } }
     }
-    if (url.endsWith('department/listsubid')) {
-      // 没子部门，直接返回根部门 1 即可（递归终止）
-      return { data: { errcode: 0, result: { dept_id_list: [] } } }
+    // main 上 feat(dingtalk-sync) 把部门遍历换成了 department/get + listsub
+    // 用于构建全路径；本简化测试只挂根部门，listsub 永远返回空
+    if (url.endsWith('department/get')) {
+      return { data: { errcode: 0, result: { dept_id: 1, name: 'Root', parent_id: 0 } } }
+    }
+    if (url.endsWith('department/listsub')) {
+      return { data: { errcode: 0, result: [] } }
     }
     if (url.endsWith('user/list')) {
       return {
@@ -167,20 +171,29 @@ describe('syncDingTalkUsers', () => {
 
   it('user/list 部门遍历跨部门去重：同一 userid 在多部门下只 upsert 一次', async () => {
     // 这里覆盖 sync 内部 seen Map 的去重路径——
-    // 通过让 listsubid 返回多个子部门并让同一 user 出现多次实现
+    // 通过让根部门下挂多个子部门并让同一 user 出现多次实现
     post.mockReset()
     post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
       if (url.includes('oauth2/accessToken')) {
         return { data: { accessToken: 'tok-fake' } }
       }
-      if (url.endsWith('department/listsubid')) {
+      // 根部门 1 → name=Root, parent=0；只查 dept_id=1 一次（其余 dept 信息走 listsub）
+      if (url.endsWith('department/get')) {
+        return { data: { errcode: 0, result: { dept_id: 1, name: 'Root', parent_id: 0 } } }
+      }
+      // 根 1 下挂 [2, 3]；2、3 都没子
+      if (url.endsWith('department/listsub')) {
         const parent = body.dept_id as number
-        // 根部门 1 下挂两个子部门 2, 3；2、3 都没子
-        if (parent === 1) return { data: { errcode: 0, result: { dept_id_list: [2, 3] } } }
-        return { data: { errcode: 0, result: { dept_id_list: [] } } }
+        if (parent === 1) {
+          return { data: { errcode: 0, result: [
+            { dept_id: 2, name: 'Team A', parent_id: 1 },
+            { dept_id: 3, name: 'Team B', parent_id: 1 },
+          ] } }
+        }
+        return { data: { errcode: 0, result: [] } }
       }
       if (url.endsWith('user/list')) {
-        // 让 dup 用户在部门 2 和 3 都返回；solo 仅在部门 3
+        // dup 用户在部门 2 和 3 都返回；solo 仅在部门 3
         const deptId = body.dept_id as number
         const list =
           deptId === 2
