@@ -22,7 +22,7 @@ export function setApprovalGateHandler(
 
 const approvalTool: AgentTool = {
   name: 'request_approval',
-  description: 'Request human approval before performing a high-risk operation. Call this BEFORE execute_deploy, execute_rollback, or any production change. This ends the current session — execution happens in a follow-up session after approval.',
+  description: '在执行高危操作前请求人工审批。在调用 execute_deploy、execute_rollback 或任何生产变更之前先调用本工具。调用后当前会话结束,审批通过后在新会话中再继续执行。',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',

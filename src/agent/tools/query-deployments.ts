@@ -4,7 +4,7 @@ import type { AgentTool, TaskContext, ToolResult } from './types.js'
 
 const queryDeploymentsTool: AgentTool = {
   name: 'query_deployments',
-  description: 'Query recent deployment history for a project. Use this to check what version is currently deployed or review deployment history.',
+  description: '查询某模块最近的部署历史,用于查看当前部署的版本或回顾历史部署记录。',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',

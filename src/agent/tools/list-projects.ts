@@ -16,7 +16,7 @@ function renderModule(p: {
 
 export const listProductLineProjectsTool: AgentTool = {
   name: 'list_product_line_projects',
-  description: 'List all business modules (projects) under the user\'s current product line, including owner name, GitLab path, and Harbor project.',
+  description: '列出当前用户所在产线下的所有业务模块(project),含负责人、GitLab 路径、Harbor 项目名。',
   riskLevel: 'low',
   inputSchema: { type: 'object', properties: {} },
   async execute(_params: unknown, ctx: TaskContext): Promise<ToolResult> {

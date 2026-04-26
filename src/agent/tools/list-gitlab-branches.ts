@@ -35,7 +35,7 @@ export async function listProjectBranches(gitlabPath: string): Promise<string[]>
 
 export const listGitlabBranchesTool: AgentTool = {
   name: 'list_gitlab_branches',
-  description: 'List all available GitLab branches for a project/module. Use this when the user asks which branches exist, or before deploying to verify a branch name.',
+  description: '列出某模块在 GitLab 上所有可用的分支。用户问"有哪些分支",或部署前需要核对分支名时调用。',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',

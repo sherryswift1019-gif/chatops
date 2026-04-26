@@ -29,7 +29,7 @@ async function getHarborConfig(): Promise<{ url: string; username: string; passw
 
 const listImagesTool: AgentTool = {
   name: 'list_images',
-  description: 'List available images for a project from Harbor registry. Returns recent tags with commit info.',
+  description: '列出 Harbor 镜像仓库中某模块的可用镜像,返回最近的 tag 及对应 commit 信息。',
   riskLevel: 'low',
   inputSchema: {
     type: 'object',
