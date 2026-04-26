@@ -145,6 +145,12 @@ const SCHEMA_FILES = [
   // 混用 seed 会打穿这个假设。v21+ 新建的表（prd_submit_events / arch_*）
   // 目前没有单元测试依赖；globalSetup 的 pg-container.ts 会扫全部文件
   // 支持首次 bootstrap，业务代码运行时 migrate.ts 也会跑全套。
+  //
+  // v30 (pipeline_node_types) 例外：全新表 + 非污染 catalog seed（5 行节点
+  // 类型定义），所有依赖此表的测试都期望这 5 行存在，不会干扰其它 fixture。
+  // 后续 v31+ schema 遵循同样规则：纯 DDL 或"全新表 + 所有测试都期望存在
+  // 的 catalog seed"才能加进 SCHEMA_FILES。
+  'schema-v30.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
