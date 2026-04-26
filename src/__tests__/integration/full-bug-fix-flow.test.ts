@@ -168,7 +168,7 @@ describe('Integration: AgentCoordinator 调度', () => {
     // Mock DB to find capability
     const pool = getPool()
     await pool.query(
-      `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval) VALUES ('test_integration_cap', 'Test', 'Test', 'action', '[]', false) ON CONFLICT (key) DO NOTHING`
+      `INSERT INTO capabilities (key, display_name, description, tool_names) VALUES ('test_integration_cap', 'Test', 'Test', '[]') ON CONFLICT (key) DO NOTHING`
     )
 
     const result = await triggerCapability({

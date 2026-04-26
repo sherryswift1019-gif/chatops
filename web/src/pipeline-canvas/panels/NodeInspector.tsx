@@ -1,4 +1,4 @@
-import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tag, Tooltip, Modal, message } from 'antd'
+import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tooltip, Modal, message } from 'antd'
 import { ExclamationCircleTwoTone } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import type { StageNode, StageFields, ImInputConfig } from '../types'
@@ -36,7 +36,6 @@ function capabilityOptions(list: CapabilityOption[], currentKey?: string) {
           <div>{c.displayName}</div>
           <div style={{ fontSize: 11, color: '#999' }}>{c.key}</div>
         </div>
-        <Tag>{c.category}</Tag>
       </div>
     ),
     key: c.key,
@@ -70,9 +69,7 @@ function filterParamsBySchema(
     if (keys.has(k)) out[k] = v
   }
   return out
-}
-
-export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers, capabilities }: Props) {
+}export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers, capabilities }: Props) {
   const [form] = Form.useForm()
   // paramSchema 作为 JSON 字符串在 Inspector 本地维护，避免 antd Form 在每次按键
   // 时重新受控导致编辑中断；onBlur 时解析并提交。
@@ -255,11 +252,10 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                         return tx.toLowerCase().includes(input.toLowerCase())
                       }}
                       onChange={(newKey) => {
-                        const newSchema = capabilities.find(c => c.key === newKey)?.paramSchema ?? {}
+                        // phase 2 cleanup: capability.paramSchema 已删，新选 capability 时不再按 schema 过滤参数。
+                        // 已填写的 capabilityParams 直接保留（JSON fallback 形式由用户自行编辑）。
                         const currentParams = (getFieldValue('capabilityParams') as Record<string, unknown> | undefined) ?? {}
-                        const filtered = filterParamsBySchema(currentParams, newSchema)
-                        form.setFieldsValue({ capabilityParams: filtered })
-                        onChange(node!.id, { capabilityKey: newKey, capabilityParams: filtered })
+                        onChange(node!.id, { capabilityKey: newKey, capabilityParams: currentParams })
                       }}
                     />
                   </Form.Item>
@@ -267,7 +263,7 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                     <Form.Item shouldUpdate noStyle>
                       {() => (
                         <CapabilityParamsForm
-                          paramSchema={selected.paramSchema}
+                          paramSchema={undefined}
                           value={form.getFieldValue('capabilityParams') as Record<string, unknown> | undefined}
                           onChange={(next) => {
                             form.setFieldsValue({ capabilityParams: next })

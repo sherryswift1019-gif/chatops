@@ -19,6 +19,12 @@ vi.mock('../../db/repositories/capabilities.js', () => ({
   }),
 }))
 
+// phase 2 cleanup: coordinator 通过 im_triggers.pipeline_id 决定 pipeline 路径。
+// 这些 unit 测试场景全是 handler 路径（无 pipeline），mock 一律返回 null。
+vi.mock('../../db/repositories/im-triggers.js', () => ({
+  getIMTrigger: vi.fn(async () => null),
+}))
+
 vi.mock('../../db/repositories/bug-analysis-reports.js', () => ({
   setPipelineRunId: vi.fn(async () => {}),
   updateReportStatus: vi.fn(async () => null),

@@ -213,13 +213,12 @@ export async function registerSystemConfigRoutes(
       }
 
       // 3. Capabilities
-      const caps = (data.capabilities ?? []) as Array<{ key: string; displayName: string; description?: string; category?: string; toolNames?: string[]; needsApproval?: boolean }>
+      const caps = (data.capabilities ?? []) as Array<{ key: string; displayName: string; description?: string; toolNames?: string[] }>
       for (const c of caps) {
         try {
           await createCapability({
             key: c.key, displayName: c.displayName, description: c.description ?? '',
-            category: (c.category ?? 'query') as 'query' | 'action' | 'admin',
-            toolNames: c.toolNames ?? [], needsApproval: c.needsApproval ?? false,
+            toolNames: c.toolNames ?? [],
           })
           stats.capabilities++
         } catch { /* duplicate, skip */ }

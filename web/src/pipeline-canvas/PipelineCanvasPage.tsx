@@ -7,7 +7,7 @@ import { getTestPipeline } from '../api/test-pipelines'
 import { getPipelineVariables } from '../api/pipeline-variables'
 import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getTestServers } from '../api/test-servers'
-import { getCapabilities, type Capability } from '../api/capabilities'
+import { getCapabilities } from '../api/capabilities'
 import { getPipelineGraph, putPipelineGraph } from './api'
 import { usePipelineGraph } from './hooks/usePipelineGraph'
 import { useAutoLayout } from './hooks/useAutoLayout'
@@ -22,8 +22,6 @@ import type { StageType, StageFields } from './types'
 export interface CapabilityOption {
   key: string
   displayName: string
-  category: Capability['category']
-  paramSchema: Record<string, unknown>
 }
 
 const defaultStageFields = (type: StageType, id: string): StageFields => ({
@@ -128,8 +126,6 @@ export default function PipelineCanvasPage() {
           caps.map(c => ({
             key: c.key,
             displayName: c.displayName,
-            category: c.category,
-            paramSchema: c.paramSchema ?? {},
           })),
         )
         graph.replaceGraph(wire)

@@ -848,9 +848,6 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     }
   }
 
-  const categoryColors: Record<string, string> = { query: 'blue', action: 'orange', admin: 'red', testing: 'purple' }
-  const categoryLabels: Record<string, string> = { query: '查询', action: '操作', admin: '管理', testing: '测试' }
-
   const enabledCol = {
     title: '启用', key: 'enabled', width: 80,
     render: (_: unknown, record: Capability) => {
@@ -887,8 +884,6 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     { title: '能力名称', dataIndex: 'displayName' },
     { title: '标识', dataIndex: 'key' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
-    { title: '分类', dataIndex: 'category',
-      render: (v: string) => <Tag color={categoryColors[v]}>{categoryLabels[v] ?? v}</Tag> },
     enabledCol,
     imCol,
   ]
