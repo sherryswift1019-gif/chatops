@@ -85,7 +85,7 @@ export interface ArtifactInput {
 
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook'
+  stageType: 'script' | 'approval' | 'llm_agent' | 'wait_webhook'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number

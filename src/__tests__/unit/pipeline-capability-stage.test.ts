@@ -13,7 +13,7 @@ describe('Pipeline capability stage: executeCapabilityStage', () => {
     // 这里通过 StageDefinition 结构验证
     const stage = {
       name: '测试阶段',
-      stageType: 'capability' as const,
+      stageType: 'llm_agent' as const,
       targetRoles: [],
       parallel: false,
       timeoutSeconds: 60,
@@ -27,7 +27,7 @@ describe('Pipeline capability stage: executeCapabilityStage', () => {
   it('capabilityKey 存在 → 结构正确', () => {
     const stage = {
       name: 'AI 分析',
-      stageType: 'capability' as const,
+      stageType: 'llm_agent' as const,
       targetRoles: [],
       parallel: false,
       timeoutSeconds: 1200,

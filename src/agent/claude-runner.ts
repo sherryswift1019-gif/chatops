@@ -362,10 +362,13 @@ export class ClaudeRunner {
         }
       }
 
-      // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent capability 走 handler
-      const HANDLER_CAPABILITIES = new Set(['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr', 'search_knowledge', 'prd_submit'])
+      // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent 走 handler。
+      // 这里集合的是"agent key"——用来决定该 agent 走 handler-path（直接代码 handler）
+      // 而不是 IM 通用对话路径。phase 3 T17 重命名为 HANDLER_AGENT_KEYS,
+      // 澄清这是 agent key 集合,与 IM 触发入口（im_triggers 表）无关。
+      const HANDLER_AGENT_KEYS = new Set(['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr', 'search_knowledge', 'prd_submit'])
 
-      if (HANDLER_CAPABILITIES.has(intent.capability)) {
+      if (HANDLER_AGENT_KEYS.has(intent.capability)) {
         console.log(`[Runner] Agent capability: ${intent.capability}, routing to handler`)
         await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: '收到，处理中...', atDingtalkIds: atIds } as any)
 

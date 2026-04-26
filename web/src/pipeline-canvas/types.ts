@@ -1,6 +1,6 @@
 import type { Node, Edge } from '@xyflow/react'
 
-export type StageType = 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input'
+export type StageType = 'script' | 'approval' | 'llm_agent' | 'wait_webhook' | 'im_input'
 
 export interface ImInputConfig {
   prompt: string

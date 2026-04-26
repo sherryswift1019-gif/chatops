@@ -14,13 +14,13 @@ describe('pipeline-node-types repository', () => {
     const keys = types.map(t => t.key).sort()
     expect(keys).toEqual([
       'approval',
-      'capability',
       'db_update',
       'dm',
       'fan_out',
       'file_read',
       'http',
       'im_input',
+      'llm_agent',
       'script',
       'sql_query',
       'template_render',
@@ -44,7 +44,7 @@ describe('pipeline-node-types repository', () => {
     // phase-0 5 + phase-3 7 (http/dm/db_update/sql_query/file_read/template_render/fan_out)
     expect(keys.has('script')).toBe(true)
     expect(keys.has('approval')).toBe(true)
-    expect(keys.has('capability')).toBe(true)
+    expect(keys.has('llm_agent')).toBe(true)
     expect(keys.has('wait_webhook')).toBe(true)
     expect(keys.has('im_input')).toBe(true)
     // phase-3 T9-T14

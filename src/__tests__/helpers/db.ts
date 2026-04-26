@@ -170,6 +170,11 @@ const SCHEMA_FILES = [
   // SET enabled=TRUE。每个 executor commit 后追加一行 UPDATE 并 bump 末尾断言。
   // T15 fan_out 推迟,本文件最终 6 行 enabled = 11(5 phase-0 + 6 simple)。
   'schema-v35.sql',
+  // v36 (T17 capability → llm_agent rename): pipeline_node_types row 改名
+  // + test_pipelines.graph / .stages JSONB 节点 stageType 改名。
+  // 测试 fixture 里若仍用 'capability' 字面量需要 phase 3 后续清理 —— 但 SQL 迁移
+  // 是幂等 + WHERE EXISTS 守门,空表上是 no-op。
+  'schema-v36.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

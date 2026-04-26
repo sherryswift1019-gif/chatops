@@ -233,7 +233,7 @@ function filterParamsBySchema(
                 </Form.Item>
               </>
             )
-            if (t === 'capability') {
+            if (t === 'llm_agent') {
               const selectedKey = getFieldValue('capabilityKey') as string | undefined
               const selected = capabilities.find(c => c.key === selectedKey)
               return (

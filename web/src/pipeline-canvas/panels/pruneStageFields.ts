@@ -34,7 +34,7 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
       return { ...base, ...cleared, script: '' }
     case 'approval':
       return { ...base, ...cleared, approverIds: [], approvalDescription: '' }
-    case 'capability':
+    case 'llm_agent':
       return { ...base, ...cleared, capabilityKey: '', capabilityParams: {} }
     case 'wait_webhook':
       return { ...base, ...cleared, webhookTag: '' }
@@ -58,7 +58,7 @@ export function obsoleteFieldsOnSwitch(prev: StageFields, newType: StageType): s
   const fieldsByType: Record<StageType, (keyof StageFields)[]> = {
     script: ['script'],
     approval: ['approverIds', 'approvalDescription'],
-    capability: ['capabilityKey', 'capabilityParams'],
+    llm_agent: ['capabilityKey', 'capabilityParams'],
     wait_webhook: ['webhookTag'],
     im_input: ['imInputConfig'],
   }

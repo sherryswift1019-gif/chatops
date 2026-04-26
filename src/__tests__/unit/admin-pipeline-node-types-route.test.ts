@@ -14,12 +14,12 @@ describe('GET /pipeline-node-types route — fastify-inject', () => {
   })
   afterAll(async () => { await app.close() })
 
-  it('returns 200 with bare array of 5 enabled node types', async () => {
+  it('returns 200 with bare array of 12 enabled node types (5 phase-0 + 7 phase-3)', async () => {
     const res = await app.inject({ method: 'GET', url: '/pipeline-node-types' })
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(Array.isArray(body)).toBe(true)
-    expect(body).toHaveLength(5)
+    expect(body).toHaveLength(12)
   })
 
   it('disabled node types are filtered out', async () => {
@@ -29,7 +29,7 @@ describe('GET /pipeline-node-types route — fastify-inject', () => {
       const res = await app.inject({ method: 'GET', url: '/pipeline-node-types' })
       const body = res.json() as Array<{ key: string }>
       expect(body.find(t => t.key === 'script')).toBeUndefined()
-      expect(body).toHaveLength(4)
+      expect(body).toHaveLength(11)
     } finally {
       await getPool().query(`UPDATE pipeline_node_types SET enabled=true WHERE key='script'`)
     }

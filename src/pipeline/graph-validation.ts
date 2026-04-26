@@ -136,7 +136,7 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
 function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
   const prefix = `node ${n.id} (stageType=${n.stageType})`
   switch (n.stageType) {
-    case 'capability':
+    case 'llm_agent':
       if (!n.capabilityKey || !n.capabilityKey.trim()) {
         return `${prefix}: capabilityKey is required`
       }

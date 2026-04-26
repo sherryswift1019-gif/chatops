@@ -19,11 +19,11 @@ function base(type: StageFields['stageType'], extras: Partial<StageFields> = {})
 describe('pruneStageFields', () => {
   it('script → capability: 清掉 script，注入 capabilityKey/Params 默认值', () => {
     const prev = base('script', { script: 'echo hi' })
-    const next = pruneStageFields(prev, 'capability')
+    const next = pruneStageFields(prev, 'llm_agent')
     expect(next.script).toBeUndefined()
     expect(next.capabilityKey).toBe('')
     expect(next.capabilityParams).toEqual({})
-    expect(next.stageType).toBe('capability')
+    expect(next.stageType).toBe('llm_agent')
     expect(next.name).toBe('n')  // 共享字段保留
   })
 
@@ -42,7 +42,7 @@ describe('pruneStageFields', () => {
       capabilityKey: 'old',
       webhookTag: 'old-tag',
     })
-    const next = pruneStageFields(prev, 'capability')
+    const next = pruneStageFields(prev, 'llm_agent')
     // 独占字段都应该在返回对象里（无论值是 undefined 还是新默认值），这样浅合并才能覆盖
     expect(Object.keys(next)).toEqual(
       expect.arrayContaining(['script', 'approverIds', 'approvalDescription', 'webhookTag', 'imInputConfig'])
@@ -58,16 +58,16 @@ describe('pruneStageFields', () => {
 describe('obsoleteFieldsOnSwitch', () => {
   it('prev 是 script(script="x") 切到 capability → 返回 [script]', () => {
     const prev = base('script', { script: 'x' })
-    expect(obsoleteFieldsOnSwitch(prev, 'capability')).toEqual(['script'])
+    expect(obsoleteFieldsOnSwitch(prev, 'llm_agent')).toEqual(['script'])
   })
 
   it('prev 是 capability(key/params 都填) 切到 script → 返回 [capabilityKey, capabilityParams]', () => {
-    const prev = base('capability', { capabilityKey: 'build', capabilityParams: { a: 1 } })
+    const prev = base('llm_agent', { capabilityKey: 'build', capabilityParams: { a: 1 } })
     expect(obsoleteFieldsOnSwitch(prev, 'script').sort()).toEqual(['capabilityKey', 'capabilityParams'])
   })
 
   it('空值字段不计入 obsolete', () => {
-    const prev = base('capability', { capabilityKey: '', capabilityParams: {} })
+    const prev = base('llm_agent', { capabilityKey: '', capabilityParams: {} })
     expect(obsoleteFieldsOnSwitch(prev, 'script')).toEqual([])
   })
 })
