@@ -6,6 +6,7 @@ import {
   CloudOutlined,
   UserOutlined,
   ThunderboltOutlined,
+  ToolOutlined,
   SettingOutlined,
   HddOutlined,
   PartitionOutlined,
@@ -25,6 +26,7 @@ const PAGE_NAMES: Record<string, string> = {
   '/environments': '环境管理',
   '/dingtalk-users': '钉钉用户',
   '/capabilities': '能力管理',
+  '/tools': '工具管理',
   '/system-config': '系统配置',
   '/test-servers': '服务器管理',
   '/test-pipelines': '流水线管理',
@@ -46,6 +48,7 @@ const menuItems = [
       { key: '/environments', icon: <CloudOutlined />, label: '环境管理' },
       { key: '/dingtalk-users', icon: <UserOutlined />, label: '钉钉用户' },
       { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
+      { key: '/tools', icon: <ToolOutlined />, label: '工具管理' },
     ],
   },
   {
