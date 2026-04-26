@@ -185,10 +185,10 @@ export default function PipelineCanvasPage() {
       Modal.confirm({
         title: '有未保存改动',
         content: '离开会丢失未保存内容，确定吗？',
-        onOk: () => nav('/pipelines'),
+        onOk: () => nav('/test-pipelines'),
       })
     } else {
-      nav('/pipelines')
+      nav('/test-pipelines')
     }
   }
 
@@ -197,7 +197,7 @@ export default function PipelineCanvasPage() {
       message.warning('请先保存再触发')
       return
     }
-    nav('/pipelines')
+    nav('/test-pipelines')
     message.info('回到列表页触发执行')
   }
 
