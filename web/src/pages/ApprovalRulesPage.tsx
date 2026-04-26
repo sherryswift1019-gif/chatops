@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Button, Modal, Form, Input, InputNumber, Select, Popconfirm, Space, message, Tag } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Modal, Form, InputNumber, Select, Popconfirm, Space, message, Tag } from 'antd'
+import { PlusOutlined, ExclamationCircleTwoTone } from '@ant-design/icons'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
 import { getProductLines } from '../api/product-lines'
-import { getCapabilities } from '../api/capabilities'
+import { listIMTriggers } from '../api/imTriggers'
 import { getEnvironments } from '../api/environments'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
 import type { ApprovalRule, ProductLine, Environment } from '../types'
-import type { Capability } from '../api/capabilities'
+import type { IMTrigger } from '../types/imTrigger'
 
 export default function ApprovalRulesPage() {
   const [data, setData] = useState<ApprovalRule[]>([])
   const [loading, setLoading] = useState(false)
   const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [productLineMap, setProductLineMap] = useState<Map<number, string>>(new Map())
-  const [capabilities, setCapabilities] = useState<Capability[]>([])
+  const [imTriggers, setImTriggers] = useState<IMTrigger[]>([])
   const [environments, setEnvironments] = useState<Environment[]>([])
   const [filterProductLineId, setFilterProductLineId] = useState<number | undefined>(undefined)
   const [modalOpen, setModalOpen] = useState(false)
@@ -26,7 +26,7 @@ export default function ApprovalRulesPage() {
       setProductLines(pls)
       setProductLineMap(new Map(pls.map(pl => [pl.id, pl.displayName])))
     })
-    getCapabilities().then(setCapabilities)
+    listIMTriggers().then(setImTriggers).catch(() => {})
     getEnvironments().then(setEnvironments)
   }, [])
 
@@ -68,6 +68,54 @@ export default function ApprovalRulesPage() {
     await load()
   }
 
+  // Build IM trigger options including stale-value compat
+  function buildImTriggerOptions(currentValue: string | undefined) {
+    const triggerKeys = new Set(imTriggers.map(t => t.key))
+    const options = [
+      { value: '*', label: <span><Tag color="purple">*</Tag> 任意触发器（通配）</span> },
+      ...imTriggers.map(t => ({
+        value: t.key,
+        label: <span>{t.displayName} <span style={{ color: '#999', fontSize: 11 }}>({t.key})</span></span>,
+      })),
+    ]
+    // Stale compat: 如当前值不在列表(且不是通配),展示一个标灰提示项保留原值
+    if (currentValue && currentValue !== '*' && !triggerKeys.has(currentValue)) {
+      options.push({
+        value: currentValue,
+        label: (
+          <span>
+            <ExclamationCircleTwoTone twoToneColor="#faad14" /> {currentValue}（不在列表中）
+          </span>
+        ),
+      })
+    }
+    return options
+  }
+
+  function buildEnvOptions(currentValue: string | undefined) {
+    const envNames = new Set(environments.map(e => e.name))
+    const options = [
+      { value: '*', label: <span><Tag color="purple">*</Tag> 任意环境（通配）</span> },
+      ...environments.map(e => ({
+        value: e.name,
+        label: <span>{e.displayName} <span style={{ color: '#999', fontSize: 11 }}>({e.name})</span></span>,
+      })),
+    ]
+    if (currentValue && currentValue !== '*' && !envNames.has(currentValue)) {
+      options.push({
+        value: currentValue,
+        label: (
+          <span>
+            <ExclamationCircleTwoTone twoToneColor="#faad14" /> {currentValue}（不在列表中）
+          </span>
+        ),
+      })
+    }
+    return options
+  }
+
+  const triggerNameMap = new Map(imTriggers.map(t => [t.key, t.displayName]))
+
   const columns = [
     { title: 'ID', dataIndex: 'id' },
     {
@@ -78,7 +126,15 @@ export default function ApprovalRulesPage() {
         return name ? <Tag color="blue">{name}</Tag> : <Tag>ID:{v}</Tag>
       },
     },
-    { title: '操作类型', dataIndex: 'action' },
+    {
+      title: 'IM 触发器', dataIndex: 'imTriggerKey',
+      render: (v: string) => {
+        if (v === '*') return <Tag color="purple">*</Tag>
+        const name = triggerNameMap.get(v)
+        if (name) return <span>{name} <span style={{ color: '#999', fontSize: 11 }}>({v})</span></span>
+        return <span><ExclamationCircleTwoTone twoToneColor="#faad14" /> {v}</span>
+      },
+    },
     { title: '环境', dataIndex: 'env' },
     {
       title: '主审批人', dataIndex: 'primaryApprovers',
@@ -110,6 +166,9 @@ export default function ApprovalRulesPage() {
       ),
     },
   ]
+
+  const editingTriggerValue = editing?.imTriggerKey
+  const editingEnvValue = editing?.env
 
   return (
     <Card
@@ -145,17 +204,11 @@ export default function ApprovalRulesPage() {
               options={productLines.map(pl => ({ value: pl.id, label: pl.displayName }))}
             />
           </Form.Item>
-          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请选择操作类型' }]}>
+          <Form.Item name="imTriggerKey" label="IM 触发器" rules={[{ required: true, message: '请选择 IM 触发器' }]}>
             <Select
               showSearch
-              placeholder="选择操作类型"
-              options={[
-                { value: '*', label: <span><Tag color="purple">*</Tag> 任意操作（通配）</span> },
-                ...capabilities.map(c => ({
-                  value: c.key,
-                  label: <span>{c.displayName} <span style={{ color: '#999', fontSize: 11 }}>({c.key})</span></span>,
-                })),
-              ]}
+              placeholder="选择 IM 触发器"
+              options={buildImTriggerOptions(editingTriggerValue)}
               filterOption={(input, opt) => {
                 const v = String((opt as { value?: string } | undefined)?.value ?? '')
                 return v.toLowerCase().includes(input.toLowerCase())
@@ -166,13 +219,7 @@ export default function ApprovalRulesPage() {
             <Select
               showSearch
               placeholder="选择环境"
-              options={[
-                { value: '*', label: <span><Tag color="purple">*</Tag> 任意环境（通配）</span> },
-                ...environments.map(e => ({
-                  value: e.name,
-                  label: <span>{e.displayName} <span style={{ color: '#999', fontSize: 11 }}>({e.name})</span></span>,
-                })),
-              ]}
+              options={buildEnvOptions(editingEnvValue)}
               filterOption={(input, opt) => {
                 const v = String((opt as { value?: string } | undefined)?.value ?? '')
                 return v.toLowerCase().includes(input.toLowerCase())
