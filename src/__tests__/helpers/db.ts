@@ -166,6 +166,10 @@ const SCHEMA_FILES = [
   // v34 (pipeline_node_types 7 新行): 纯 INSERT, ON CONFLICT DO NOTHING, 不影响其它 fixture。
   // 默认 enabled=FALSE; phase 3 后续 task 启用各类型时通过 schema-v3X 或 admin SQL UPDATE。
   'schema-v34.sql',
+  // v35 (T9-T14 enable 6 new simple node types): 纯 UPDATE pipeline_node_types
+  // SET enabled=TRUE。每个 executor commit 后追加一行 UPDATE 并 bump 末尾断言。
+  // T15 fan_out 推迟,本文件最终 6 行 enabled = 11(5 phase-0 + 6 simple)。
+  'schema-v35.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

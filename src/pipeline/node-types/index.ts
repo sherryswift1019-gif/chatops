@@ -4,6 +4,8 @@ import './approval.js'
 import './capability.js'
 import './wait-webhook.js'
 import './im-input.js'
+// Phase 3 T9-T14 simple executor
+import './http.js'
 
 export * from './registry.js'
 export * from './types.js'
