@@ -5,6 +5,15 @@ import type { StageNode, StageFields, ImInputConfig } from '../types'
 import type { CapabilityOption } from '../PipelineCanvasPage'
 import { pruneStageFields, obsoleteFieldsOnSwitch } from './pruneStageFields'
 import { CapabilityParamsForm } from './CapabilityParamsForm'
+import { listPipelineNodeTypes } from '../../api/pipelineNodeTypes'
+import type { PipelineNodeType } from '../../types/pipelineNodeType'
+
+const CATEGORY_LABELS: Record<string, string> = {
+  general: '通用',
+  flow: '流程',
+  llm: 'LLM',
+  specialized: '业务',
+}
 
 interface Props {
   node: StageNode | null
@@ -69,6 +78,11 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
   // 时重新受控导致编辑中断；onBlur 时解析并提交。
   const [paramSchemaText, setParamSchemaText] = useState('')
   const [paramSchemaErr, setParamSchemaErr] = useState<string | null>(null)
+  const [nodeTypes, setNodeTypes] = useState<PipelineNodeType[]>([])
+
+  useEffect(() => {
+    listPipelineNodeTypes().then(setNodeTypes).catch(console.error)
+  }, [])
 
   useEffect(() => {
     if (node) {
@@ -157,16 +171,22 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
           <Input />
         </Form.Item>
         <Form.Item name="stageType" label="类型">
-          <Select
-            options={[
-              { value: 'script', label: '运行脚本' },
-              { value: 'approval', label: '人员审批' },
-              { value: 'capability', label: 'Agent Capability' },
-              { value: 'wait_webhook', label: '等待 Webhook' },
-              { value: 'im_input', label: 'IM 参数采集' },
-            ]}
-            onChange={(newType) => handleStageTypeChange(newType)}
-          />
+          <Select onChange={(newType) => handleStageTypeChange(newType)}>
+            {Object.entries(
+              nodeTypes.reduce<Record<string, PipelineNodeType[]>>((acc, t) => {
+                ;(acc[t.category] ??= []).push(t)
+                return acc
+              }, {})
+            ).map(([cat, items]) => (
+              <Select.OptGroup key={cat} label={CATEGORY_LABELS[cat] ?? cat}>
+                {items.map(t => (
+                  <Select.Option key={t.key} value={t.key}>
+                    {t.displayName}
+                  </Select.Option>
+                ))}
+              </Select.OptGroup>
+            ))}
+          </Select>
         </Form.Item>
         <Form.Item name="timeoutSeconds" label="超时(秒)">
           <InputNumber min={10} />
