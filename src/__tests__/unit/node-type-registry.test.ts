@@ -34,3 +34,13 @@ describe('node-type registry', () => {
     expect(() => assertRegistryConsistent(new Set(['a']))).not.toThrow()
   })
 })
+
+describe('node-type barrel', () => {
+  it('registers all 5 stage types when index is imported', async () => {
+    __resetRegistryForTesting()
+    // 动态 import barrel 触发自注册
+    await import('../../pipeline/node-types/index.js')
+    const keys = getRegisteredNodeTypeKeys()
+    expect(keys).toEqual(new Set(['script','approval','capability','wait_webhook','im_input']))
+  })
+})
