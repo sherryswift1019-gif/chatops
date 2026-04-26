@@ -55,8 +55,8 @@ export async function seedKnowledgeRepo(
 export async function seedAnalyzeBugCapability(): Promise<void> {
   const pool = getTestPool()
   await pool.query(
-    `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
-     VALUES ('analyze_bug', 'Bug 分析', 'Bug 分析', 'action', '[]'::jsonb, false, true, '你是 Bug 分析专家')
+    `INSERT INTO capabilities (key, display_name, description, tool_names, is_system, system_prompt)
+     VALUES ('analyze_bug', 'Bug 分析', 'Bug 分析', '[]'::jsonb, true, '你是 Bug 分析专家')
      ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
   )
 }
@@ -66,8 +66,8 @@ export async function seedFixBugCapabilities(): Promise<void> {
   const pool = getTestPool()
   for (const key of ['fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3']) {
     await pool.query(
-      `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
-       VALUES ($1, $1, 'test', 'action', '[]'::jsonb, false, true, '你是修复专家')
+      `INSERT INTO capabilities (key, display_name, description, tool_names, is_system, system_prompt)
+       VALUES ($1, $1, 'test', '[]'::jsonb, true, '你是修复专家')
        ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
       [key],
     )

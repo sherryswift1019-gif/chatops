@@ -5,7 +5,6 @@ import {
   updateCapability,
   updateCapabilitySystemPrompt,
   resetCapabilitySystemPrompt,
-  updateCapabilityPipelineBinding,
 } from '../../db/repositories/capabilities.js'
 
 export async function registerCapabilityRoutes(app: FastifyInstance): Promise<void> {
@@ -13,16 +12,14 @@ export async function registerCapabilityRoutes(app: FastifyInstance): Promise<vo
     return reply.send(await listCapabilities())
   })
 
-  app.post<{ Body: { key: string; displayName: string; description?: string; category?: string; toolNames?: string[]; needsApproval?: boolean } }>(
+  app.post<{ Body: { key: string; displayName: string; description?: string; toolNames?: string[] } }>(
     '/capabilities', async (req, reply) => {
-      const { key, displayName, description, category, toolNames, needsApproval } = req.body
+      const { key, displayName, description, toolNames } = req.body
       if (!key || !displayName) return reply.status(400).send({ error: 'key and displayName required' })
       const item = await createCapability({
         key, displayName,
         description: description ?? '',
-        category: (category ?? 'query') as 'query' | 'action' | 'admin',
         toolNames: toolNames ?? [],
-        needsApproval: needsApproval ?? false,
       })
       return reply.status(201).send(item)
     }
@@ -51,19 +48,6 @@ export async function registerCapabilityRoutes(app: FastifyInstance): Promise<vo
   app.post<{ Params: { id: string } }>(
     '/capabilities/:id/system-prompt/reset', async (req, reply) => {
       const item = await resetCapabilitySystemPrompt(Number(req.params.id))
-      if (!item) return reply.status(404).send({ error: 'not found' })
-      return reply.send(item)
-    }
-  )
-
-  // 绑定/解绑 IM 触发时默认启动的 Pipeline
-  app.put<{ Params: { id: string }; Body: { pipelineId: number | null } }>(
-    '/capabilities/:id/pipeline-binding', async (req, reply) => {
-      const { pipelineId } = req.body
-      if (pipelineId !== null && typeof pipelineId !== 'number') {
-        return reply.status(400).send({ error: 'pipelineId must be number or null' })
-      }
-      const item = await updateCapabilityPipelineBinding(Number(req.params.id), pipelineId)
       if (!item) return reply.status(404).send({ error: 'not found' })
       return reply.send(item)
     }

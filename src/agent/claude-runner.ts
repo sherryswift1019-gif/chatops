@@ -308,13 +308,20 @@ export class ClaudeRunner {
 
       const userRole = context.initiatorRole ?? 'developer'
 
-      // 4a: 未绑定产线的用户无法执行非查询类能力
-      if (!productLineId && capability.category !== 'query') {
-        await adapter.sendMessage(
-          { type: 'group', id: opts.groupId },
-          { text: `⛔ 你还未加入任何产线，无法执行「${capability.displayName}」。请联系管理员将你添加到产线成员中。` }
-        )
-        return
+      // 4a: 未绑定产线 + 非 IM 触发器（纯 handler 类）的能力 → 拒绝
+      // phase 2 cleanup：用 im_triggers 表替代 capability.category 判断。
+      // IM 触发器类（query / action / admin 都已迁入 im_triggers）即使无产线也允许触发；
+      // 不在 im_triggers 的内部 key（fix_bug_l*、notify_bug、request_handover 等）
+      // 由 pipeline 内部触发，无产线用户在 IM 里直触发就拒绝。
+      if (!productLineId) {
+        const imTrigger = await getIMTrigger(intent.capability)
+        if (!imTrigger) {
+          await adapter.sendMessage(
+            { type: 'group', id: opts.groupId },
+            { text: `⛔ 你还未加入任何产线，无法执行「${capability.displayName}」。请联系管理员将你添加到产线成员中。` }
+          )
+          return
+        }
       }
 
       // 4b: 已有产线的用户检查 IM 触发器权限

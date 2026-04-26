@@ -1,4 +1,5 @@
 import { getCapabilityByKey } from '../db/repositories/capabilities.js'
+import { getIMTrigger } from '../db/repositories/im-triggers.js'
 import {
   getBugAnalysisReportById,
   setPipelineRunId,
@@ -140,16 +141,19 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     return { success: false, error: msg }
   }
 
-  // 如果该 capability 绑定了默认 pipeline，走 pipeline 驱动路径
-  // （通常首节点为 im_input 参数澄清，比裸跑 Agent 具备更强的容错/审批能力）。
-  if (capability.defaultPipelineId) {
+  // Phase 2 cleanup: 路由从 capability.defaultPipelineId 改为 im_triggers.pipeline_id。
+  // capability 仅承载 LLM agent 配置；IM 入口职责（key/pipeline 绑定）已剥到 im_triggers。
+  // 部分 key（如 analyze_bug、fix_bug_l*、notify_bug、request_handover）不在 im_triggers，
+  // 这些走下面的 handler 路径。
+  const imTrigger = await getIMTrigger(opts.capabilityKey)
+  if (imTrigger?.pipelineId) {
     try {
       // 动态 import 避免 coordinator ↔ executor-hooks ↔ coordinator 循环依赖。
-      const { runPipeline, imTrigger } = await import('../pipeline/executor.js')
+      const { runPipeline, imTrigger: imTriggerCtx } = await import('../pipeline/executor.js')
       const runId = await runPipeline(
-        capability.defaultPipelineId,
+        imTrigger.pipelineId,
         {},  // IM 触发场景通常不预分配服务器，由 pipeline 内部按需处理
-        imTrigger({
+        imTriggerCtx({
           triggeredBy: opts.context.initiatorId,
           platform: opts.context.platform,
           groupId: opts.context.groupId,
@@ -160,12 +164,12 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
         undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
       )
       console.log(
-        `[AgentCoordinator] pipeline run #${runId} started for capability "${opts.capabilityKey}"`,
+        `[AgentCoordinator] pipeline run #${runId} started for "${opts.capabilityKey}" (via im_trigger)`,
       )
       return {
         success: true,
         output: `Pipeline run #${runId} started`,
-        data: { runId, pipelineId: capability.defaultPipelineId },
+        data: { runId, pipelineId: imTrigger.pipelineId },
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -174,7 +178,7 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     }
   }
 
-  // 降级：走原 handler 路径（capability 未绑定 pipeline）
+  // 降级：走原 handler 路径（capability 无对应 im_trigger 或 im_trigger 未绑 pipeline）
   const handler = handlers.get(opts.capabilityKey)
   if (!handler) {
     const msg = `no handler registered for: ${opts.capabilityKey}`

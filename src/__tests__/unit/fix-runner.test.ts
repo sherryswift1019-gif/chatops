@@ -386,8 +386,8 @@ describe('registerFixHandlers', () => {
     const pool = getTestPool()
     for (const key of ['fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3']) {
       await pool.query(
-        `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
-         VALUES ($1, $1, 'test', 'action', '[]'::jsonb, false, true, 'SP')
+        `INSERT INTO capabilities (key, display_name, description, tool_names, is_system, system_prompt)
+         VALUES ($1, $1, 'test', '[]'::jsonb, true, 'SP')
          ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
         [key],
       )

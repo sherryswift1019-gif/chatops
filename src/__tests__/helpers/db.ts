@@ -160,6 +160,9 @@ const SCHEMA_FILES = [
   // 新表 + ALTER + 数据迁移。所有依赖 IM 触发器的测试期望 im_triggers 至少有
   // 入口类 capability 行数 (~5+)。同 v31 forward policy。
   'schema-v32.sql',
+  // v33 (capabilities cleanup): DROP 5 个 legacy 字段, 纯 ALTER, 无新行无新表。
+  // 测试期望 capabilities 表只剩 LLM agent 核心字段 (phase 2 cleanup 完成后)。
+  'schema-v33.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

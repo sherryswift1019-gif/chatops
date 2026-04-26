@@ -75,9 +75,16 @@ async function seedImOnlyPipeline(): Promise<{
 
   const capKey = 'im-it-cap'
   await pool.query(
-    `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, default_pipeline_id)
-     VALUES ($1, 'IM IT', '', 'action', '[]', false, $2)
-     ON CONFLICT (key) DO UPDATE SET default_pipeline_id = EXCLUDED.default_pipeline_id`,
+    `INSERT INTO capabilities (key, display_name, description, tool_names)
+     VALUES ($1, 'IM IT', '', '[]')
+     ON CONFLICT (key) DO NOTHING`,
+    [capKey],
+  )
+  // phase 2 cleanup: pipeline 绑定从 capability.default_pipeline_id 迁到 im_triggers.pipeline_id
+  await pool.query(
+    `INSERT INTO im_triggers (key, display_name, description, pipeline_id)
+     VALUES ($1, 'IM IT', '', $2)
+     ON CONFLICT (key) DO UPDATE SET pipeline_id = EXCLUDED.pipeline_id`,
     [capKey, pipelineId],
   )
 
