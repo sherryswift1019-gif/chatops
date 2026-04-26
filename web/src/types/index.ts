@@ -26,7 +26,7 @@ export interface Environment {
 }
 
 export interface ApprovalRule {
-  id: number; productLineId: number | null; action: string; env: string
+  id: number; productLineId: number | null; imTriggerKey: string; env: string
   primaryApprovers: string[]; backupApprovers: string[]
   primaryTimeoutMin: number; totalTimeoutMin: number
 }

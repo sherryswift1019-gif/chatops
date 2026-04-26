@@ -15,6 +15,7 @@ const ProductLineListPage    = lazy(() => import('./pages/ProductLineListPage'))
 const ProductLineDetailPage  = lazy(() => import('./pages/ProductLineDetailPage'))
 const DingTalkUsersPage      = lazy(() => import('./pages/DingTalkUsersPage'))
 const CapabilitiesPage       = lazy(() => import('./pages/CapabilitiesPage'))
+const IMTriggersPage         = lazy(() => import('./pages/IMTriggersPage'))
 const ToolsPage              = lazy(() => import('./pages/ToolsPage'))
 const TestServersPage        = lazy(() => import('./pages/TestServersPage'))
 const TestPipelinesPage      = lazy(() => import('./pages/TestPipelinesPage'))
@@ -190,6 +191,9 @@ export default function App() {
             } />
             <Route path="/capabilities" element={
               <Suspense fallback={null}><CapabilitiesPage /></Suspense>
+            } />
+            <Route path="/im-triggers" element={
+              <Suspense fallback={null}><IMTriggersPage /></Suspense>
             } />
             <Route path="/tools" element={
               <Suspense fallback={null}><ToolsPage /></Suspense>

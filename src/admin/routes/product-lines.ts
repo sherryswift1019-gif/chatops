@@ -6,6 +6,11 @@ import { listMembers, addMember, updateMemberRole, removeMember } from '../../db
 import { getPool } from '../../db/client.js'
 import { listProductLineEnvs, batchSetProductLineEnvs } from '../../db/repositories/product-line-envs.js'
 import { getProductLineCapabilities, batchSetProductLineCapabilities } from '../../db/repositories/product-line-capabilities.js'
+import {
+  listProductLineIMTriggers,
+  batchSetProductLineIMTriggers,
+  type SetIMTriggerInput,
+} from '../../db/repositories/product-line-im-triggers.js'
 
 export async function registerProductLineRoutes(app: FastifyInstance): Promise<void> {
   app.get('/product-lines', async (_req, reply) => {
@@ -128,6 +133,20 @@ export async function registerProductLineRoutes(app: FastifyInstance): Promise<v
       if (!Array.isArray(caps)) return reply.status(400).send({ error: 'body must be array' })
       const result = await batchSetProductLineCapabilities(productLineId, caps)
       return reply.send(result)
+    }
+  )
+
+  // IM Triggers (phase 2: schema-v32 product_line_im_triggers)
+  app.get<{ Params: { id: string } }>('/product-lines/:id/im-triggers', async (req, reply) => {
+    return reply.send(await listProductLineIMTriggers(Number(req.params.id)))
+  })
+
+  app.put<{ Params: { id: string }; Body: { items: SetIMTriggerInput[] } }>(
+    '/product-lines/:id/im-triggers', async (req, reply) => {
+      const items = req.body?.items
+      if (!Array.isArray(items)) return reply.status(400).send({ error: 'body.items must be array' })
+      await batchSetProductLineIMTriggers(Number(req.params.id), items)
+      return reply.status(204).send()
     }
   )
 }
