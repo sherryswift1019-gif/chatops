@@ -122,6 +122,10 @@ const schemaV31 = readFileSync(join(__dirname, 'schema-v31.sql'), 'utf8')
 await pool.query(schemaV31)
 console.log('[migrate] schema-v31 applied')
 
+const schemaV32 = readFileSync(join(__dirname, 'schema-v32.sql'), 'utf8')
+await pool.query(schemaV32)
+console.log('[migrate] schema-v32 applied')
+
 
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
@@ -177,4 +181,4 @@ await pool.query(
 )
 
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v26 + v28 + v29 + v30 + v31, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26 + PRD active submit MR v28 + product_lines FK cascade v29 + pipeline_node_types v30 + capabilities-extended-fields v31)')
+console.log('✅ Database schema applied (v1 ~ v26 + v28 + v29 + v30 + v31 + v32 + im_triggers v32, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26 + PRD active submit MR v28 + product_lines FK cascade v29 + pipeline_node_types v30 + capabilities-extended-fields v31 + im_triggers v32)')
