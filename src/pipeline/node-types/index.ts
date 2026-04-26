@@ -8,6 +8,7 @@ import './im-input.js'
 import './http.js'
 import './dm.js'
 import './db-update.js'
+import './sql-query.js'
 
 export * from './registry.js'
 export * from './types.js'
