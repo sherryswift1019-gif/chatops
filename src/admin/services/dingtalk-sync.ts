@@ -44,20 +44,59 @@ function ensureOk(data: DingTalkApiError, api: string): void {
   }
 }
 
-async function getDepartmentIds(token: string, parentId: number = 1): Promise<number[]> {
-  const res = await axios.post<DingTalkApiError & { result?: { dept_id_list?: number[] } }>(
-    'https://oapi.dingtalk.com/topapi/v2/department/listsubid',
-    { dept_id: parentId },
+interface DeptInfo {
+  name: string
+  parentId: number
+}
+
+async function getDepartmentInfo(token: string, deptId: number): Promise<DeptInfo> {
+  const res = await axios.post<DingTalkApiError & { result?: { dept_id: number; name: string; parent_id: number } }>(
+    'https://oapi.dingtalk.com/topapi/v2/department/get',
+    { dept_id: deptId },
     { params: { access_token: token } }
   )
-  ensureOk(res.data, 'department/listsubid')
-  const subIds = res.data.result?.dept_id_list ?? []
-  const allIds = [parentId, ...subIds]
-  for (const subId of subIds) {
-    const nested = await getDepartmentIds(token, subId)
-    allIds.push(...nested.filter(id => !allIds.includes(id)))
+  ensureOk(res.data, 'department/get')
+  const r = res.data.result
+  if (!r) throw new Error(`DingTalk department/get returned empty for dept_id=${deptId}`)
+  return { name: r.name, parentId: r.parent_id }
+}
+
+async function loadDepartmentTree(token: string): Promise<Map<number, DeptInfo>> {
+  const tree = new Map<number, DeptInfo>()
+  const root = await getDepartmentInfo(token, 1)
+  tree.set(1, root)
+
+  const queue: number[] = [1]
+  while (queue.length > 0) {
+    const parentId = queue.shift()!
+    const res = await axios.post<DingTalkApiError & { result?: Array<{ dept_id: number; name: string; parent_id: number }> }>(
+      'https://oapi.dingtalk.com/topapi/v2/department/listsub',
+      { dept_id: parentId },
+      { params: { access_token: token } }
+    )
+    ensureOk(res.data, 'department/listsub')
+    const subs = res.data.result ?? []
+    for (const sub of subs) {
+      if (tree.has(sub.dept_id)) continue
+      tree.set(sub.dept_id, { name: sub.name, parentId: sub.parent_id })
+      queue.push(sub.dept_id)
+    }
   }
-  return allIds
+  return tree
+}
+
+function buildDepartmentPath(deptId: number, tree: Map<number, DeptInfo>): string {
+  const segments: string[] = []
+  const visited = new Set<number>()
+  let current = deptId
+  while (current > 0 && !visited.has(current)) {
+    visited.add(current)
+    const info = tree.get(current)
+    if (!info) break
+    segments.unshift(info.name)
+    current = info.parentId
+  }
+  return segments.join('/')
 }
 
 async function getDepartmentUsers(token: string, deptId: number): Promise<DingTalkUserInfo[]> {
@@ -100,11 +139,11 @@ async function getUserEmail(token: string, userid: string): Promise<string | nul
 
 export async function syncDingTalkUsers(): Promise<{ synced: number; emails: number }> {
   const token = await getAccessToken()
-  const deptIds = await getDepartmentIds(token)
+  const deptTree = await loadDepartmentTree(token)
 
   // 第一轮：列出所有部门下的用户（去重）
   const seen = new Map<string, DingTalkUserInfo>()
-  for (const deptId of deptIds) {
+  for (const deptId of deptTree.keys()) {
     const users = await getDepartmentUsers(token, deptId)
     for (const user of users) {
       if (!seen.has(user.userid)) seen.set(user.userid, user)
@@ -119,11 +158,13 @@ export async function syncDingTalkUsers(): Promise<{ synced: number; emails: num
     limit(async () => {
       const email = await getUserEmail(token, user.userid)
       if (email) emails++
+      const userDeptId = user.dept_id_list?.[0]
+      const departmentPath = userDeptId ? buildDepartmentPath(userDeptId, deptTree) : ''
       await upsertDingTalkUser({
         userId: user.userid,
         name: user.name,
         avatar: user.avatar ?? '',
-        department: String(user.dept_id_list?.[0] ?? ''),
+        department: departmentPath,
         email: email ?? undefined,
       })
     })
