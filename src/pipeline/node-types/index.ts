@@ -11,6 +11,8 @@ import './db-update.js'
 import './sql-query.js'
 import './file-read.js'
 import './template-render.js'
+// Phase 3 T15 fan_out scheduler (standalone NodeExecutor; v1 limits in fan-out.ts)
+import './fan-out.js'
 
 export * from './registry.js'
 export * from './types.js'

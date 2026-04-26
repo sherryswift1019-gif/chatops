@@ -39,19 +39,23 @@ describe('pipeline-node-types repository', () => {
     expect(t!.category).toBe('general')
   })
 
-  it('listEnabledNodeTypeKeys returns enabled-only set (5 phase-0 + T9-T14 enabled simple executor; fan_out still disabled)', async () => {
+  it('listEnabledNodeTypeKeys returns enabled-only set (5 phase-0 + T9-T15 全部启用 = 12)', async () => {
     const keys = await listEnabledNodeTypeKeys()
-    // phase-0 5 + phase-3 simple (http/dm/db_update/sql_query/file_read/template_render)
-    // = 11 once T9-T14 全部启用; 当前 batch 完成度逐步推进
+    // phase-0 5 + phase-3 7 (http/dm/db_update/sql_query/file_read/template_render/fan_out)
     expect(keys.has('script')).toBe(true)
     expect(keys.has('approval')).toBe(true)
     expect(keys.has('capability')).toBe(true)
     expect(keys.has('wait_webhook')).toBe(true)
     expect(keys.has('im_input')).toBe(true)
-    // phase-3 T9-T14 enabled at end-of-batch
+    // phase-3 T9-T14
     expect(keys.has('http')).toBe(true)
     expect(keys.has('dm')).toBe(true)
-    // fan_out (T15) 推迟到后续 batch
-    expect(keys.has('fan_out')).toBe(false)
+    expect(keys.has('db_update')).toBe(true)
+    expect(keys.has('sql_query')).toBe(true)
+    expect(keys.has('file_read')).toBe(true)
+    expect(keys.has('template_render')).toBe(true)
+    // T15 fan_out 现已启用
+    expect(keys.has('fan_out')).toBe(true)
+    expect(keys.size).toBe(12)
   })
 })
