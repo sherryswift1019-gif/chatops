@@ -16,6 +16,12 @@ export interface Capability {
   systemPrompt: string | null
   defaultSystemPrompt: string | null
   defaultPipelineId: number | null
+  // ── phase 1 新增（spec §3.4 / plan §B） ─────────────────────────
+  maxTurns: number
+  timeoutMs: number
+  requiresWorktree: boolean
+  requiresDeployLock: boolean
+  // ───────────────────────────────────────────────────────────────
   updatedAt: Date | null
   createdAt: Date
 }
@@ -35,6 +41,10 @@ function mapRow(r: Record<string, unknown>): Capability {
     systemPrompt: (r.system_prompt ?? null) as string | null,
     defaultSystemPrompt: (r.default_system_prompt ?? null) as string | null,
     defaultPipelineId: (r.default_pipeline_id ?? null) as number | null,
+    maxTurns: (r.max_turns ?? 30) as number,
+    timeoutMs: (r.timeout_ms ?? 1200000) as number,
+    requiresWorktree: (r.requires_worktree ?? false) as boolean,
+    requiresDeployLock: (r.requires_deploy_lock ?? false) as boolean,
     updatedAt: r.updated_at as Date | null,
     createdAt: r.created_at as Date,
   }

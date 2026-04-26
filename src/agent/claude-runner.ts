@@ -469,9 +469,8 @@ export class ClaudeRunner {
 
       this.clearSession(userId)
 
-      // 写操作加 deploy lock
-      const writeCapabilities = new Set(['deploy', 'rollback', 'restart'])
-      const needsLock = writeCapabilities.has(intent.capability) && intent.project && intent.env
+      // 写操作加 deploy lock —— 是否需要由 capability.requiresDeployLock 决定（phase 1 起从 DB 读）
+      const needsLock = capability.requiresDeployLock && intent.project && intent.env
       let lockInfo: { project: string; env: string } | undefined
 
       if (needsLock) {
@@ -644,11 +643,10 @@ ${intentRules}
       }
     }
 
-    // 需要代码访问的 capability，自动创建 worktree
-    const CODE_CAPABILITIES = ['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3']
+    // 需要代码访问的 capability，自动创建 worktree（phase 1 起从 DB 读）
     let worktree: Worktree | null = null
     console.log(`[Runner] worktree check: capability=${capability?.key}, productLineId=${opts.productLineId}`)
-    if (capability && CODE_CAPABILITIES.includes(capability.key) && opts.productLineId) {
+    if (capability?.requiresWorktree && opts.productLineId) {
       try {
         const knowledgeRepo = await getByProductLineId(opts.productLineId)
         if (knowledgeRepo) {
@@ -693,6 +691,9 @@ ${intentRules}
         prompt: prompt + contextNote,
         appendSystemPrompt: systemPrompt,
         ...(existingSessionId ? { resume: existingSessionId } : {}),
+        // phase 1: 按 capability 覆盖 Porygon defaults，让单条 capability
+        // 可以独立配置（如 analyze_bug 长 timeout / view_logs 短 maxTurns）
+        ...(capability ? { maxTurns: capability.maxTurns, timeoutMs: capability.timeoutMs } : {}),
         mcpServers: {
           'chatops-tools': {
             command: 'node',

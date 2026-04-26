@@ -151,6 +151,11 @@ const SCHEMA_FILES = [
   // 后续 v31+ schema 遵循同样规则：纯 DDL 或"全新表 + 所有测试都期望存在
   // 的 catalog seed"才能加进 SCHEMA_FILES。
   'schema-v30.sql',
+  // v31 (capabilities 4 字段): 纯 ALTER TABLE ADD + 对已有行的 UPDATE backfill。
+  // 不引入新 capability 行,不影响其它 fixture。所有依赖 capabilities 表
+  // 4 字段的测试都期望 deploy/rollback/restart 有 deploy lock,
+  // analyze_bug + fix_bug_l1/l2/l3 有 worktree,其余 capability neither。
+  'schema-v31.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
