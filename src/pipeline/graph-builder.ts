@@ -649,7 +649,7 @@ export function buildGraphFromPipeline(
     switch (node.stageType) {
       case 'script':
         builder = builder.addNode(name, buildScriptNode(node, i, stageContext, hooks)); break
-      case 'capability':
+      case 'llm_agent':
         builder = builder.addNode(name, buildCapabilityNode(node, i, stageContext, hooks, triggerParams)); break
       case 'approval':
         builder = builder.addNode(name, buildApprovalNode(node, i, triggerParams)); break

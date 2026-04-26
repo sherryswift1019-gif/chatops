@@ -1,4 +1,5 @@
 import type { PipelineGraph } from './types.js'
+import { parseExpression } from './expressions.js'
 
 export interface ValidationResult {
   ok: boolean
@@ -11,6 +12,9 @@ export interface ValidationResult {
  *   - 所有 edge.source/target 指向已存在节点
  *   - 无 cycle（DFS 三色标记）
  *   - condition.kind === 'expression' 时 expression 非空
+ *   - fan_out 节点 params.body 必须非空数组
+ *   - retry_when / shortCircuitWhen 表达式语法预解析（parseExpression 可解析）
+ *   - {{steps.<id>.output...}} 引用必须指向自己的祖先节点
  * 允许：空图；多个不连通子图（画布编辑态）。
  */
 export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
@@ -50,10 +54,79 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
     color.set(v, 2)
     return false
   }
+  let hasCycle = false
   for (const id of nodeIds) {
     if (color.get(id) === 0 && dfs(id)) {
       errors.push('graph contains cycle')
+      hasCycle = true
       break
+    }
+  }
+
+  // ---- Phase 3 T16 扩展 ---------------------------------------------------
+  // 1) fan_out body 必须非空
+  // 2) retry_when / shortCircuitWhen 表达式语法预解析
+  // 3) {{steps.<id>.output...}} 引用必须是当前节点的祖先
+  for (const n of graph.nodes) {
+    // 1) fan_out body 非空
+    // n.stageType 静态 union 暂不含 'fan_out'(StageDefinition.stageType 未扩);
+    // 实际 graph 数据可能携带 fan_out（schema-v34 已注册），松散比较即可。
+    const stageTypeStr = n.stageType as string
+    if (stageTypeStr === 'fan_out') {
+      const params = (n as unknown as { params?: unknown }).params as
+        | Record<string, unknown>
+        | undefined
+      const body = params?.body
+      if (!Array.isArray(body) || body.length === 0) {
+        errors.push(`fan_out node "${n.id}" must have non-empty body array`)
+      }
+    }
+
+    // 2a) retry_when（位于节点顶层，名字未必在 PipelineNode 类型上声明，松散读取）
+    const retryWhen = (n as unknown as { retryWhen?: unknown }).retryWhen
+    if (typeof retryWhen === 'string' && retryWhen.trim()) {
+      try {
+        parseExpression(retryWhen)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        errors.push(`node "${n.id}" retry_when 语法错误: ${msg}`)
+      }
+    }
+
+    // 2b) shortCircuitWhen（位于 params 内）
+    const params = (n as unknown as { params?: unknown }).params as
+      | Record<string, unknown>
+      | undefined
+    const shortCircuitWhen = params?.shortCircuitWhen
+    if (typeof shortCircuitWhen === 'string' && shortCircuitWhen.trim()) {
+      try {
+        parseExpression(shortCircuitWhen)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        errors.push(`node "${n.id}" shortCircuitWhen 语法错误: ${msg}`)
+      }
+    }
+  }
+
+  // 3) steps 引用 DFS 校验 —— 仅在无 cycle 时做（cycle 下 ancestors 无意义）
+  if (!hasCycle) {
+    const ancestors = computeAncestors(graph)
+    for (const n of graph.nodes) {
+      // 收集本节点所有 string param 中出现的 steps 引用
+      const params = (n as unknown as { params?: unknown }).params
+      const retryWhen = (n as unknown as { retryWhen?: unknown }).retryWhen
+      const refsInParams = findStepReferences(params)
+      const refsInRetry = typeof retryWhen === 'string' ? findStepReferences(retryWhen) : []
+      const refs = new Set([...refsInParams, ...refsInRetry])
+      const allowed = ancestors.get(n.id) ?? new Set<string>()
+      for (const ref of refs) {
+        if (ref === n.id) continue // 自引用极不可能,但容错跳过
+        if (!nodeIds.has(ref)) {
+          errors.push(`node "${n.id}" references unknown step "${ref}"`)
+        } else if (!allowed.has(ref)) {
+          errors.push(`node "${n.id}" references non-ancestor step "${ref}"`)
+        }
+      }
     }
   }
 
@@ -63,7 +136,7 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
 function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
   const prefix = `node ${n.id} (stageType=${n.stageType})`
   switch (n.stageType) {
-    case 'capability':
+    case 'llm_agent':
       if (!n.capabilityKey || !n.capabilityKey.trim()) {
         return `${prefix}: capabilityKey is required`
       }
@@ -97,4 +170,48 @@ function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
     default:
       return null
   }
+}
+
+/**
+ * 递归扫描任意值，找出形如 `{{steps.<id>.` 的引用 id。
+ */
+function findStepReferences(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return [...value.matchAll(/\{\{\s*steps\.([a-zA-Z0-9_-]+)\./g)].map((m) => m[1])
+  }
+  if (Array.isArray(value)) return value.flatMap(findStepReferences)
+  if (typeof value === 'object' && value !== null) {
+    return Object.values(value as Record<string, unknown>).flatMap(findStepReferences)
+  }
+  return []
+}
+
+/**
+ * 对每个节点计算其所有可达的祖先节点集合（基于 graph.edges 反向 DFS）。
+ */
+function computeAncestors(graph: PipelineGraph): Map<string, Set<string>> {
+  // reverse adjacency: node → list of parents
+  const parents = new Map<string, string[]>()
+  for (const e of graph.edges) {
+    const arr = parents.get(e.target) ?? []
+    arr.push(e.source)
+    parents.set(e.target, arr)
+  }
+  const cache = new Map<string, Set<string>>()
+  function visit(id: string, stack: Set<string>): Set<string> {
+    const cached = cache.get(id)
+    if (cached) return cached
+    if (stack.has(id)) return new Set() // cycle guard
+    stack.add(id)
+    const acc = new Set<string>()
+    for (const p of parents.get(id) ?? []) {
+      acc.add(p)
+      for (const a of visit(p, stack)) acc.add(a)
+    }
+    stack.delete(id)
+    cache.set(id, acc)
+    return acc
+  }
+  for (const n of graph.nodes) visit(n.id, new Set())
+  return cache
 }

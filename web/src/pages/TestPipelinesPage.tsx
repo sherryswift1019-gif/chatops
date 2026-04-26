@@ -88,9 +88,9 @@ export default function TestPipelinesPage() {
     const stages = (r.stages as any[]).map((s: any) => ({
       ...s,
       stageType: s.stageType ?? 'script',  // backward compat
-      // 加载时反向映射：capability stage 把 capabilityKey 显示到 script 字段的 textarea 里
+      // 加载时反向映射：llm_agent stage 把 capabilityKey 显示到 script 字段的 textarea 里
       // （UI 复用 script textarea，见 save 时 capabilityKey = (script).trim()）
-      script: s.stageType === 'capability'
+      script: s.stageType === 'llm_agent'
         ? (s.capabilityKey ?? '')
         : (s.script ?? s.params?.commands ?? s.params?.script ?? ''),
       targetRoles: s.targetRoles ?? [],
@@ -122,12 +122,12 @@ export default function TestPipelinesPage() {
         name: s.name,
         stageType: s.stageType ?? 'script',
         script: s.stageType === 'script' ? (s.script ?? '') : undefined,
-        // capability stage: 复用 script 字段承载 capabilityKey（UX 简化）；
+        // llm_agent stage: 复用 script 字段承载 capabilityKey（UX 简化）；
         // capabilityParams 对所有 bug 修复 capability 统一用 {reportId:'{{triggerParams.reportId}}'}，
         // 如未来出现需要额外 params 的 capability 再扩字段
-        capabilityKey: s.stageType === 'capability' ? (s.script ?? '').trim() : undefined,
+        capabilityKey: s.stageType === 'llm_agent' ? (s.script ?? '').trim() : undefined,
         capabilityParams:
-          s.stageType === 'capability'
+          s.stageType === 'llm_agent'
             ? (s.capabilityParams ?? { reportId: '{{triggerParams.reportId}}' })
             : undefined,
         approverIds: s.stageType === 'approval' ? (s.approverIds ?? []) : undefined,
@@ -382,7 +382,7 @@ export default function TestPipelinesPage() {
                       <Form.Item {...rest} name={[name, 'stageType']} label="类型" rules={[{ required: true }]}>
                         <Select style={{ width: 130 }} options={[
                           { value: 'script', label: '运行脚本' },
-                          { value: 'capability', label: 'AI 能力' },
+                          { value: 'llm_agent', label: 'LLM Agent' },
                           { value: 'approval', label: '人员审批' },
                         ]} />
                       </Form.Item>
@@ -509,11 +509,11 @@ function StageTypeFields({ stageIndex, form, variableCatalog, dingtalkUsers }: {
     )
   }
 
-  const isCapability = stageType === 'capability'
+  const isCapability = stageType === 'llm_agent'
 
-  // script / capability 共用 textarea
+  // script / llm_agent 共用 textarea
   // - script 类型：shell 脚本
-  // - capability 类型：capabilityKey（后端将 script 字段的 trim() 值当 capabilityKey，
+  // - llm_agent 类型：capabilityKey（后端将 script 字段的 trim() 值当 capabilityKey，
   //   capabilityParams 自动补 {reportId: '{{triggerParams.reportId}}'}）
   return (
     <div style={{ marginTop: 8 }}>

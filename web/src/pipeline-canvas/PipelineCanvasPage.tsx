@@ -35,7 +35,7 @@ const defaultStageFields = (type: StageType, id: string): StageFields => ({
   onFailure: 'stop',
   ...(type === 'script' ? { script: '' } : {}),
   ...(type === 'approval' ? { approverIds: [], approvalDescription: '' } : {}),
-  ...(type === 'capability' ? { capabilityKey: '' } : {}),
+  ...(type === 'llm_agent' ? { capabilityKey: '' } : {}),
   ...(type === 'wait_webhook' ? { webhookTag: '' } : {}),
   ...(type === 'im_input'
     ? {
@@ -46,15 +46,26 @@ const defaultStageFields = (type: StageType, id: string): StageFields => ({
         },
       }
     : {}),
+  // phase 3 7 新节点共用 params 容器；具体字段由 NodeInspector 按 paramSchema 渲染
+  ...(['http', 'dm', 'db_update', 'sql_query', 'file_read', 'template_render', 'fan_out'].includes(type)
+    ? { params: {} }
+    : {}),
 })
 
 function stageTypeLabel(t: StageType): string {
   switch (t) {
     case 'script': return '脚本'
     case 'approval': return '审批'
-    case 'capability': return 'Capability'
+    case 'llm_agent': return 'LLM Agent'
     case 'wait_webhook': return 'Webhook'
     case 'im_input': return 'IM 输入'
+    case 'http': return 'HTTP'
+    case 'dm': return 'IM 私聊'
+    case 'db_update': return 'DB 写入'
+    case 'sql_query': return 'DB 查询'
+    case 'file_read': return '文件读取'
+    case 'template_render': return '模板渲染'
+    case 'fan_out': return '数组扇出'
   }
 }
 
@@ -64,7 +75,7 @@ function firstGraphIssue(nodes: ReadonlyArray<{ id: string; data: StageFields }>
   for (const n of nodes) {
     const d = n.data
     if (!d.name?.trim()) return { nodeId: n.id, message: '节点缺少名称' }
-    if (d.stageType === 'capability' && !d.capabilityKey?.trim()) {
+    if (d.stageType === 'llm_agent' && !d.capabilityKey?.trim()) {
       return { nodeId: n.id, message: `节点 ${d.name}: 未选择 Capability` }
     }
     if (d.stageType === 'wait_webhook' && !d.webhookTag?.trim()) {

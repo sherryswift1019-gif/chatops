@@ -18,8 +18,12 @@ export interface ExecutionContext {
   steps: Record<string, { status: 'success' | 'failed' | 'skipped'; output: Record<string, unknown> }>
   /** fan_out 注入的局部变量（阶段 3 才会非空） */
   scopes?: Record<string, Record<string, unknown>>
-  /** 当前节点的目标服务器（script stage 等用） */
-  server?: { host: string; port: number; username: string }
+  /**
+   * 当前节点的目标服务器（script / file_read 等远程操作类节点使用）。
+   * password 是 SSH 凭据；resolveContext 时由调用方填充，executor 内部不应做凭据查询。
+   * Phase 3：单 server 模型——fan_out / 多 role 由调度器在外层展开后逐一调 executor。
+   */
+  server?: { host: string; port: number; username: string; password?: string }
   /** 透传给 capability stage 的 TaskContext */
   taskContext?: TaskContext
 }

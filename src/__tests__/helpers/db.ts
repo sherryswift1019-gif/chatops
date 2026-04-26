@@ -163,6 +163,18 @@ const SCHEMA_FILES = [
   // v33 (capabilities cleanup): DROP 5 个 legacy 字段, 纯 ALTER, 无新行无新表。
   // 测试期望 capabilities 表只剩 LLM agent 核心字段 (phase 2 cleanup 完成后)。
   'schema-v33.sql',
+  // v34 (pipeline_node_types 7 新行): 纯 INSERT, ON CONFLICT DO NOTHING, 不影响其它 fixture。
+  // 默认 enabled=FALSE; phase 3 后续 task 启用各类型时通过 schema-v3X 或 admin SQL UPDATE。
+  'schema-v34.sql',
+  // v35 (T9-T14 enable 6 new simple node types): 纯 UPDATE pipeline_node_types
+  // SET enabled=TRUE。每个 executor commit 后追加一行 UPDATE 并 bump 末尾断言。
+  // T15 fan_out 推迟,本文件最终 6 行 enabled = 11(5 phase-0 + 6 simple)。
+  'schema-v35.sql',
+  // v36 (T17 capability → llm_agent rename): pipeline_node_types row 改名
+  // + test_pipelines.graph / .stages JSONB 节点 stageType 改名。
+  // 测试 fixture 里若仍用 'capability' 字面量需要 phase 3 后续清理 —— 但 SQL 迁移
+  // 是幂等 + WHERE EXISTS 守门,空表上是 no-op。
+  'schema-v36.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

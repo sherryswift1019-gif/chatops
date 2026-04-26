@@ -11,7 +11,7 @@ export interface ImInputConfig {
 
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input'
+  stageType: 'script' | 'approval' | 'llm_agent' | 'wait_webhook' | 'im_input'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
@@ -41,7 +41,7 @@ export interface StageDefinition {
   imInputConfig?: ImInputConfig
 }
 
-export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input' {
+export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'llm_agent' | 'wait_webhook' | 'im_input' {
   return stage.stageType ?? 'script'
 }
 
