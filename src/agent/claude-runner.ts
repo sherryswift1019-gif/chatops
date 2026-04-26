@@ -4,7 +4,9 @@ import { getTool, getAllTools, getPermittedTools } from './tools/index.js'
 import type { AgentTool, TaskContext, Role } from './tools/types.js'
 import { getRecentTasks } from '../db/repositories/tasks.js'
 import { listCapabilities, getCapabilityByKey, type Capability } from '../db/repositories/capabilities.js'
-import { checkCapabilityAccess, getProductLineCapabilities } from '../db/repositories/product-line-capabilities.js'
+import { getProductLineCapabilities } from '../db/repositories/product-line-capabilities.js'
+import { listIMTriggers, getIMTrigger } from '../db/repositories/im-triggers.js'
+import { checkIMTriggerAccess } from '../db/repositories/product-line-im-triggers.js'
 import { filterImTriggerableCapabilities } from './runner-greet-filter.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
@@ -340,14 +342,18 @@ export class ClaudeRunner {
         return
       }
 
-      // 4b: 已有产线的用户检查 capability-level 权限
+      // 4b: 已有产线的用户检查 IM 触发器权限
+      // phase 2 起,IM 入口的允许角色 / trigger_sources 配置从 product_line_im_triggers 读取,
+      // 不再走 product_line_capabilities。intent.capability 与 im_trigger.key 同名(数据迁移保证)。
       if (productLineId) {
         const envName = intent.env ?? '*'
-        const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole, 'im')
+        const access = await checkIMTriggerAccess(productLineId, intent.capability, envName, userRole, 'im')
         if (!access.allowed) {
+          const imTrigger = await getIMTrigger(intent.capability)
+          const triggerName = imTrigger?.displayName ?? capability.displayName
           const text = access.reason === 'source-blocked'
-            ? `⛔ 能力「${capability.displayName}」在当前产线已禁止通过 IM 触发，请到管理后台执行。`
-            : `⛔ 无法执行「${capability.displayName}」：${access.reason}`
+            ? `⛔ 能力「${triggerName}」在当前产线已禁止通过 IM 触发，请到管理后台执行。`
+            : `⛔ 无法执行「${triggerName}」：${access.reason}`
           await adapter.sendMessage(
             { type: 'group', id: opts.groupId },
             { text }
@@ -556,8 +562,11 @@ export class ClaudeRunner {
   }
 
   private async detectIntent(prompt: string): Promise<DetectedIntent | null> {
-    const capabilities = await listCapabilities()
-    const capList = capabilities.map(c => `- ${c.key}: ${c.displayName} (${c.description})`).join('\n')
+    const triggers = await listIMTriggers()
+    const capList = triggers
+      .filter(t => t.enabled)
+      .map(t => `- ${t.key}: ${t.displayName}${t.intentHints ? ` (${t.intentHints})` : ''}`)
+      .join('\n')
 
     try {
       console.log('[Runner] Calling porygon.run for intent detection...')
