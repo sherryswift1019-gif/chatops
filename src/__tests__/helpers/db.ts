@@ -175,6 +175,12 @@ const SCHEMA_FILES = [
   // 测试 fixture 里若仍用 'capability' 字面量需要 phase 3 后续清理 —— 但 SQL 迁移
   // 是幂等 + WHERE EXISTS 守门,空表上是 no-op。
   'schema-v36.sql',
+  // v37 (phase 4 — internal_capability_pipelines + L1 handover seed):
+  // CREATE TABLE internal_capability_pipelines + 在 product_lines 非空时种入
+  // 'handover-internal' pipeline 并注册映射。空 product_lines 时 seed 自动 skip,
+  // 不产生 fixture 污染。需要映射的测试自行 bootstrap product_line + 重跑 v37
+  // (见 internal-capability-pipelines-repo.test.ts)。
+  'schema-v37.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
