@@ -61,11 +61,7 @@ SELECT
   display_name,
   description,
   default_pipeline_id,
-  COALESCE(
-    -- 如果 capabilities 行已有 examples(罕见),拷贝过来;否则用空数组(后续 manual fill)
-    CASE WHEN jsonb_typeof(NULLIF(playbook, 'null'::jsonb)) = 'array' THEN '[]'::jsonb ELSE '[]'::jsonb END,
-    '[]'::jsonb
-  ) AS examples,
+  '[]'::jsonb AS examples,  -- 默认空数组,后续从 manual fill 或 admin UI 编辑
   '{}'::jsonb AS failure_messages,
   is_system,
   TRUE  -- 默认 enabled
