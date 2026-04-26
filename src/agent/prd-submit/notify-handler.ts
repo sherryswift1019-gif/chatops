@@ -3,21 +3,21 @@
  *
  * 职责（PRD §3.4）：
  *   1. 汇总 prd_submit_events 判定场景：passed / blocked / failed
- *   2. authorEmail → dingtalk_users.user_id（函数式索引 LOWER(email) 命中）
+ *   2. 直接用 imUserId（钉钉 userId）发 DM —— 与 notify_bug 用 owner_id 同模式
  *   3. 构造消息（含 sourceBranch → targetBranch、mrFilePath、merge 状态提示）
  *   4. 通过 IM adapter.sendDirectMessage 发 DM，不走群
  *
  * 与 notify_bug 对齐点：
  *   - 同样用 PipelineApprovalManager 的私有 adapters[0] 字段 hack（与 §6 风险表一致）
  *   - 同样 Markdown 纯文本
+ *   - 同样直接拿 dingtalk userId（notify_bug 用 owner_id；这里用 imUserId）
  *
  * 与 notify_bug 差异点：
  *   - 不复用 shouldNotifyOwners 过滤；三种场景全发 DM
- *   - 接收人是**提交者本人**（非 project owner），从 dingtalk_users.email 反查
+ *   - 接收人是**提交者本人**（非 project owner）
  */
 import type { TriggerOptions, TriggerResult } from '../coordinator.js'
 import { registerCapabilityHandler } from '../coordinator.js'
-import { getPool } from '../../db/client.js'
 import {
   createEvent,
   findBySubmission,
@@ -29,7 +29,7 @@ import { extractErrorMessage } from './errors.js'
 
 interface Params {
   submissionId: string
-  authorEmail: string
+  imUserId: string
 }
 
 function readParams(opts: TriggerOptions): Params | { error: string } {
@@ -37,10 +37,10 @@ function readParams(opts: TriggerOptions): Params | { error: string } {
   if (!p.submissionId || typeof p.submissionId !== 'string') {
     return { error: '缺少 capabilityParams.submissionId' }
   }
-  if (!p.authorEmail || typeof p.authorEmail !== 'string') {
-    return { error: '缺少 capabilityParams.authorEmail' }
+  if (!p.imUserId || typeof p.imUserId !== 'string') {
+    return { error: '缺少 capabilityParams.imUserId' }
   }
-  return { submissionId: p.submissionId, authorEmail: p.authorEmail }
+  return { submissionId: p.submissionId, imUserId: p.imUserId }
 }
 
 type Scenario = 'prd_submit_passed' | 'prd_submit_blocked' | 'prd_submit_failed'
@@ -59,6 +59,8 @@ interface ScenarioContext {
   sourceBranch: string | null
   targetBranch: string | null
   mrFilePath: string | null
+  // 群回复路由（IM 入口写入；admin/手动触发场景为 null）
+  imGroupId: string | null
 }
 
 function decideScenario(events: PrdSubmitEvent[]): ScenarioContext {
@@ -118,6 +120,7 @@ function decideScenario(events: PrdSubmitEvent[]): ScenarioContext {
     sourceBranch: (entryData.sourceBranch as string | undefined) ?? null,
     targetBranch: (entryData.targetBranch as string | undefined) ?? null,
     mrFilePath: (entryData.mrFilePath as string | undefined) ?? null,
+    imGroupId: (entryData.imGroupId as string | undefined) ?? null,
   }
 }
 
@@ -174,18 +177,25 @@ function buildMessage(ctx: ScenarioContext): string {
   return [header, '', ...body, '', '请联系管理员或重新提交。'].join('\n')
 }
 
-async function lookupUserIdByEmail(email: string): Promise<string | null> {
-  const pool = getPool()
-  const { rows } = await pool.query(
-    `SELECT user_id FROM dingtalk_users WHERE LOWER(email) = LOWER($1) LIMIT 1`,
-    [email],
-  )
-  return rows[0]?.user_id ?? null
-}
-
 function getFirstAdapter(mgr: PipelineApprovalManager): IMAdapter | undefined {
   const adapters = (mgr as unknown as { adapters?: IMAdapter[] }).adapters
   return adapters?.[0]
+}
+
+type SendOutcome =
+  | { ok: true }
+  | { ok: false; error: string }
+  | { ok: false; skipped: true }
+
+async function trySend(label: string, fn: () => Promise<void>): Promise<SendOutcome> {
+  try {
+    await fn()
+    return { ok: true }
+  } catch (err) {
+    const msg = extractErrorMessage(err)
+    console.error(`[prd_notify] ${label} failed:`, msg)
+    return { ok: false, error: msg }
+  }
 }
 
 export async function handlePrdNotify(opts: TriggerOptions): Promise<TriggerResult> {
@@ -193,66 +203,63 @@ export async function handlePrdNotify(opts: TriggerOptions): Promise<TriggerResu
   if ('error' in parsed) {
     return { success: false, error: parsed.error }
   }
-  const { submissionId, authorEmail } = parsed
+  const { submissionId, imUserId } = parsed
 
   // 1. 汇总事件 + 场景判定
   const events = await findBySubmission(submissionId)
   const scenario = decideScenario(events)
   const projectPath = scenario.projectPath
 
-  // 2. email → user_id（函数式索引 LOWER(email) 命中）
-  const userId = await lookupUserIdByEmail(authorEmail)
-  if (!userId) {
-    await createEvent({
-      submissionId, projectPath,
-      code: 'prd_notify', status: 'failed',
-      data: { reason: 'no_recipient', authorEmail, messageKind: scenario.kind },
-    })
-    return { success: false, error: `no_recipient: email=${authorEmail} 未同步到 dingtalk_users` }
-  }
-
-  // 3. 构造消息
+  // 2. 构造消息（imUserId 直接用，不再反查）
   const text = buildMessage(scenario)
 
-  // 4. 发 DM（复用 notify_bug 私有字段 hack）
+  // 3. 拿 adapter（复用 notify_bug 私有字段 hack）
   const mgr = PipelineApprovalManager.getInstance()
   const adapter = getFirstAdapter(mgr)
   if (!adapter) {
     await createEvent({
       submissionId, projectPath,
       code: 'prd_notify', status: 'failed',
-      data: { reason: 'no_adapter', userId, messageKind: scenario.kind },
+      data: { reason: 'no_adapter', imUserId, messageKind: scenario.kind },
     })
     return { success: false, error: 'no_adapter' }
   }
 
-  try {
-    await adapter.sendDirectMessage(userId, { text })
-    await createEvent({
-      submissionId, projectPath,
-      code: 'prd_notify', status: 'success',
-      data: {
-        userId,
-        authorEmail,
-        messageKind: scenario.kind,
-        mrIid: scenario.mrIid,
-      },
-    })
-    return { success: true, output: `DM 已发送 (${scenario.kind}) → userId=${userId}` }
-  } catch (err) {
-    const msg = extractErrorMessage(err)
-    console.error('[prd_notify] DM failed:', msg)
-    await createEvent({
-      submissionId, projectPath,
-      code: 'prd_notify', status: 'failed',
-      data: {
-        userId,
-        authorEmail,
-        messageKind: scenario.kind,
-        error: msg,
-      },
-    })
-    return { success: false, error: msg }
+  // 4. 双发：DM + 群消息（独立 best-effort，至少一个成功就算 success）
+  const dm = await trySend('DM', () => adapter.sendDirectMessage(imUserId, { text }))
+  const group: SendOutcome = scenario.imGroupId
+    ? await trySend('group', () =>
+        adapter.sendMessage({ type: 'group', id: scenario.imGroupId! }, { text }))
+    : { ok: false, skipped: true }
+
+  const overallOk = dm.ok || group.ok
+
+  await createEvent({
+    submissionId, projectPath,
+    code: 'prd_notify',
+    status: overallOk ? 'success' : 'failed',
+    data: {
+      imUserId,
+      imGroupId: scenario.imGroupId,
+      messageKind: scenario.kind,
+      mrIid: scenario.mrIid,
+      dm,
+      group,
+    },
+  })
+
+  if (!overallOk) {
+    const dmErr = !dm.ok && 'error' in dm ? dm.error : 'unknown'
+    const groupErr = group.ok ? 'ok' : 'skipped' in group ? 'no_group_id' : group.error
+    return { success: false, error: `所有通道发送失败: dm=${dmErr}; group=${groupErr}` }
+  }
+
+  const sent: string[] = []
+  if (dm.ok) sent.push('DM')
+  if (group.ok) sent.push('group')
+  return {
+    success: true,
+    output: `通知已发送 (${scenario.kind}) → ${sent.join(' + ')} (imUserId=${imUserId})`,
   }
 }
 
