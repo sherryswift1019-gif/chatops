@@ -8,13 +8,17 @@
  *      - 新建：`Draft: {baseTitle}` 前缀创建，GitLab 自动 Draft
  *      - 复用：强制 PUT title 回 `Draft: {baseTitle}`，即使上次已 un-draft
  *
- * 跨 stage 数据：从 triggerParams 读 source/target/mrFilePath/title/authorEmail；
+ * 跨 stage 数据：从 triggerParams 读 source/target/mrFilePath/title/imUserId；
  * 事件 data 写 { mrIid, mrUrl, reused, baseTitle, wasForceDrafted, titleSource }，
  * 供 stage 2 review-handler 解除 Draft 时用（读 baseTitle）。
+ *
+ * MR description 水印（v29 起）：从邮箱改成钉钉中文姓名。
+ *   反查 dingtalk_users.name；缺失时回退到 `钉钉 userId={imUserId}`。
  */
 import type { TriggerOptions, TriggerResult } from '../coordinator.js'
 import { registerCapabilityHandler } from '../coordinator.js'
 import { createEvent } from '../../db/repositories/prd-submit-events.js'
+import { getDingTalkUserById } from '../../db/repositories/dingtalk-users.js'
 import { gitlabCreateMr } from '../mr/gitlab-mr.js'
 import { resolveMrTitle, findOpenMr, setMrDraft } from './mr-api.js'
 import { extractErrorMessage } from './errors.js'
@@ -26,14 +30,14 @@ interface Params {
   targetBranch: string
   mrFilePath: string
   title: string | null // null → 从 commit log 派生
-  authorEmail: string
+  imUserId: string
 }
 
 function readParams(opts: TriggerOptions): Params | { error: string } {
   const p = opts.extraParams ?? {}
   const required: (keyof Params)[] = [
     'submissionId', 'projectPath', 'sourceBranch', 'targetBranch',
-    'mrFilePath', 'authorEmail',
+    'mrFilePath', 'imUserId',
   ]
   for (const k of required) {
     if (!p[k] || typeof p[k] !== 'string') {
@@ -47,8 +51,15 @@ function readParams(opts: TriggerOptions): Params | { error: string } {
     targetBranch: p.targetBranch as string,
     mrFilePath: p.mrFilePath as string,
     title: (p.title as string | null | undefined) ?? null,
-    authorEmail: p.authorEmail as string,
+    imUserId: p.imUserId as string,
   }
+}
+
+/** 把 imUserId 换成"姓名（钉钉）"格式的水印；反查失败回退到 `钉钉 userId={imUserId}` */
+async function resolveSubmitterLabel(imUserId: string): Promise<string> {
+  const u = await getDingTalkUserById(imUserId).catch(() => null)
+  const name = u?.name?.trim()
+  return name ? `${name}（钉钉）` : `钉钉 userId=${imUserId}`
 }
 
 export async function handlePrdCreateMr(opts: TriggerOptions): Promise<TriggerResult> {
@@ -56,7 +67,7 @@ export async function handlePrdCreateMr(opts: TriggerOptions): Promise<TriggerRe
   if ('error' in parsed) {
     return { success: false, error: parsed.error }
   }
-  const { submissionId, projectPath, sourceBranch, targetBranch, mrFilePath, title, authorEmail } = parsed
+  const { submissionId, projectPath, sourceBranch, targetBranch, mrFilePath, title, imUserId } = parsed
 
   const slug = mrFilePath.replace(/^docs\/prds\//, '').replace(/\.md$/, '')
 
@@ -83,13 +94,14 @@ export async function handlePrdCreateMr(opts: TriggerOptions): Promise<TriggerRe
       console.log(`[prd_create_mr] 复用 existing MR !${mrIid} 并强制重置 Draft`)
     } else {
       // 新建（自带 Draft 前缀）
+      const submitterLabel = await resolveSubmitterLabel(imUserId)
       const mr = await gitlabCreateMr({
         projectPath,
         sourceBranch,
         targetBranch,
         title: `Draft: ${baseTitle}`,
         description: [
-          `提交者: ${authorEmail}`,
+          `提交者: ${submitterLabel}`,
           `文件: ${mrFilePath}`,
           `submissionId: ${submissionId}`,
         ].join('\n'),
