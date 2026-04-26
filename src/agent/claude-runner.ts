@@ -469,9 +469,8 @@ export class ClaudeRunner {
 
       this.clearSession(userId)
 
-      // 写操作加 deploy lock
-      const writeCapabilities = new Set(['deploy', 'rollback', 'restart'])
-      const needsLock = writeCapabilities.has(intent.capability) && intent.project && intent.env
+      // 写操作加 deploy lock —— 是否需要由 capability.requiresDeployLock 决定（phase 1 起从 DB 读）
+      const needsLock = capability.requiresDeployLock && intent.project && intent.env
       let lockInfo: { project: string; env: string } | undefined
 
       if (needsLock) {
