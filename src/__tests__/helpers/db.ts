@@ -163,6 +163,9 @@ const SCHEMA_FILES = [
   // v33 (capabilities cleanup): DROP 5 个 legacy 字段, 纯 ALTER, 无新行无新表。
   // 测试期望 capabilities 表只剩 LLM agent 核心字段 (phase 2 cleanup 完成后)。
   'schema-v33.sql',
+  // v34 (pipeline_node_types 7 新行): 纯 INSERT, ON CONFLICT DO NOTHING, 不影响其它 fixture。
+  // 默认 enabled=FALSE; phase 3 后续 task 启用各类型时通过 schema-v3X 或 admin SQL UPDATE。
+  'schema-v34.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
