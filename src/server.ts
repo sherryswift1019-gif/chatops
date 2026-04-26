@@ -20,6 +20,9 @@ import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
 import { initGraphRunnerDispatchers } from './pipeline/graph-runner.js'
 import { registerImSender } from './pipeline/im-notifier.js'
+import { assertRegistryConsistent } from './pipeline/node-types/registry.js'
+import { listEnabledNodeTypeKeys } from './db/repositories/pipeline-node-types.js'
+import './pipeline/node-types/index.js'  // 触发 5 种 node type 自注册
 
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
@@ -408,6 +411,11 @@ async function main(): Promise<void> {
   for (const adapter of adapters) {
     await adapter.start?.()
   }
+
+  // 节点类型注册一致性检查 —— DB enabled 行 ↔ 代码 register 必须一致
+  const dbEnabledKeys = await listEnabledNodeTypeKeys()
+  assertRegistryConsistent(dbEnabledKeys)
+  console.log(`[server] node-type registry verified: ${dbEnabledKeys.size} types`)
 
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
 
