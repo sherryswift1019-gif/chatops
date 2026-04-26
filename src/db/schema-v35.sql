@@ -21,14 +21,17 @@ UPDATE pipeline_node_types SET enabled = TRUE WHERE key = 'sql_query';
 -- T13: file_read
 UPDATE pipeline_node_types SET enabled = TRUE WHERE key = 'file_read';
 
--- 断言: enabled = 10 (5 phase-0 + T9-T13)
+-- T14: template_render
+UPDATE pipeline_node_types SET enabled = TRUE WHERE key = 'template_render';
+
+-- 断言: 11 行 enabled=TRUE (5 phase-0 + 6 phase-3 simple); fan_out 仍 FALSE
 DO $$
 DECLARE
   v_enabled INT;
 BEGIN
   SELECT COUNT(*) INTO v_enabled FROM pipeline_node_types WHERE enabled = TRUE;
-  IF v_enabled <> 10 THEN
-    RAISE EXCEPTION 'schema-v35: pipeline_node_types enabled 应有 10 行, 实际 %', v_enabled;
+  IF v_enabled <> 11 THEN
+    RAISE EXCEPTION 'schema-v35: pipeline_node_types enabled 应有 11 行, 实际 %', v_enabled;
   END IF;
-  RAISE NOTICE 'schema-v35: % enabled (T9-T13 + 5 phase-0; T14 后续启用)', v_enabled;
+  RAISE NOTICE 'schema-v35: % enabled (T9-T14 6 个 simple executor + 5 phase-0; fan_out 仍未启用)', v_enabled;
 END $$;

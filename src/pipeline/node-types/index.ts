@@ -10,6 +10,7 @@ import './dm.js'
 import './db-update.js'
 import './sql-query.js'
 import './file-read.js'
+import './template-render.js'
 
 export * from './registry.js'
 export * from './types.js'
