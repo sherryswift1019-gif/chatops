@@ -20,6 +20,9 @@ import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
 import { initGraphRunnerDispatchers } from './pipeline/graph-runner.js'
 import { registerImSender } from './pipeline/im-notifier.js'
+import { assertRegistryConsistent } from './pipeline/node-types/registry.js'
+import { listEnabledNodeTypeKeys } from './db/repositories/pipeline-node-types.js'
+import './pipeline/node-types/index.js'  // 触发 5 种 node type 自注册
 
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
@@ -138,6 +141,13 @@ async function main(): Promise<void> {
   const gate = new ApprovalGate(adapters)
   await gate.initialize()
   setApprovalGate(gate)
+
+  // 节点类型注册一致性检查 —— DB enabled 行 ↔ 代码 register 必须一致
+  // 必须在 adapter.start() 之前，避免在打开 DingTalk WebSocket / Feishu webhook
+  // 监听之后才发现注册漂移导致脏启动。
+  const dbEnabledKeys = await listEnabledNodeTypeKeys()
+  assertRegistryConsistent(dbEnabledKeys)
+  console.log(`[server] node-type registry verified: ${dbEnabledKeys.size} types`)
 
   // 注入钉钉 DM 通知回调（Review 完成后通知模块负责人）
   const primaryAdapter = adapters[0]
