@@ -13,6 +13,7 @@ import { registerToolPermissionRoutes } from './routes/tool-permissions.js'
 import { registerCapabilityRoutes } from './routes/capabilities.js'
 import { registerPipelineToolRoutes } from './routes/pipeline-tools.js'
 import { registerPipelineNodeTypeRoutes } from './routes/pipeline-node-types.js'
+import { registerIMTriggersRoutes } from './routes/im-triggers.js'
 import { registerAiRoutes } from './routes/ai.js'
 import { registerTestServerRoutes } from './routes/test-servers.js'
 import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
@@ -60,6 +61,7 @@ export async function adminPlugin(
   await registerCapabilityRoutes(app)
   await registerPipelineToolRoutes(app)
   await registerPipelineNodeTypeRoutes(app)
+  await registerIMTriggersRoutes(app)
   await registerTestServerRoutes(app)
   await registerTestPipelineRoutes(app)
   await registerTestRunRoutes(app)
