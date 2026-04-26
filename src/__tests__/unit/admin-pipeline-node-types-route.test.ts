@@ -1,22 +1,49 @@
-import { describe, it, expect } from 'vitest'
-import { listNodeTypes } from '../../db/repositories/pipeline-node-types.js'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import type { FastifyInstance } from 'fastify'
+import { buildAdminTestApp } from '../helpers/admin-app.js'
+import { registerPipelineNodeTypeRoutes } from '../../admin/routes/pipeline-node-types.js'
+import { getPool } from '../../db/client.js'
 
-describe('admin /pipeline-node-types data shape', () => {
-  it('returns 5 enabled types covering 3 categories', async () => {
-    const items = (await listNodeTypes()).filter(t => t.enabled)
-    expect(items).toHaveLength(5)
-    const byCategory = new Map<string, number>()
-    for (const t of items) byCategory.set(t.category, (byCategory.get(t.category) ?? 0) + 1)
-    expect(byCategory.get('general')).toBe(1)   // script
-    expect(byCategory.get('flow')).toBe(3)      // approval / wait_webhook / im_input
-    expect(byCategory.get('llm')).toBe(1)       // capability
+describe('GET /pipeline-node-types route — fastify-inject', () => {
+  let app: FastifyInstance
+
+  beforeAll(async () => {
+    app = await buildAdminTestApp(async (a) => {
+      await registerPipelineNodeTypeRoutes(a)
+    })
+  })
+  afterAll(async () => { await app.close() })
+
+  it('returns 200 with bare array of 5 enabled node types', async () => {
+    const res = await app.inject({ method: 'GET', url: '/pipeline-node-types' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(Array.isArray(body)).toBe(true)
+    expect(body).toHaveLength(5)
   })
 
-  it('paramSchema is parsed object on every type', async () => {
-    const items = await listNodeTypes()
-    for (const t of items) {
-      expect(typeof t.paramSchema).toBe('object')
-      expect(t.paramSchema).not.toBeNull()
+  it('disabled node types are filtered out', async () => {
+    // 临时把 script 标记 disabled
+    await getPool().query(`UPDATE pipeline_node_types SET enabled=false WHERE key='script'`)
+    try {
+      const res = await app.inject({ method: 'GET', url: '/pipeline-node-types' })
+      const body = res.json() as Array<{ key: string }>
+      expect(body.find(t => t.key === 'script')).toBeUndefined()
+      expect(body).toHaveLength(4)
+    } finally {
+      await getPool().query(`UPDATE pipeline_node_types SET enabled=true WHERE key='script'`)
+    }
+  })
+
+  it('each item exposes key/displayName/category/paramSchema/outputSchema', async () => {
+    const res = await app.inject({ method: 'GET', url: '/pipeline-node-types' })
+    const body = res.json() as Array<Record<string, unknown>>
+    for (const item of body) {
+      expect(item).toHaveProperty('key')
+      expect(item).toHaveProperty('displayName')
+      expect(item).toHaveProperty('category')
+      expect(typeof item.paramSchema).toBe('object')
+      expect(typeof item.outputSchema).toBe('object')
     }
   })
 })
