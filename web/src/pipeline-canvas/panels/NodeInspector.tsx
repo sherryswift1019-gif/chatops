@@ -1,4 +1,4 @@
-import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tag, Tooltip, Modal } from 'antd'
+import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tag, Tooltip, Modal, message } from 'antd'
 import { ExclamationCircleTwoTone } from '@ant-design/icons'
 import { useEffect, useState } from 'react'
 import type { StageNode, StageFields, ImInputConfig } from '../types'
@@ -81,7 +81,12 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
   const [nodeTypes, setNodeTypes] = useState<PipelineNodeType[]>([])
 
   useEffect(() => {
-    listPipelineNodeTypes().then(setNodeTypes).catch(console.error)
+    listPipelineNodeTypes()
+      .then(setNodeTypes)
+      .catch((err) => {
+        console.error(err)
+        message.error('节点类型列表加载失败，请刷新页面')
+      })
   }, [])
 
   useEffect(() => {
@@ -186,6 +191,13 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                 ))}
               </Select.OptGroup>
             ))}
+            {node.data?.stageType
+              && !nodeTypes.some(t => t.key === node.data.stageType)
+              && nodeTypes.length > 0 && (
+              <Select.Option value={node.data.stageType} key={`__stale_${node.data.stageType}`}>
+                <ExclamationCircleTwoTone twoToneColor="#faad14" /> {node.data.stageType}（已禁用）
+              </Select.Option>
+            )}
           </Select>
         </Form.Item>
         <Form.Item name="timeoutSeconds" label="超时(秒)">
