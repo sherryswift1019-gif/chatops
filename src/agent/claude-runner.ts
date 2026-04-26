@@ -439,8 +439,8 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 6: 审批拦截（代码级强制）
-      if (capability.needsApproval && !executionMode) {
+      // Step 6: 审批拦截 —— 完全由 approval_rules 决定:有匹配规则即走审批,无规则则自动通过
+      if (!executionMode) {
         const rules = await getApprovalRules()
         const router = new ApprovalRouter(rules)
         const envName = intent.env ?? '*'

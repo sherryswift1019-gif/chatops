@@ -138,10 +138,6 @@ export default function CapabilitiesPage() {
         return <Tag color={isCustom ? 'orange' : 'default'}>{isCustom ? '自定义' : '默认'}</Tag>
       },
     },
-    {
-      title: '需审批', dataIndex: 'needsApproval',
-      render: (v: boolean) => v ? <Tag color="red">是</Tag> : <Tag>否</Tag>,
-    },
     { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => new Date(v).toLocaleString() },
     {
       title: '操作', key: 'action',
@@ -186,9 +182,6 @@ export default function CapabilitiesPage() {
           </Form.Item>
           <Form.Item name="toolNames" label="关联工具 (逗号分隔)" getValueFromEvent={(e) => e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean)} getValueProps={(v) => ({ value: Array.isArray(v) ? v.join(', ') : v })}>
             <Input placeholder="如: deploy_tool, rollback_tool" />
-          </Form.Item>
-          <Form.Item name="needsApproval" label="需审批" valuePropName="checked" initialValue={false}>
-            <Switch checkedChildren="是" unCheckedChildren="否" />
           </Form.Item>
           <Form.Item
             name="defaultPipelineId"
