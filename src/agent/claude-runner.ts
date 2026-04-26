@@ -691,6 +691,9 @@ ${intentRules}
         prompt: prompt + contextNote,
         appendSystemPrompt: systemPrompt,
         ...(existingSessionId ? { resume: existingSessionId } : {}),
+        // phase 1: 按 capability 覆盖 Porygon defaults，让单条 capability
+        // 可以独立配置（如 analyze_bug 长 timeout / view_logs 短 maxTurns）
+        ...(capability ? { maxTurns: capability.maxTurns, timeoutMs: capability.timeoutMs } : {}),
         mcpServers: {
           'chatops-tools': {
             command: 'node',
