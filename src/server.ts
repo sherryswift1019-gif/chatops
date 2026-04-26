@@ -176,7 +176,7 @@ async function main(): Promise<void> {
     pendingApprovals.set(taskId, meta)
 
     await gate.request(
-      { taskId, action, env, description, initiatorName: meta.initiatorId, groupId: meta.groupId },
+      { taskId, imTriggerKey: action, env, description, initiatorName: meta.initiatorId, groupId: meta.groupId },
       async (tid, decision, approverId) => {
         const pending = pendingApprovals.get(tid)
         pendingApprovals.delete(tid)

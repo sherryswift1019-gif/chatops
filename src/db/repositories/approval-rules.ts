@@ -3,7 +3,7 @@ import { getPool } from '../client.js'
 export interface ApprovalRule {
   id: number
   productLineId: number | null
-  action: string
+  imTriggerKey: string  // schema-v32: action → im_trigger_key
   env: string
   primaryApprovers: string[]
   backupApprovers: string[]
@@ -15,7 +15,7 @@ function mapRow(r: Record<string, unknown>): ApprovalRule {
   return {
     id: r.id as number,
     productLineId: r.product_line_id as number | null,
-    action: r.action as string,
+    imTriggerKey: r.im_trigger_key as string,
     env: r.env as string,
     primaryApprovers: r.primary_approvers as string[],
     backupApprovers: r.backup_approvers as string[],
@@ -43,10 +43,10 @@ export async function insertApprovalRule(
   const pool = getPool()
   const { rows } = await pool.query(
     `INSERT INTO approval_rules
-       (product_line_id, action, env, primary_approvers, backup_approvers, primary_timeout_min, total_timeout_min)
+       (product_line_id, im_trigger_key, env, primary_approvers, backup_approvers, primary_timeout_min, total_timeout_min)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
     [
-      rule.productLineId ?? null, rule.action, rule.env,
+      rule.productLineId ?? null, rule.imTriggerKey, rule.env,
       JSON.stringify(rule.primaryApprovers), JSON.stringify(rule.backupApprovers),
       rule.primaryTimeoutMin, rule.totalTimeoutMin,
     ]
@@ -62,7 +62,7 @@ export async function updateApprovalRule(
   const { rows } = await pool.query(
     `UPDATE approval_rules SET
        product_line_id = COALESCE($2, product_line_id),
-       action = COALESCE($3, action),
+       im_trigger_key = COALESCE($3, im_trigger_key),
        env = COALESCE($4, env),
        primary_approvers = COALESCE($5, primary_approvers),
        backup_approvers = COALESCE($6, backup_approvers),
@@ -72,7 +72,7 @@ export async function updateApprovalRule(
     [
       id,
       data.productLineId ?? null,
-      data.action ?? null,
+      data.imTriggerKey ?? null,
       data.env ?? null,
       data.primaryApprovers ? JSON.stringify(data.primaryApprovers) : null,
       data.backupApprovers ? JSON.stringify(data.backupApprovers) : null,

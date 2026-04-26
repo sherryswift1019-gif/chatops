@@ -281,11 +281,11 @@ export async function registerSystemConfigRoutes(
         }
 
         // Approval rules
-        const rules = (pl.approvalRules ?? []) as Array<{ action: string; env: string; primaryApprovers: string[]; backupApprovers: string[]; primaryTimeoutMin: number; totalTimeoutMin: number }>
+        const rules = (pl.approvalRules ?? []) as Array<{ imTriggerKey: string; env: string; primaryApprovers: string[]; backupApprovers: string[]; primaryTimeoutMin: number; totalTimeoutMin: number }>
         for (const r of rules) {
           try {
             await insertApprovalRule({
-              productLineId: plId, action: r.action, env: r.env,
+              productLineId: plId, imTriggerKey: r.imTriggerKey, env: r.env,
               primaryApprovers: r.primaryApprovers, backupApprovers: r.backupApprovers,
               primaryTimeoutMin: r.primaryTimeoutMin ?? 10, totalTimeoutMin: r.totalTimeoutMin ?? 20,
             })

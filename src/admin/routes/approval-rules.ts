@@ -7,12 +7,12 @@ export async function registerApprovalRuleRoutes(app: FastifyInstance): Promise<
     return reply.send(await getApprovalRules(plId))
   })
 
-  app.post<{ Body: { productLineId?: number; action: string; env: string; primaryApprovers: string[]; backupApprovers: string[]; primaryTimeoutMin: number; totalTimeoutMin: number } }>(
+  app.post<{ Body: { productLineId?: number; imTriggerKey: string; env: string; primaryApprovers: string[]; backupApprovers: string[]; primaryTimeoutMin: number; totalTimeoutMin: number } }>(
     '/approval-rules', async (req, reply) => {
-      const { action, env, primaryApprovers, backupApprovers, primaryTimeoutMin, totalTimeoutMin, productLineId } = req.body
-      if (!action || !env) return reply.status(400).send({ error: 'action and env required' })
+      const { imTriggerKey, env, primaryApprovers, backupApprovers, primaryTimeoutMin, totalTimeoutMin, productLineId } = req.body
+      if (!imTriggerKey || !env) return reply.status(400).send({ error: 'imTriggerKey and env required' })
       const rule = await insertApprovalRule({
-        productLineId: productLineId ?? null, action, env,
+        productLineId: productLineId ?? null, imTriggerKey, env,
         primaryApprovers: primaryApprovers ?? [], backupApprovers: backupApprovers ?? [],
         primaryTimeoutMin: primaryTimeoutMin ?? 10, totalTimeoutMin: totalTimeoutMin ?? 20,
       })

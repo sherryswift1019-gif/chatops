@@ -156,6 +156,10 @@ const SCHEMA_FILES = [
   // 4 字段的测试都期望 deploy/rollback/restart 有 deploy lock,
   // analyze_bug + fix_bug_l1/l2/l3 有 worktree,其余 capability neither。
   'schema-v31.sql',
+  // v32 (im_triggers + product_line_im_triggers + approval_rules 改名):
+  // 新表 + ALTER + 数据迁移。所有依赖 IM 触发器的测试期望 im_triggers 至少有
+  // 入口类 capability 行数 (~5+)。同 v31 forward policy。
+  'schema-v32.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
