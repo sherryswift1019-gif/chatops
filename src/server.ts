@@ -19,7 +19,7 @@ import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
 import { initGraphRunnerDispatchers } from './pipeline/graph-runner.js'
-import { registerImSender } from './pipeline/im-notifier.js'
+import { registerImSender, registerImDmSender } from './pipeline/im-notifier.js'
 import { assertRegistryConsistent } from './pipeline/node-types/registry.js'
 import { listEnabledNodeTypeKeys } from './db/repositories/pipeline-node-types.js'
 import './pipeline/node-types/index.js'  // 触发 5 种 node type 自注册
@@ -161,6 +161,11 @@ async function main(): Promise<void> {
   for (const adapter of adapters) {
     registerImSender(adapter.platform, async (groupId, text) => {
       await adapter.sendMessage({ type: 'group', id: groupId }, { text })
+    })
+    // dm 节点 executor (T10) 走 DM 单独 registry。
+    registerImDmSender(adapter.platform, async (userId, text) => {
+      await adapter.sendDirectMessage(userId, { text })
+      return {}
     })
   }
 
