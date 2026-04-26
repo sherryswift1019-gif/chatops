@@ -743,100 +743,112 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
 
 function CapabilitiesTab({ productLineId }: { productLineId: number }) {
   const [capabilities, setCapabilities] = useState<Capability[]>([])
-  const [envs, setEnvs] = useState<Environment[]>([])
   const [plCaps, setPlCaps] = useState<ProductLineCapability[]>([])
   const [loading, setLoading] = useState(false)
-  const [editingCap, setEditingCap] = useState<Capability | null>(null)
-  const [editConfigs, setEditConfigs] = useState<Record<string, { enabled: boolean; allowedRoles: string[]; triggerSources: string[] }>>({})
-  const [saving, setSaving] = useState(false)
+  const [savingKey, setSavingKey] = useState<string | null>(null)
 
   useEffect(() => { loadData() }, [productLineId])
 
   async function loadData() {
     setLoading(true)
     try {
-      const [caps, environments, configs] = await Promise.all([
-        getCapabilities(), getEnvironments(), getProductLineCapabilities(productLineId),
+      const [caps, configs] = await Promise.all([
+        getCapabilities(), getProductLineCapabilities(productLineId),
       ])
-      setCapabilities(caps); setEnvs(environments); setPlCaps(configs)
+      setCapabilities(caps); setPlCaps(configs)
     } finally { setLoading(false) }
   }
 
-  // A 类：系统能力（非 pipeline_ 开头）
   const systemCaps = capabilities.filter(c => !c.key.startsWith('pipeline_'))
-  // C 类：流水线能力（pipeline_ 开头，自动生成）
   const pipelineCaps = capabilities.filter(c => c.key.startsWith('pipeline_'))
 
-  function openEdit(cap: Capability) {
-    setEditingCap(cap)
-    const configs: Record<string, { enabled: boolean; allowedRoles: string[]; triggerSources: string[] }> = {}
-    const capConfigs = plCaps.filter(c => c.capabilityKey === cap.key)
-    for (const c of capConfigs) {
-      configs[c.envName] = {
-        enabled: c.enabled,
-        allowedRoles: [...c.allowedRoles],
-        triggerSources: c.triggerSources ? [...c.triggerSources] : ['im', 'web'],
-      }
+  const DEFAULT_ROLES = ['developer', 'tester', 'ops', 'admin']
+
+  // 取该 cap 在本产线的"产线级"状态:优先 env_name='*';无 '*' 时汇总残留 per-env(任一 enabled / 任一 IM 即视为开)
+  function getCapState(capKey: string): { enabled: boolean; allowIm: boolean } {
+    const configs = plCaps.filter(c => c.capabilityKey === capKey)
+    if (configs.length === 0) return { enabled: false, allowIm: false }
+    const star = configs.find(c => c.envName === '*')
+    if (star) return { enabled: star.enabled, allowIm: star.triggerSources.includes('im') }
+    return {
+      enabled: configs.some(c => c.enabled),
+      allowIm: configs.some(c => c.triggerSources.includes('im')),
     }
-    setEditConfigs(configs)
   }
 
-  function handleConfigChange(envName: string, field: 'enabled' | 'allowedRoles' | 'triggerSources', value: unknown) {
-    setEditConfigs(prev => ({
-      ...prev,
-      [envName]: {
-        ...(prev[envName] ?? { enabled: true, allowedRoles: ['developer', 'tester', 'ops', 'admin'], triggerSources: ['im', 'web'] }),
-        [field]: value,
-      },
-    }))
-  }
-
-  async function handleSave() {
-    if (!editingCap) return
-    setSaving(true)
+  // 写入该 cap 的产线级配置(单条 env_name='*'),覆盖该 cap 所有原有 per-env 残留;其他 cap 的现有记录原样保留
+  async function updateCap(capKey: string, patch: { enabled?: boolean; allowIm?: boolean }) {
+    setSavingKey(capKey)
     try {
-      const otherConfigs = plCaps
-        .filter(c => c.capabilityKey !== editingCap.key)
+      const current = getCapState(capKey)
+      const enabled = patch.enabled !== undefined ? patch.enabled : current.enabled
+      const allowIm = patch.allowIm !== undefined ? patch.allowIm : current.allowIm
+      const triggerSources = allowIm ? ['im', 'web'] : ['web']
+
+      const otherCaps = plCaps
+        .filter(c => c.capabilityKey !== capKey)
         .map(c => ({
           capabilityKey: c.capabilityKey,
           envName: c.envName,
           enabled: c.enabled,
           allowedRoles: c.allowedRoles,
-          triggerSources: c.triggerSources ?? ['im', 'web'],
+          triggerSources: c.triggerSources,
         }))
 
-      const thisConfigs = Object.entries(editConfigs)
-        .filter(([_, v]) => v.enabled || v.allowedRoles.length > 0)
-        .map(([envName, v]) => ({
-          capabilityKey: editingCap.key,
-          envName,
-          enabled: v.enabled,
-          allowedRoles: v.allowedRoles,
-          triggerSources: v.triggerSources,
-        }))
+      const thisCap = {
+        capabilityKey: capKey,
+        envName: '*',
+        enabled,
+        allowedRoles: DEFAULT_ROLES,
+        triggerSources,
+      }
 
-      await setProductLineCapabilities(productLineId, [...otherConfigs, ...thisConfigs])
-      message.success('能力配置已保存')
-      setEditingCap(null)
+      await setProductLineCapabilities(productLineId, [...otherCaps, thisCap])
+      const verb = patch.enabled !== undefined
+        ? (enabled ? '已启用该能力' : '已停用该能力')
+        : (allowIm ? '已开启 IM 触发' : '已关闭 IM 触发')
+      message.success(verb)
       await loadData()
-    } catch { message.error('保存失败') }
-    finally { setSaving(false) }
+    } catch {
+      message.error('保存失败')
+    } finally {
+      setSavingKey(null)
+    }
   }
 
   const categoryColors: Record<string, string> = { query: 'blue', action: 'orange', admin: 'red', testing: 'purple' }
   const categoryLabels: Record<string, string> = { query: '查询', action: '操作', admin: '管理', testing: '测试' }
-  const roleOptions = [
-    { label: '开发', value: 'developer' },
-    { label: '测试', value: 'tester' },
-    { label: '运维', value: 'ops' },
-    { label: '管理员', value: 'admin' },
-  ]
 
-  function getConfigSummary(capKey: string): string {
-    const configs = plCaps.filter(c => c.capabilityKey === capKey)
-    if (configs.length === 0) return '未配置'
-    const enabledCount = configs.filter(c => c.enabled).length
-    return `已配置 ${configs.length} 条规则，${enabledCount} 条启用`
+  const enabledCol = {
+    title: '启用', key: 'enabled', width: 80,
+    render: (_: unknown, record: Capability) => {
+      const s = getCapState(record.key)
+      return (
+        <Switch
+          size="small"
+          checked={s.enabled}
+          loading={savingKey === record.key}
+          onChange={(v) => updateCap(record.key, { enabled: v })}
+        />
+      )
+    },
+  }
+
+  const imCol = {
+    title: 'IM 触发', key: 'allowIm', width: 90,
+    render: (_: unknown, record: Capability) => {
+      const s = getCapState(record.key)
+      return (
+        <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发,仍可通过管理后台执行">
+          <Switch
+            size="small"
+            checked={s.allowIm}
+            loading={savingKey === record.key}
+            onChange={(v) => updateCap(record.key, { allowIm: v })}
+          />
+        </Tooltip>
+      )
+    },
   }
 
   const systemColumns = [
@@ -845,25 +857,15 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     { title: '描述', dataIndex: 'description', ellipsis: true },
     { title: '分类', dataIndex: 'category',
       render: (v: string) => <Tag color={categoryColors[v]}>{categoryLabels[v] ?? v}</Tag> },
-    { title: '需审批', dataIndex: 'needsApproval',
-      render: (v: boolean) => v ? <Tag color="red">是</Tag> : <Tag>否</Tag> },
-    { title: '当前配置', key: 'config',
-      render: (_: unknown, record: Capability) => (
-        <span style={{ color: '#999' }}>{getConfigSummary(record.key)}</span>
-      ) },
-    { title: '操作', key: 'action',
-      render: (_: unknown, record: Capability) => <a onClick={() => openEdit(record)}>编辑配置</a> },
+    enabledCol,
+    imCol,
   ]
 
   const pipelineColumns = [
     { title: '流水线名称', dataIndex: 'displayName' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
-    { title: '当前配置', key: 'config',
-      render: (_: unknown, record: Capability) => (
-        <span style={{ color: '#999' }}>{getConfigSummary(record.key)}</span>
-      ) },
-    { title: '操作', key: 'action',
-      render: (_: unknown, record: Capability) => <a onClick={() => openEdit(record)}>编辑配置</a> },
+    enabledCol,
+    imCol,
   ]
 
   return (
@@ -877,94 +879,6 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
           <Table rowKey="id" columns={pipelineColumns} dataSource={pipelineCaps} loading={loading} pagination={false} size="middle" />
         </>
       )}
-
-      <Modal
-        title={editingCap ? `配置能力：${editingCap.displayName}` : ''}
-        open={!!editingCap}
-        onOk={handleSave}
-        onCancel={() => setEditingCap(null)}
-        confirmLoading={saving}
-        width={650}
-        destroyOnClose
-      >
-        {editingCap && (
-          <div>
-            <p style={{ color: '#666', marginBottom: 16 }}>
-              关联工具: {editingCap.toolNames.join(', ')}。为每个环境配置是否开放及允许角色。
-            </p>
-
-            <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
-                <span style={{ fontWeight: 500, width: 120 }}>* 全局</span>
-                <Switch
-                  checked={editConfigs['*']?.enabled ?? false}
-                  onChange={(v) => handleConfigChange('*', 'enabled', v)}
-                  checkedChildren="开" unCheckedChildren="关"
-                />
-                <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发，仍可通过管理后台执行">
-                  <span style={{ marginLeft: 12 }}>
-                    <span style={{ marginRight: 6, color: '#666' }}>允许 IM 触发</span>
-                    <Switch
-                      checked={editConfigs['*']?.triggerSources?.includes('im') ?? true}
-                      onChange={(v) => {
-                        const current = editConfigs['*']?.triggerSources ?? ['im', 'web']
-                        const next = v
-                          ? Array.from(new Set([...current, 'im']))
-                          : current.filter(s => s !== 'im')
-                        handleConfigChange('*', 'triggerSources', next.length > 0 ? next : ['web'])
-                      }}
-                      checkedChildren="IM" unCheckedChildren="IM"
-                    />
-                  </span>
-                </Tooltip>
-              </div>
-              {editConfigs['*']?.enabled && (
-                <Checkbox.Group
-                  options={roleOptions}
-                  value={editConfigs['*']?.allowedRoles ?? []}
-                  onChange={(v) => handleConfigChange('*', 'allowedRoles', v)}
-                />
-              )}
-            </div>
-
-            {envs.map(env => (
-              <div key={env.id} style={{ marginBottom: 12, padding: '8px 12px', background: '#fafafa', borderRadius: 4 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4, flexWrap: 'wrap' }}>
-                  <span style={{ fontWeight: 500, width: 120 }}>{env.displayName}（{env.name}）</span>
-                  <Switch
-                    checked={editConfigs[env.name]?.enabled ?? false}
-                    onChange={(v) => handleConfigChange(env.name, 'enabled', v)}
-                    checkedChildren="开" unCheckedChildren="关"
-                  />
-                  <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发，仍可通过管理后台执行">
-                    <span style={{ marginLeft: 12 }}>
-                      <span style={{ marginRight: 6, color: '#666' }}>允许 IM 触发</span>
-                      <Switch
-                        checked={editConfigs[env.name]?.triggerSources?.includes('im') ?? true}
-                        onChange={(v) => {
-                          const current = editConfigs[env.name]?.triggerSources ?? ['im', 'web']
-                          const next = v
-                            ? Array.from(new Set([...current, 'im']))
-                            : current.filter(s => s !== 'im')
-                          handleConfigChange(env.name, 'triggerSources', next.length > 0 ? next : ['web'])
-                        }}
-                        checkedChildren="IM" unCheckedChildren="IM"
-                      />
-                    </span>
-                  </Tooltip>
-                </div>
-                {editConfigs[env.name]?.enabled && (
-                  <Checkbox.Group
-                    options={roleOptions}
-                    value={editConfigs[env.name]?.allowedRoles ?? []}
-                    onChange={(v) => handleConfigChange(env.name, 'allowedRoles', v)}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </Modal>
     </>
   )
 }
