@@ -16,6 +16,7 @@ import {
   BookOutlined,
   DashboardOutlined,
   FileTextOutlined,
+  MessageOutlined,
 } from '@ant-design/icons'
 import { me, logout, type MeResponse } from '../api/auth'
 
@@ -27,6 +28,7 @@ const PAGE_NAMES: Record<string, string> = {
   '/test-servers': '服务器管理',
   '/dingtalk-users': '组织成员',
   '/capabilities': '能力管理',
+  '/im-triggers': 'IM 触发器',
   '/test-pipelines': '流水线管理',
   '/test-runs': '执行记录',
   '/tools': '工具管理',
@@ -55,6 +57,7 @@ const menuItems = [
     label: '能力配置',
     children: [
       { key: '/capabilities', icon: <ThunderboltOutlined />, label: '能力管理' },
+      { key: '/im-triggers', icon: <MessageOutlined />, label: 'IM 触发器' },
       { key: '/test-pipelines', icon: <PartitionOutlined />, label: '流水线管理' },
       { key: '/test-runs', icon: <HistoryOutlined />, label: '执行记录' },
     ],
