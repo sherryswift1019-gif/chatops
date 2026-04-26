@@ -5,6 +5,7 @@ export interface DingTalkUser {
   name: string
   avatar: string
   department: string
+  email: string | null
   syncedAt: Date
 }
 
@@ -12,6 +13,7 @@ function mapRow(r: Record<string, unknown>): DingTalkUser {
   return {
     userId: r.user_id as string, name: r.name as string,
     avatar: r.avatar as string, department: r.department as string,
+    email: (r.email as string | null) ?? null,
     syncedAt: r.synced_at as Date,
   }
 }
@@ -31,14 +33,17 @@ export async function listDingTalkUsers(keyword?: string): Promise<DingTalkUser[
 }
 
 export async function upsertDingTalkUser(
-  data: Pick<DingTalkUser, 'userId' | 'name'> & Partial<Pick<DingTalkUser, 'avatar' | 'department'>>
+  data: Pick<DingTalkUser, 'userId' | 'name'> & Partial<Pick<DingTalkUser, 'avatar' | 'department'>> & { email?: string }
 ): Promise<void> {
   const pool = getPool()
   await pool.query(
-    `INSERT INTO dingtalk_users (user_id, name, avatar, department, synced_at)
-     VALUES ($1, $2, $3, $4, NOW())
-     ON CONFLICT (user_id) DO UPDATE SET name = $2, avatar = $3, department = $4, synced_at = NOW()`,
-    [data.userId, data.name, data.avatar ?? '', data.department ?? '']
+    `INSERT INTO dingtalk_users (user_id, name, avatar, department, email, synced_at)
+     VALUES ($1, $2, $3, $4, $5, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET
+       name = $2, avatar = $3, department = $4,
+       email = COALESCE($5, dingtalk_users.email),
+       synced_at = NOW()`,
+    [data.userId, data.name, data.avatar ?? '', data.department ?? '', data.email ?? null]
   )
 }
 

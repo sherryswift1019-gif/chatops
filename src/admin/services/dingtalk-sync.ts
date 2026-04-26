@@ -1,4 +1,5 @@
 import axios from 'axios'
+import pLimit from 'p-limit'
 import { getConfig } from '../../db/repositories/system-config.js'
 import { upsertDingTalkUser } from '../../db/repositories/dingtalk-users.js'
 
@@ -7,6 +8,15 @@ interface DingTalkUserInfo {
   name: string
   avatar: string
   dept_id_list?: number[]
+}
+
+// user/get returns more fields than user/list — we only need email here.
+// org_email = 企业邮箱（同步通讯录认证过的）；email = 个人邮箱（用户自填，可能空）。
+// 优先 org_email，回退 email。
+interface DingTalkUserDetail {
+  userid: string
+  org_email?: string
+  email?: string
 }
 
 async function getAccessToken(): Promise<string> {
@@ -69,27 +79,56 @@ async function getDepartmentUsers(token: string, deptId: number): Promise<DingTa
   return users
 }
 
-export async function syncDingTalkUsers(): Promise<{ synced: number }> {
+// 拉单个用户详情，仅为了拿 org_email/email。失败返回 null（不阻塞整个 sync）。
+// user/list 不会返回 email 字段，所以必须这一步。
+async function getUserEmail(token: string, userid: string): Promise<string | null> {
+  try {
+    const res = await axios.post<DingTalkApiError & { result?: DingTalkUserDetail }>(
+      'https://oapi.dingtalk.com/topapi/v2/user/get',
+      { userid, language: 'zh_CN' },
+      { params: { access_token: token } }
+    )
+    ensureOk(res.data, 'user/get')
+    const result = res.data.result
+    const email = (result?.org_email || result?.email || '').trim()
+    return email || null
+  } catch (err) {
+    console.warn(`[dingtalk-sync] user/get failed for ${userid}:`, err instanceof Error ? err.message : String(err))
+    return null
+  }
+}
+
+export async function syncDingTalkUsers(): Promise<{ synced: number; emails: number }> {
   const token = await getAccessToken()
   const deptIds = await getDepartmentIds(token)
 
-  const seen = new Set<string>()
-  let synced = 0
-
+  // 第一轮：列出所有部门下的用户（去重）
+  const seen = new Map<string, DingTalkUserInfo>()
   for (const deptId of deptIds) {
     const users = await getDepartmentUsers(token, deptId)
     for (const user of users) {
-      if (seen.has(user.userid)) continue
-      seen.add(user.userid)
+      if (!seen.has(user.userid)) seen.set(user.userid, user)
+    }
+  }
+
+  // 第二轮：逐人 user/get 拿 email，并发 5（钉钉 user/get QPS 上限 200，5 并发安全）
+  // 单点失败不阻塞 sync——COALESCE 保留 DB 已有值
+  const limit = pLimit(5)
+  let emails = 0
+  const upserts = Array.from(seen.values()).map((user) =>
+    limit(async () => {
+      const email = await getUserEmail(token, user.userid)
+      if (email) emails++
       await upsertDingTalkUser({
         userId: user.userid,
         name: user.name,
         avatar: user.avatar ?? '',
         department: String(user.dept_id_list?.[0] ?? ''),
+        email: email ?? undefined,
       })
-      synced++
-    }
-  }
+    })
+  )
+  await Promise.all(upserts)
 
-  return { synced }
+  return { synced: seen.size, emails }
 }
