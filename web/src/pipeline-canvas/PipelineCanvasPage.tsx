@@ -46,6 +46,10 @@ const defaultStageFields = (type: StageType, id: string): StageFields => ({
         },
       }
     : {}),
+  // phase 3 7 新节点共用 params 容器；具体字段由 NodeInspector 按 paramSchema 渲染
+  ...(['http', 'dm', 'db_update', 'sql_query', 'file_read', 'template_render', 'fan_out'].includes(type)
+    ? { params: {} }
+    : {}),
 })
 
 function stageTypeLabel(t: StageType): string {
@@ -55,6 +59,13 @@ function stageTypeLabel(t: StageType): string {
     case 'llm_agent': return 'LLM Agent'
     case 'wait_webhook': return 'Webhook'
     case 'im_input': return 'IM 输入'
+    case 'http': return 'HTTP'
+    case 'dm': return 'IM 私聊'
+    case 'db_update': return 'DB 写入'
+    case 'sql_query': return 'DB 查询'
+    case 'file_read': return '文件读取'
+    case 'template_render': return '模板渲染'
+    case 'fan_out': return '数组扇出'
   }
 }
 

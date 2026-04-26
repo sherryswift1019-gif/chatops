@@ -23,6 +23,14 @@ const addMenuItems: MenuProps['items'] = [
   { key: 'llm_agent', label: 'LLM Agent' },
   { key: 'wait_webhook', label: '等待 Webhook' },
   { key: 'im_input', label: 'IM 参数采集' },
+  { type: 'divider' },
+  { key: 'http', label: 'HTTP 调用' },
+  { key: 'dm', label: 'IM 私聊' },
+  { key: 'db_update', label: 'DB 写入' },
+  { key: 'sql_query', label: 'DB 查询' },
+  { key: 'file_read', label: '文件读取' },
+  { key: 'template_render', label: '模板渲染' },
+  { key: 'fan_out', label: '数组扇出' },
 ]
 
 export function CanvasToolbar(p: Props) {

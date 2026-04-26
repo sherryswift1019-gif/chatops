@@ -1,6 +1,25 @@
 import type { Node, Edge } from '@xyflow/react'
 
-export type StageType = 'script' | 'approval' | 'llm_agent' | 'wait_webhook' | 'im_input'
+export type StageType =
+  // phase 0 / pre-phase 3 五种 bespoke 节点（NodeInspector 有专属 UI）
+  | 'script'
+  | 'approval'
+  | 'llm_agent'
+  | 'wait_webhook'
+  | 'im_input'
+  // phase 3 新增 7 种（NodeInspector 走 JSON Schema 驱动的动态参数表单）
+  | 'http'
+  | 'dm'
+  | 'db_update'
+  | 'sql_query'
+  | 'file_read'
+  | 'template_render'
+  | 'fan_out'
+
+/** 这 5 个有 NodeInspector 专属硬编码 UI；其余走 paramSchema 动态表单 */
+export const BESPOKE_STAGE_TYPES: ReadonlySet<StageType> = new Set([
+  'script', 'approval', 'llm_agent', 'wait_webhook', 'im_input',
+])
 
 export interface ImInputConfig {
   prompt: string
@@ -18,6 +37,10 @@ export interface StageFields extends Record<string, unknown> {
   timeoutSeconds: number
   retryCount: number
   onFailure: 'stop' | 'continue'
+  // phase 3 高级字段（retry_when 表达式 + 重试间隔，由 graph-runner 顶层处理）
+  retryWhen?: string
+  retryDelayMs?: number
+  // bespoke 节点独占字段
   script?: string
   approverIds?: string[]
   approvalDescription?: string
@@ -25,6 +48,8 @@ export interface StageFields extends Record<string, unknown> {
   capabilityParams?: Record<string, unknown>
   webhookTag?: string
   imInputConfig?: ImInputConfig
+  // phase 3 新增 7 节点的统一参数容器（key 决定 schema）
+  params?: Record<string, unknown>
 }
 
 export type ConditionSpec =
