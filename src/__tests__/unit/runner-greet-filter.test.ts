@@ -9,6 +9,7 @@ function cap(key: string): Capability {
     toolNames: [], needsApproval: false, paramSchema: {}, playbook: [],
     isSystem: false, systemPrompt: null, defaultSystemPrompt: null,
     defaultPipelineId: null,
+    maxTurns: 30, timeoutMs: 1200000, requiresWorktree: false, requiresDeployLock: false,
     createdAt: new Date(), updatedAt: new Date(),
   } as Capability
 }
