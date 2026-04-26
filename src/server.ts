@@ -142,6 +142,13 @@ async function main(): Promise<void> {
   await gate.initialize()
   setApprovalGate(gate)
 
+  // 节点类型注册一致性检查 —— DB enabled 行 ↔ 代码 register 必须一致
+  // 必须在 adapter.start() 之前，避免在打开 DingTalk WebSocket / Feishu webhook
+  // 监听之后才发现注册漂移导致脏启动。
+  const dbEnabledKeys = await listEnabledNodeTypeKeys()
+  assertRegistryConsistent(dbEnabledKeys)
+  console.log(`[server] node-type registry verified: ${dbEnabledKeys.size} types`)
+
   // 注入钉钉 DM 通知回调（Review 完成后通知模块负责人）
   const primaryAdapter = adapters[0]
   if (primaryAdapter) {
@@ -411,11 +418,6 @@ async function main(): Promise<void> {
   for (const adapter of adapters) {
     await adapter.start?.()
   }
-
-  // 节点类型注册一致性检查 —— DB enabled 行 ↔ 代码 register 必须一致
-  const dbEnabledKeys = await listEnabledNodeTypeKeys()
-  assertRegistryConsistent(dbEnabledKeys)
-  console.log(`[server] node-type registry verified: ${dbEnabledKeys.size} types`)
 
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
 

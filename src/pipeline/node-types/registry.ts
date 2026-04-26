@@ -27,9 +27,11 @@ export function assertRegistryConsistent(dbEnabledKeys: Set<string>): void {
   const codeOnly = [...codeKeys].filter(k => !dbEnabledKeys.has(k))
   if (dbOnly.length || codeOnly.length) {
     const msg = [
-      'Node type registry mismatch:',
-      dbOnly.length ? `  DB only: ${dbOnly.join(', ')}` : '',
-      codeOnly.length ? `  Code only: ${codeOnly.join(', ')}` : '',
+      'Node type registry mismatch — DB and code disagree on enabled node types:',
+      dbOnly.length ? `  DB only (likely missing executor in src/pipeline/node-types/): ${dbOnly.join(', ')}` : '',
+      codeOnly.length ? `  Code only (likely missing migration; run \`pnpm migrate\`): ${codeOnly.join(', ')}` : '',
+      '',
+      'See docs/smoke-pipeline-node-types.md for diagnosis steps.',
     ].filter(Boolean).join('\n')
     throw new Error(msg)
   }
