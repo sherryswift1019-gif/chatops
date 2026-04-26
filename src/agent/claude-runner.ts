@@ -643,11 +643,10 @@ ${intentRules}
       }
     }
 
-    // 需要代码访问的 capability，自动创建 worktree
-    const CODE_CAPABILITIES = ['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3']
+    // 需要代码访问的 capability，自动创建 worktree（phase 1 起从 DB 读）
     let worktree: Worktree | null = null
     console.log(`[Runner] worktree check: capability=${capability?.key}, productLineId=${opts.productLineId}`)
-    if (capability && CODE_CAPABILITIES.includes(capability.key) && opts.productLineId) {
+    if (capability?.requiresWorktree && opts.productLineId) {
       try {
         const knowledgeRepo = await getByProductLineId(opts.productLineId)
         if (knowledgeRepo) {
