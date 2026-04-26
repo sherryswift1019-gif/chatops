@@ -12,14 +12,17 @@ UPDATE pipeline_node_types SET enabled = TRUE WHERE key = 'http';
 -- T10: dm
 UPDATE pipeline_node_types SET enabled = TRUE WHERE key = 'dm';
 
--- 断言: enabled = 7 (5 phase-0 + T9 http + T10 dm)
+-- T11: db_update
+UPDATE pipeline_node_types SET enabled = TRUE WHERE key = 'db_update';
+
+-- 断言: enabled = 8 (5 phase-0 + T9 + T10 + T11)
 DO $$
 DECLARE
   v_enabled INT;
 BEGIN
   SELECT COUNT(*) INTO v_enabled FROM pipeline_node_types WHERE enabled = TRUE;
-  IF v_enabled <> 7 THEN
-    RAISE EXCEPTION 'schema-v35: pipeline_node_types enabled 应有 7 行, 实际 %', v_enabled;
+  IF v_enabled <> 8 THEN
+    RAISE EXCEPTION 'schema-v35: pipeline_node_types enabled 应有 8 行, 实际 %', v_enabled;
   END IF;
-  RAISE NOTICE 'schema-v35: % enabled (T9-T10 + 5 phase-0; T11-T14 后续启用)', v_enabled;
+  RAISE NOTICE 'schema-v35: % enabled (T9-T11 + 5 phase-0; T12-T14 后续启用)', v_enabled;
 END $$;
