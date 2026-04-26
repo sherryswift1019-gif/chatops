@@ -36,16 +36,16 @@ describe('capabilities repository — phase 1 extended fields', () => {
   it('view_logs / view_deployments 等查询类 neither 标志为 true', async () => {
     for (const key of ['view_logs', 'view_deployments']) {
       const c = await getCapabilityByKey(key)
-      if (!c) continue
-      expect(c.requiresWorktree, `${key}.requiresWorktree`).toBe(false)
-      expect(c.requiresDeployLock, `${key}.requiresDeployLock`).toBe(false)
+      expect(c, `capability "${key}" must be seeded`).not.toBeNull()
+      expect(c!.requiresWorktree, `${key}.requiresWorktree`).toBe(false)
+      expect(c!.requiresDeployLock, `${key}.requiresDeployLock`).toBe(false)
     }
   })
 
   it('默认 maxTurns=30 / timeoutMs=1200000 来自 schema DEFAULT', async () => {
     const c = await getCapabilityByKey('view_logs')
-    if (!c) return
-    expect(c.maxTurns).toBe(30)
-    expect(c.timeoutMs).toBe(1200000)
+    expect(c, 'view_logs must be seeded').not.toBeNull()
+    expect(c!.maxTurns).toBe(30)
+    expect(c!.timeoutMs).toBe(1200000)
   })
 })
