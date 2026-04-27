@@ -31,6 +31,7 @@ const addMenuItems: MenuProps['items'] = [
   { key: 'file_read', label: '文件读取' },
   { key: 'template_render', label: '模板渲染' },
   { key: 'fan_out', label: '数组扇出' },
+  { key: 'switch', label: 'Switch 分支' },
 ]
 
 export function CanvasToolbar(p: Props) {
