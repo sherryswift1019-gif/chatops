@@ -9,13 +9,17 @@
  *   1. 两级解析 IM 指令（正则 → Claude fallback）
  *   2. 解析 GitLab URL（projectPath + branch；跨 repo 断言）
  *   3. 校验 MR 文件路径（/^docs\/prds\/.+\.md$/）
- *   4. 反查 authorEmail（user_id → email）
+ *   4. 校验钉钉账号已 sync（dingtalk_users 行存在即可）
  *   5. 生成 submissionId
  *   6. 落 prd_submit_requested 事件
  *   7. 显式调 runPipeline(1776868085, {}, imTrigger({...triggerParams}))
  *
+ * 身份方案（v29 起）：
+ *   pipeline 跨 stage 透传 `imUserId`（钉钉 userId），与 notify_bug 用
+ *   `projects.owner_id` 直接发 DM 同模式。不再绕 dingtalk_users.email。
+ *
  * 返回值约定：
- *   - 用户侧问题（格式错/跨 repo/路径错/邮箱缺失）→ `{success:true, output:用户友好文案}`
+ *   - 用户侧问题（格式错/跨 repo/路径错/账号未 sync）→ `{success:true, output:用户友好文案}`
  *     这样 claude-runner 把文案作为群回复发出去；不算内部失败
  *   - pipeline 启动成功 → `{success:true, output:'PRD MR 提交中...'}`
  *   - 系统异常 → `{success:false, error}`
@@ -23,8 +27,8 @@
 import { randomUUID } from 'crypto'
 import type { TriggerOptions, TriggerResult } from '../coordinator.js'
 import { registerCapabilityHandler } from '../coordinator.js'
-import { getPool } from '../../db/client.js'
 import { createEvent } from '../../db/repositories/prd-submit-events.js'
+import { getDingTalkUserById } from '../../db/repositories/dingtalk-users.js'
 import { assertSameProject } from './url-parser.js'
 import { getClaudeExecutor } from '../claude-executor.js'
 
@@ -150,14 +154,9 @@ const USAGE_HINT = `格式不符，示例：
   MR文件=docs/prds/<slug>.md
   [标题="可选标题"]`
 
-async function lookupEmailByUserId(userId: string): Promise<string | null> {
-  const pool = getPool()
-  const { rows } = await pool.query(
-    `SELECT email FROM dingtalk_users WHERE user_id = $1`,
-    [userId],
-  )
-  const email = rows[0]?.email as string | null | undefined
-  return email && email.trim() ? email.trim() : null
+async function ensureDingTalkUserSynced(userId: string): Promise<boolean> {
+  const u = await getDingTalkUserById(userId)
+  return u !== null
 }
 
 function makeSubmissionId(slug: string): string {
@@ -204,12 +203,12 @@ export async function handlePrdSubmit(opts: TriggerOptions): Promise<TriggerResu
     }
   }
 
-  // Step 4: authorEmail 反查
-  const authorEmail = await lookupEmailByUserId(userId)
-  if (!authorEmail) {
+  // Step 4: 校验钉钉账号已同步（行存在即可，不再要求 email 列）
+  const synced = await ensureDingTalkUserSynced(userId)
+  if (!synced) {
     return {
       success: true,
-      output: `❌ 未识别到你的企业邮箱，请联系管理员同步通讯录（钉钉 userId=${userId}）`,
+      output: `❌ 未识别到你的钉钉账号，请联系管理员同步通讯录（钉钉 userId=${userId}）`,
     }
   }
 
@@ -224,7 +223,7 @@ export async function handlePrdSubmit(opts: TriggerOptions): Promise<TriggerResu
     code: 'prd_submit_requested',
     status: 'success',
     data: {
-      authorEmail,
+      imUserId: userId,
       imPlatform: opts.context.platform,
       imGroupId: opts.context.groupId,
       sourceBranch,
@@ -254,7 +253,7 @@ export async function handlePrdSubmit(opts: TriggerOptions): Promise<TriggerResu
           targetBranch,
           mrFilePath: parsed.mrFile,
           title: parsed.title, // null → stage 1 从 commit log 派生
-          authorEmail,
+          imUserId: userId,
         },
       }),
     )

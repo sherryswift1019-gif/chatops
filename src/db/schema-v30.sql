@@ -1,38 +1,89 @@
--- v30: pipeline_node_types 节点类型注册表
--- 节点类型元信息在 DB（display_name / param_schema / output_schema），
--- 执行器在代码（src/pipeline/node-types/<key>.ts 通过 registerNodeType() 注册）。
--- 启动时一致性检查：DB enabled 行 ↔ 代码 register 调用必须一致。
+-- ============================================================
+-- schema-v30: PRD 主动提交 MR Pipeline —— 身份从 email 切到 imUserId
+--   - 1776868085 这条 pipeline 的 stages JSONB / trigger_params 把
+--     `{{triggerParams.authorEmail}}` 全换成 `{{triggerParams.imUserId}}`
+--   - capabilities 表 prd_submit / prd_notify 的 description 同步更新文案
+--
+-- 注：原打算占用 v29，但 main 上 v29 已被 product_lines FK CASCADE 修复
+-- (commit 8e0b759) 抢先用掉，rebase 时把本 migration 让到 v30。
+--
+-- 设计动因（与 notify_bug 对齐）：
+--   notify_bug 直接拿 projects.owner_id（dingtalk userId）发 DM，不绕 email。
+--   prd_submit 入口本来就握有钉钉 userId（来自 IM 适配层），绕一圈 email 反查
+--   只是徒增依赖（必须先把 dingtalk_users.email 列填上才能用，且 GitLab 上
+--   MR description 显示邮箱不如显示中文姓名友好）。本 v30 切到 userId 路线。
+--
+-- 兼容性：
+--   - dingtalk_users.email 列 / 函数式索引保持不动（其他 feature 可能用）
+--   - 历史 prd_submit_events.data.authorEmail 字段不变（read-only 历史）
+--   - in-flight pipeline run 在部署窗口里：stage 3 因 imUserId 取不到 DM 失败，
+--     但 onFailure=continue 不影响 pipeline 整体收尾。低概率边缘情况。
+-- ============================================================
 
-CREATE TABLE IF NOT EXISTS pipeline_node_types (
-  key             TEXT PRIMARY KEY,
-  display_name    TEXT NOT NULL,
-  description     TEXT NOT NULL DEFAULT '',
-  category        TEXT NOT NULL CHECK (category IN ('general','flow','llm','specialized')),
-  param_schema    JSONB NOT NULL DEFAULT '{}',
-  output_schema   JSONB NOT NULL DEFAULT '{}',
-  is_system       BOOLEAN NOT NULL DEFAULT TRUE,
-  enabled         BOOLEAN NOT NULL DEFAULT TRUE,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- ─── 1. 更新 pipeline 1776868085 的 stages 和 trigger_params ──
 
--- 种子数据：现有 5 种 stage type 迁入注册表
--- v1 仅做"注册"，不改变 pipeline 引擎行为；阶段 3 才会扩展节点类型
-INSERT INTO pipeline_node_types (key, display_name, description, category, param_schema, output_schema)
-VALUES
-  ('script', 'SSH 脚本', 'SSH 远程脚本执行', 'general',
-    '{"type":"object","properties":{"commands":{"type":"string","format":"textarea"},"script":{"type":"string"},"targetServers":{"type":"array","items":{"type":"string"}}}}'::jsonb,
-    '{"type":"object","properties":{"exitCode":{"type":"number"},"stdout":{"type":"string"},"stderr":{"type":"string"}}}'::jsonb),
-  ('approval', '人工审批', '人工审批节点（IM 卡片或 Web 按钮）', 'flow',
-    '{"type":"object","properties":{"approverIds":{"type":"array","items":{"type":"string"}},"approverIdsResolver":{"type":"string"},"approvalDescription":{"type":"string","format":"textarea"}}}'::jsonb,
-    '{"type":"object","properties":{"decision":{"type":"string","enum":["approved","rejected","timeout"]},"approver":{"type":"string"},"comment":{"type":"string"}}}'::jsonb),
-  ('capability', 'LLM Agent (capability)', '触发某 capability 的 LLM agent 节点', 'llm',
-    '{"type":"object","properties":{"capabilityKey":{"type":"string","x-source":"capabilities"},"capabilityParams":{"type":"object"}}}'::jsonb,
-    '{"type":"object","properties":{"text":{"type":"string"}}}'::jsonb),
-  ('wait_webhook', '等待 webhook', '等外部 webhook 回调', 'flow',
-    '{"type":"object","properties":{"webhookTag":{"type":"string"},"timeoutSeconds":{"type":"number"}}}'::jsonb,
-    '{"type":"object","properties":{"payload":{"type":"object"}}}'::jsonb),
-  ('im_input', 'IM 参数采集', '通过 IM 多轮对话采集参数', 'flow',
-    '{"type":"object","properties":{"prompt":{"type":"string"},"paramSchema":{"type":"object"},"capabilityKey":{"type":"string","x-source":"capabilities"}}}'::jsonb,
-    '{"type":"object","properties":{"runtimeVars":{"type":"object"}}}'::jsonb)
-ON CONFLICT (key) DO NOTHING;
+UPDATE test_pipelines
+SET stages = '[
+    {
+      "name": "PRD create MR",
+      "stageType": "capability",
+      "capabilityKey": "prd_create_mr",
+      "timeoutSeconds": 300,
+      "retryCount": 1,
+      "onFailure": "continue",
+      "targetRoles": [],
+      "parallel": false,
+      "capabilityParams": {
+        "submissionId": "{{triggerParams.submissionId}}",
+        "projectPath": "{{triggerParams.projectPath}}",
+        "sourceBranch": "{{triggerParams.sourceBranch}}",
+        "targetBranch": "{{triggerParams.targetBranch}}",
+        "mrFilePath": "{{triggerParams.mrFilePath}}",
+        "title": "{{triggerParams.title}}",
+        "imUserId": "{{triggerParams.imUserId}}"
+      }
+    },
+    {
+      "name": "PRD AI review",
+      "stageType": "capability",
+      "capabilityKey": "prd_ai_review_mr",
+      "timeoutSeconds": 900,
+      "retryCount": 0,
+      "onFailure": "continue",
+      "targetRoles": [],
+      "parallel": false,
+      "capabilityParams": {
+        "submissionId": "{{triggerParams.submissionId}}",
+        "projectPath": "{{triggerParams.projectPath}}"
+      }
+    },
+    {
+      "name": "PRD notify",
+      "stageType": "capability",
+      "capabilityKey": "prd_notify",
+      "timeoutSeconds": 120,
+      "retryCount": 2,
+      "onFailure": "continue",
+      "targetRoles": [],
+      "parallel": false,
+      "capabilityParams": {
+        "submissionId": "{{triggerParams.submissionId}}",
+        "imUserId": "{{triggerParams.imUserId}}"
+      }
+    }
+  ]'::jsonb,
+  trigger_params = '{"submissionId":null,"projectPath":null,"sourceBranch":null,"targetBranch":null,"mrFilePath":null,"title":null,"imUserId":null}'::jsonb,
+  updated_at = NOW()
+WHERE id = 1776868085;
+
+-- ─── 2. 同步 capability 描述文案（cosmetic，对运行时无影响）─────
+
+UPDATE capabilities
+  SET description = 'IM @agent 触发：解析指令 + URL + 钉钉账号校验 → 显式启动 PRD MR pipeline',
+      updated_at = NOW()
+WHERE key = 'prd_submit';
+
+UPDATE capabilities
+  SET description = '汇总 prd_submit_events 后直接用 imUserId（钉钉 userId）DM 提交者',
+      updated_at = NOW()
+WHERE key = 'prd_notify';

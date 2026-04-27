@@ -170,7 +170,7 @@ describe('syncDingTalkUsers', () => {
 
   it('user/list 部门遍历跨部门去重：同一 userid 在多部门下只 upsert 一次', async () => {
     // 这里覆盖 sync 内部 seen Map 的去重路径——
-    // 通过让 listsubid 返回多个子部门并让同一 user 出现多次实现
+    // 通过让根部门下挂多个子部门并让同一 user 出现多次实现
     post.mockReset()
     post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
       if (url.includes('oauth2/accessToken')) {
@@ -191,7 +191,7 @@ describe('syncDingTalkUsers', () => {
         return { data: { errcode: 0, result: [] } }
       }
       if (url.endsWith('user/list')) {
-        // 让 dup 用户在部门 2 和 3 都返回；solo 仅在部门 3
+        // dup 用户在部门 2 和 3 都返回；solo 仅在部门 3
         const deptId = body.dept_id as number
         const list =
           deptId === 2
