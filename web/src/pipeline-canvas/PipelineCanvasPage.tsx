@@ -16,12 +16,50 @@ import { NodeInspector } from './panels/NodeInspector'
 import { VariablesPanel } from './panels/VariablesPanel'
 import { EdgeConditionPopover } from './panels/EdgeConditionPopover'
 import { CanvasToolbar } from './toolbar/CanvasToolbar'
+import { useDryRunSSE } from './dryrun/useDryRunSSE'
+import { DryRunStartModal } from './dryrun/DryRunStartModal'
+import { SideEffectDecisionModal } from './dryrun/SideEffectDecisionModal'
+import { WaitingExternalBanner } from './dryrun/WaitingExternalBanner'
 import type { TestPipeline } from '../types'
 import type { StageType, StageFields } from './types'
 
 export interface CapabilityOption {
   key: string
   displayName: string
+}
+
+/** BFS upstream: returns set of all node IDs that are ancestors of targetId */
+function computeAncestors(
+  edges: ReadonlyArray<{ source: string; target: string }>,
+  targetId: string,
+): Set<string> {
+  const parentMap = new Map<string, string[]>()
+  for (const e of edges) {
+    if (!parentMap.has(e.target)) parentMap.set(e.target, [])
+    parentMap.get(e.target)!.push(e.source)
+  }
+  const visited = new Set<string>()
+  const queue = [targetId]
+  while (queue.length > 0) {
+    const cur = queue.shift()!
+    for (const parent of parentMap.get(cur) ?? []) {
+      if (!visited.has(parent)) {
+        visited.add(parent)
+        queue.push(parent)
+      }
+    }
+  }
+  return visited
+}
+
+/** Simple graph hash for dry-run stale detection */
+function computeGraphHash(nodes: ReadonlyArray<unknown>, edges: ReadonlyArray<unknown>): string {
+  const str = JSON.stringify({ nodes, edges })
+  let h = 0
+  for (let i = 0; i < str.length; i++) {
+    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0
+  }
+  return (h >>> 0).toString(16)
 }
 
 const defaultStageFields = (type: StageType, id: string): StageFields => ({
@@ -111,6 +149,11 @@ export default function PipelineCanvasPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Dry-run state
+  const dryRunHook = useDryRunSSE()
+  const [startModalOpen, setStartModalOpen] = useState(false)
+  const [targetNodeId, setTargetNodeId] = useState<string>('*')
 
   const graph = usePipelineGraph({ nodes: [], edges: [] })
   const autoLayout = useAutoLayout()
@@ -209,6 +252,39 @@ export default function PipelineCanvasPage() {
     message.info('回到列表页触发执行')
   }
 
+  function handleNodeRunHere(nodeId: string) {
+    if (graph.dirty) {
+      message.warning('有未保存改动，请先保存再试运行')
+      return
+    }
+    setTargetNodeId(nodeId)
+    setStartModalOpen(true)
+  }
+
+  function handleStart(payload: { triggerParams: Record<string, unknown>; triggerType: string }) {
+    setStartModalOpen(false)
+    dryRunHook.start({
+      pipelineId,
+      targetNodeId,
+      graphHash: computeGraphHash(graph.nodes, graph.edges),
+      triggerParams: payload.triggerParams,
+      triggerType: payload.triggerType,
+      triggeredBy: 'canvas-user',
+    })
+  }
+
+  function handleDecide(decision: { decision: 'real' | 'stub' | 'manual'; manualOutput?: Record<string, unknown>; remember: boolean }) {
+    const { sessionId } = dryRunHook.state
+    const { pendingDecision } = dryRunHook.state
+    if (!sessionId || !pendingDecision?.nodeId) return
+    void dryRunHook.submitDecision(pipelineId, sessionId, {
+      nodeId: pendingDecision.nodeId as string,
+      decision: decision.decision,
+      manualOutput: decision.manualOutput,
+      remember: decision.remember,
+    })
+  }
+
   function handleAddNode(type: StageType) {
     const id = ulid()
     const baseY = graph.nodes.length === 0 ? 100 : Math.max(...graph.nodes.map(n => n.position.y)) + 140
@@ -223,9 +299,29 @@ export default function PipelineCanvasPage() {
 
   if (loading) return <Spin style={{ margin: 48 }} />
 
+  const { phase, progressByNode, staleNodeIds, pendingDecision, pendingExternal } = dryRunHook.state
+
+  // Inject dry-run callbacks and phase into node data
+  const nodesWithDryRun = graph.nodes.map(n => ({
+    ...n,
+    data: {
+      ...n.data,
+      __onRunHere: () => handleNodeRunHere(n.id),
+      __dryRunPhase: progressByNode[n.id] ?? 'idle',
+    },
+  }))
+
+  // Compute ancestors for NodeInspector upstream tab
+  const selectedAncestors = selectedId
+    ? computeAncestors(graph.edges, selectedId)
+    : new Set<string>()
+
   return (
     <ReactFlowProvider>
       <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+        {phase === 'awaiting-external' && pendingExternal && (
+          <WaitingExternalBanner chunk={pendingExternal} />
+        )}
         <CanvasToolbar
           pipelineName={pipeline?.name ?? ''}
           dirty={graph.dirty}
@@ -235,11 +331,12 @@ export default function PipelineCanvasPage() {
           onUndo={graph.undo}
           onBackToList={handleBackToList}
           onAddNode={handleAddNode}
+          onRunAll={() => handleNodeRunHere('*')}
         />
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <div style={{ flex: 1 }}>
             <PipelineCanvas
-              nodes={graph.nodes} edges={graph.edges}
+              nodes={nodesWithDryRun} edges={graph.edges}
               setNodes={graph.setNodes} setEdges={graph.setEdges}
               onSelectNode={setSelectedId}
               onEdgeClick={setEditingEdgeId}
@@ -258,6 +355,9 @@ export default function PipelineCanvasPage() {
           availableRoles={availableRoles}
           dingtalkUsers={dingtalkUsers}
           capabilities={capabilityOptions}
+          pipelineId={pipelineId}
+          ancestors={selectedAncestors}
+          onRunUpstream={(nodeId) => handleNodeRunHere(nodeId)}
         />
         <EdgeConditionPopover
           open={!!editingEdge}
@@ -272,6 +372,20 @@ export default function PipelineCanvasPage() {
           updateSwitchCaseWhen={graph.updateSwitchCaseWhen}
           moveCase={graph.moveCase}
         />
+        <DryRunStartModal
+          open={startModalOpen}
+          pipelineId={pipelineId}
+          pipelineDefaultTriggerParams={pipeline?.triggerParams}
+          onCancel={() => setStartModalOpen(false)}
+          onConfirm={handleStart}
+        />
+        {phase === 'awaiting-decision' && (
+          <SideEffectDecisionModal
+            chunk={pendingDecision}
+            onSubmit={handleDecide}
+            onCancel={() => dryRunHook.reset()}
+          />
+        )}
       </div>
     </ReactFlowProvider>
   )

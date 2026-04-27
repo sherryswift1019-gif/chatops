@@ -15,6 +15,7 @@ export interface TestRun {
   errorMessage: string
   createdAt: Date
   runtimeVars: Record<string, string>
+  triggerParams: Record<string, unknown>
 }
 
 export interface StageResult {
@@ -44,6 +45,7 @@ function mapRow(r: Record<string, unknown>): TestRun {
     errorMessage: (r.error_message ?? '') as string,
     createdAt: r.created_at as Date,
     runtimeVars: (r.runtime_vars ?? {}) as Record<string, string>,
+    triggerParams: (r.trigger_params ?? {}) as Record<string, unknown>,
   }
 }
 
@@ -86,13 +88,15 @@ export async function createTestRun(data: {
   pipelineId: number; triggerType: TestRun['triggerType']; triggeredBy: string
   servers: Record<string, string[]>
   runtimeVars?: Record<string, string>
+  triggerParams?: Record<string, unknown>
 }): Promise<TestRun> {
   const pool = getPool()
   const { rows } = await pool.query(
-    `INSERT INTO test_runs (pipeline_id, trigger_type, triggered_by, servers, runtime_vars, status, started_at)
-     VALUES ($1,$2,$3,$4,$5,'running',NOW()) RETURNING *`,
+    `INSERT INTO test_runs (pipeline_id, trigger_type, triggered_by, servers, runtime_vars, trigger_params, status, started_at)
+     VALUES ($1,$2,$3,$4,$5,$6,'running',NOW()) RETURNING *`,
     [data.pipelineId, data.triggerType, data.triggeredBy,
-     JSON.stringify(data.servers), JSON.stringify(data.runtimeVars ?? {})]
+     JSON.stringify(data.servers), JSON.stringify(data.runtimeVars ?? {}),
+     JSON.stringify(data.triggerParams ?? {})]
   )
   return mapRow(rows[0])
 }

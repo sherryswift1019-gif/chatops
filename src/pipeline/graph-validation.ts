@@ -173,7 +173,7 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
 
   // 3) steps 引用 DFS 校验 —— 仅在无 cycle 时做（cycle 下 ancestors 无意义）
   if (!hasCycle) {
-    const ancestors = computeAncestors(graph)
+    const ancestors = computeAllAncestors(graph)
     for (const n of graph.nodes) {
       // 收集本节点所有 string param 中出现的 steps 引用
       const params = (n as unknown as { params?: unknown }).params
@@ -194,6 +194,33 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
   }
 
   return { ok: errors.length === 0, errors }
+}
+
+/**
+ * 收集 nodeId 的所有祖先节点 ID（不含自身）。
+ * BFS 沿 edges 反向遍历：edge.target → edge.source。
+ */
+export function computeAncestors(graph: PipelineGraph, nodeId: string): Set<string> {
+  // 构建反向邻接表：target → source[]
+  const reverseAdj = new Map<string, string[]>()
+  for (const e of graph.edges) {
+    const arr = reverseAdj.get(e.target) ?? []
+    arr.push(e.source)
+    reverseAdj.set(e.target, arr)
+  }
+
+  const ancestors = new Set<string>()
+  const queue: string[] = [nodeId]
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    for (const parent of reverseAdj.get(current) ?? []) {
+      if (!ancestors.has(parent)) {
+        ancestors.add(parent)
+        queue.push(parent)
+      }
+    }
+  }
+  return ancestors
 }
 
 function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
@@ -252,7 +279,7 @@ function findStepReferences(value: unknown): string[] {
 /**
  * 对每个节点计算其所有可达的祖先节点集合（基于 graph.edges 反向 DFS）。
  */
-function computeAncestors(graph: PipelineGraph): Map<string, Set<string>> {
+function computeAllAncestors(graph: PipelineGraph): Map<string, Set<string>> {
   // reverse adjacency: node → list of parents
   const parents = new Map<string, string[]>()
   for (const e of graph.edges) {

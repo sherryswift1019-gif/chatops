@@ -202,6 +202,8 @@ const SCHEMA_FILES = [
   'schema-v43.sql',
   // v44: switch 节点类型 + llm_agent outputFormat backfill + edge expression 语法归一化。
   'schema-v44.sql',
+  // v45: 纯 DDL（pipeline_dryrun_snapshots + test_runs.trigger_params），无 seed 数据，安全加入。
+  'schema-v45.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
