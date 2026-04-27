@@ -1,4 +1,4 @@
-import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tooltip, Modal, Collapse, Typography, message } from 'antd'
+import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tooltip, Modal, Collapse, Typography, message, Radio } from 'antd'
 import { ExclamationCircleTwoTone } from '@ant-design/icons'
 import { useEffect, useMemo, useState } from 'react'
 import type { StageNode, StageFields, ImInputConfig, StageType } from '../types'
@@ -436,7 +436,30 @@ function DynamicParamsForm({
                       )}
                     </Form.Item>
                   )}
+                  <Form.Item name="outputFormat" label="输出格式" initialValue="json"
+                    extra="JSON 模式下 capability 输出必须是 JSON 对象，否则该节点失败">
+                    <Radio.Group>
+                      <Radio value="json">JSON</Radio>
+                      <Radio value="string">字符串</Radio>
+                    </Radio.Group>
+                  </Form.Item>
                 </>
+              )
+            }
+            if (t === 'switch') {
+              return (
+                <Alert
+                  type="info"
+                  message="Switch 节点配置说明"
+                  description={
+                    <div>
+                      <p><strong>添加 case：</strong>从节点底部居中的 source handle 拖一条线到目标节点。</p>
+                      <p><strong>设置 default：</strong>从节点底部右侧的紫色 handle 拖一条线到目标节点。</p>
+                      <p><strong>编辑表达式：</strong>右键边线 → 编辑 when。</p>
+                      <p><strong>调整顺序：</strong>右键边线 → 上移 / 下移。</p>
+                    </div>
+                  }
+                />
               )
             }
             if (t === 'wait_webhook') return (
