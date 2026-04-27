@@ -66,10 +66,10 @@ function buildBaseGraph(): PipelineGraph {
       makeSqlNode('manual', 'manual'),
     ],
     edges: [
-      { source: 'q', target: 'sw' },
-      { source: 'sw', target: 'rb' },
-      { source: 'sw', target: 'dp' },
-      { source: 'sw', target: 'manual' },
+      { id: 'e1', source: 'q', target: 'sw' },
+      { id: 'e2', source: 'sw', target: 'rb' },
+      { id: 'e3', source: 'sw', target: 'dp' },
+      { id: 'e4', source: 'sw', target: 'manual' },
     ],
   }
 }
