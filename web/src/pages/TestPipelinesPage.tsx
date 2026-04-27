@@ -1,120 +1,22 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, message } from 'antd'
-import { PlusOutlined, DeleteOutlined, RobotOutlined, PartitionOutlined } from '@ant-design/icons'
-import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
-import { getDingTalkUsers } from '../api/dingtalk-users'
-import { getPipelineVariables } from '../api/pipeline-variables'
-import { listArtifacts } from '../api/artifacts'
-import AiCommandModal from '../components/AiCommandModal'
-import type { TestPipeline, ArtifactInput } from '../types'
-
+import { Card, Table, Button, Modal, Form, Input, Switch, Popconfirm, Space, Tag, message } from 'antd'
+import { DeleteOutlined, PartitionOutlined } from '@ant-design/icons'
+import { getTestPipelines, createTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
+import type { TestPipeline } from '../types'
 
 export default function TestPipelinesPage() {
   const nav = useNavigate()
   const [data, setData] = useState<TestPipeline[]>([])
-  const [dingtalkUsers, setDingtalkUsers] = useState<{userId: string; name: string}[]>([])
-  const [variableCatalog, setVariableCatalog] = useState<{key: string; description: string; category: string}[]>([])
   const [loading, setLoading] = useState(false)
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState<TestPipeline | null>(null)
-  const [form] = Form.useForm()
   const [canvasModalOpen, setCanvasModalOpen] = useState(false)
   const [canvasForm] = Form.useForm()
 
-  useEffect(() => { load(); loadDingtalkUsers(); loadVariableCatalog() }, [])
+  useEffect(() => { load() }, [])
 
   async function load() {
     setLoading(true)
     try { setData(await getTestPipelines()) } finally { setLoading(false) }
-  }
-  async function loadDingtalkUsers() {
-    try {
-      const res = await getDingTalkUsers()
-      setDingtalkUsers(res.users.map(u => ({ userId: u.userId, name: u.name })))
-    } catch { /* */ }
-  }
-  async function loadVariableCatalog() {
-    try { setVariableCatalog(await getPipelineVariables()) } catch { /* */ }
-  }
-
-  function openCreate() {
-    setEditing(null); form.resetFields()
-    form.setFieldsValue({
-      enabled: true,
-      stages: [{
-        stageType: 'script', name: '',
-        parallel: false, timeoutSeconds: 300, retryCount: 0, onFailure: 'stop',
-        targetRoles: [], script: '',
-      }],
-    })
-    setModalOpen(true)
-  }
-
-  function openEdit(r: TestPipeline) {
-    setEditing(r)
-    const stages = (r.stages as any[]).map((s: any) => ({
-      ...s,
-      stageType: s.stageType ?? 'script',  // backward compat
-      // 加载时反向映射：llm_agent stage 把 capabilityKey 显示到 script 字段的 textarea 里
-      // （UI 复用 script textarea，见 save 时 capabilityKey = (script).trim()）
-      script: s.stageType === 'llm_agent'
-        ? (s.capabilityKey ?? '')
-        : (s.script ?? s.params?.commands ?? s.params?.script ?? ''),
-      targetRoles: s.targetRoles ?? [],
-      parallel: s.parallel ?? false,
-    }))
-    const variableEntries = Object.entries(r.variables ?? {}).map(([key, value]) => ({ key, value }))
-    form.setFieldsValue({ ...r, stages, variableEntries, artifactInputs: r.artifactInputs ?? [] })
-    setModalOpen(true)
-  }
-
-  async function handleSubmit() {
-    const values = await form.validateFields()
-    const variables: Record<string, string> = {}
-    for (const entry of values.variableEntries ?? []) {
-      if (entry.key) variables[entry.key] = entry.value ?? ''
-    }
-    const payload = {
-      ...values,
-      variables,
-      artifactInputs: (values.artifactInputs ?? []) as ArtifactInput[],
-      stages: values.stages.map((s: any) => ({
-        name: s.name,
-        stageType: s.stageType ?? 'script',
-        script: s.stageType === 'script' ? (s.script ?? '') : undefined,
-        // llm_agent stage: 复用 script 字段承载 capabilityKey（UX 简化）；
-        // capabilityParams 对所有 bug 修复 capability 统一用 {reportId:'{{triggerParams.reportId}}'}，
-        // 如未来出现需要额外 params 的 capability 再扩字段
-        capabilityKey: s.stageType === 'llm_agent' ? (s.script ?? '').trim() : undefined,
-        capabilityParams:
-          s.stageType === 'llm_agent'
-            ? (s.capabilityParams ?? { reportId: '{{triggerParams.reportId}}' })
-            : undefined,
-        approverIds: s.stageType === 'approval' ? (s.approverIds ?? []) : undefined,
-        approvalDescription: s.stageType === 'approval' ? (s.approvalDescription ?? '') : undefined,
-        approverIdsResolver:
-          s.stageType === 'approval' ? (s.approverIdsResolver ?? undefined) : undefined,
-        targetRoles: s.targetRoles ?? [],
-        parallel: s.parallel ?? false,
-        timeoutSeconds: s.timeoutSeconds ?? 300,
-        retryCount: s.retryCount ?? 0,
-        onFailure: s.onFailure ?? 'stop',
-      })),
-    }
-    delete (payload as any).variableEntries
-    try {
-      if (editing) {
-        await updateTestPipeline(editing.id, payload)
-        message.success('更新成功')
-      } else {
-        await createTestPipeline(payload)
-        message.success('创建成功')
-      }
-      setModalOpen(false); await load()
-    } catch (e: any) {
-      message.error(e?.response?.data?.error ?? '保存失败')
-    }
   }
 
   async function handleDelete(id: number) {
@@ -150,15 +52,18 @@ export default function TestPipelinesPage() {
   const columns = [
     { title: 'ID', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
-    { title: '阶段数', render: (_: unknown, r: TestPipeline) => (r.stages as any[]).length },
+    { title: '节点数', render: (_: unknown, r: TestPipeline) => r.stages?.length ?? 0 },
     { title: '状态', dataIndex: 'enabled', render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '禁用'}</Tag> },
     {
       title: '操作',
       render: (_: unknown, r: TestPipeline) => (
         <Space>
           <a onClick={() => nav(`/test-pipelines/${r.id}/canvas`)}>画布编辑</a>
-          <a onClick={() => openEdit(r)}>编辑</a>
-          <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}><a style={{ color: 'red' }}>删除</a></Popconfirm>
+          <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}>
+            <a style={{ color: 'red' }}>
+              <DeleteOutlined /> 删除
+            </a>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -166,143 +71,9 @@ export default function TestPipelinesPage() {
 
   return (
     <Card title="流水线管理" extra={
-      <Space>
-        <Button icon={<PartitionOutlined />} onClick={openCanvasCreate}>画布新建</Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增流水线</Button>
-      </Space>
+      <Button type="primary" icon={<PartitionOutlined />} onClick={openCanvasCreate}>画布新建</Button>
     }>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
-      <Modal title={editing ? '编辑流水线' : '新增流水线'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} destroyOnClose width={900}>
-        <Form form={form} layout="vertical">
-          <Space style={{ display: 'flex' }}>
-            <Form.Item name="name" label="名称" rules={[{ required: true }]} style={{ flex: 1 }}><Input placeholder="如: 回归测试" /></Form.Item>
-            <Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item>
-          </Space>
-          <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>自定义变量</div>
-            <Form.List name="variableEntries">
-              {(fields, { add: addVar, remove: removeVar }) => (
-                <>
-                  {fields.map(({ key, name: vName }) => (
-                    <Space key={key} style={{ display: 'flex', marginBottom: 4 }}>
-                      <Form.Item name={[vName, 'key']} rules={[{ required: true, message: '变量名' }]} style={{ marginBottom: 0 }}>
-                        <Input placeholder="变量名" style={{ width: 150 }} addonBefore="vars." />
-                      </Form.Item>
-                      <Form.Item name={[vName, 'value']} style={{ marginBottom: 0 }}>
-                        <Input placeholder="默认值" style={{ width: 200 }} />
-                      </Form.Item>
-                      <DeleteOutlined onClick={() => removeVar(vName)} style={{ color: 'red' }} />
-                    </Space>
-                  ))}
-                  <Button type="dashed" size="small" onClick={() => addVar({ key: '', value: '' })} icon={<PlusOutlined />}>
-                    添加变量
-                  </Button>
-                </>
-              )}
-            </Form.List>
-          </div>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>
-              制品输入 <span style={{ fontWeight: 'normal', color: '#999', fontSize: 12 }}>（触发前选包；定时/API 触发须填 default 或 defaultStrategy）</span>
-            </div>
-            <Form.List name="artifactInputs">
-              {(fields, { add: addArt, remove: removeArt }) => (
-                <>
-                  {fields.map(({ key, name: aName }) => (
-                    <Card key={key} size="small" style={{ marginBottom: 8 }}
-                      extra={<DeleteOutlined onClick={() => removeArt(aName)} style={{ color: 'red' }} />}>
-                      <Space style={{ display: 'flex', flexWrap: 'wrap' }}>
-                        <Form.Item name={[aName, 'name']} label="名称" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
-                          <Input style={{ width: 180 }} placeholder="选择 PAM Docker 包" />
-                        </Form.Item>
-                        <Form.Item name={[aName, 'outputVar']} label="输出变量" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
-                          <Input style={{ width: 180 }} placeholder="PACKAGE_URL" addonBefore="vars." />
-                        </Form.Item>
-                        <Form.Item name={[aName, 'valueFrom']} label="取值" initialValue="url" style={{ marginBottom: 4 }}>
-                          <Select style={{ width: 100 }} options={[
-                            { value: 'url', label: 'url' },
-                            { value: 'name', label: 'name' },
-                            { value: 'path', label: 'path' },
-                          ]} />
-                        </Form.Item>
-                      </Space>
-                      <Space style={{ display: 'flex', flexWrap: 'wrap' }}>
-                        <Form.Item name={[aName, 'listUrl']} label="仓库 URL" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
-                          <Input style={{ width: 380 }} placeholder="http://10.10.2.234:8000/pam/deploy" />
-                        </Form.Item>
-                        <Form.Item name={[aName, 'glob']} label="过滤模式" rules={[{ required: true }]} style={{ marginBottom: 4 }}>
-                          <Input style={{ width: 260 }} placeholder="PAM-Docker-*.tar.gz" />
-                        </Form.Item>
-                        <Form.Item label=" " style={{ marginBottom: 4 }}>
-                          <ArtifactPreviewButton form={form} fieldName={aName} />
-                        </Form.Item>
-                      </Space>
-                      <Space style={{ display: 'flex', flexWrap: 'wrap' }}>
-                        <Form.Item name={[aName, 'default']} label="默认值" style={{ marginBottom: 4 }}>
-                          <Input style={{ width: 380 }} placeholder="可选：字面值，优先级高于 strategy" />
-                        </Form.Item>
-                        <Form.Item name={[aName, 'defaultStrategy']} label="自动策略" style={{ marginBottom: 4 }}>
-                          <Select allowClear style={{ width: 200 }} options={[
-                            { value: 'latest-by-mtime', label: 'latest-by-mtime' },
-                            { value: 'first-match', label: 'first-match' },
-                          ]} placeholder="定时触发时自动挑选" />
-                        </Form.Item>
-                      </Space>
-                    </Card>
-                  ))}
-                  <Button type="dashed" size="small" onClick={() => addArt({
-                    name: '', listUrl: '', glob: '', outputVar: '', valueFrom: 'url',
-                  })} icon={<PlusOutlined />}>
-                    添加制品输入
-                  </Button>
-                </>
-              )}
-            </Form.List>
-          </div>
-          <div style={{ marginBottom: 8, fontWeight: 500 }}>阶段配置</div>
-          <Form.List name="stages">
-            {(fields, { add, remove }) => (
-              <>
-                {fields.map(({ key, name, ...rest }) => (
-                  <Card key={key} size="small" style={{ marginBottom: 8 }} extra={<DeleteOutlined onClick={() => remove(name)} style={{ color: 'red' }} />}>
-                    <Space style={{ display: 'flex', flexWrap: 'wrap' }}>
-                      <Form.Item {...rest} name={[name, 'name']} label="阶段名称" rules={[{ required: true }]}>
-                        <Input style={{ width: 150 }} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'stageType']} label="类型" rules={[{ required: true }]}>
-                        <Select style={{ width: 130 }} options={[
-                          { value: 'script', label: '运行脚本' },
-                          { value: 'llm_agent', label: 'LLM Agent' },
-                          { value: 'approval', label: '人员审批' },
-                        ]} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'targetRoles']} label="目标角色">
-                        <Select mode="multiple" style={{ width: 160 }} placeholder="输入角色名" />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'timeoutSeconds']} label="超时(秒)"><InputNumber min={10} style={{ width: 100 }} /></Form.Item>
-                      <Form.Item {...rest} name={[name, 'retryCount']} label="重试次数"><InputNumber min={0} max={5} style={{ width: 80 }} /></Form.Item>
-                      <Form.Item {...rest} name={[name, 'onFailure']} label="失败策略">
-                        <Select options={[{ value: 'stop', label: '停止' }, { value: 'continue', label: '继续' }]} style={{ width: 90 }} />
-                      </Form.Item>
-                      <Form.Item {...rest} name={[name, 'parallel']} label="并行" valuePropName="checked">
-                        <Switch />
-                      </Form.Item>
-                    </Space>
-                    <StageTypeFields stageIndex={name} form={form} variableCatalog={variableCatalog} dingtalkUsers={dingtalkUsers} />
-                  </Card>
-                ))}
-                <Button type="dashed" onClick={() => add({
-                  stageType: 'script', name: '', parallel: false,
-                  timeoutSeconds: 300, retryCount: 0, onFailure: 'stop', targetRoles: [], script: '',
-                })} block icon={<PlusOutlined />}>
-                  添加阶段
-                </Button>
-              </>
-            )}
-          </Form.List>
-        </Form>
-      </Modal>
       <Modal
         title="画布新建流水线"
         open={canvasModalOpen}
@@ -323,116 +94,10 @@ export default function TestPipelinesPage() {
             <Switch />
           </Form.Item>
           <div style={{ color: '#999', fontSize: 12 }}>
-            阶段将在画布中配置；保存后在列表页可继续通过"编辑"补充变量与制品输入。
+            创建后进入画布配置节点、连线和节点参数。
           </div>
         </Form>
       </Modal>
     </Card>
   )
-}
-
-function StageTypeFields({ stageIndex, form, variableCatalog, dingtalkUsers }: {
-  stageIndex: number; form: any;
-  variableCatalog: { key: string; description: string; category: string }[];
-  dingtalkUsers: { userId: string; name: string }[];
-}) {
-  const stageType = Form.useWatch(['stages', stageIndex, 'stageType'], form)
-  const [aiModalOpen, setAiModalOpen] = useState(false)
-  const textAreaRef = useRef<any>(null)
-
-  function insertVariable(varKey: string) {
-    const fieldPath = ['stages', stageIndex, 'script']
-    const current = form.getFieldValue(fieldPath) ?? ''
-    form.setFieldValue(fieldPath, current + `{{${varKey}}}`)
-  }
-
-  if (stageType === 'approval') {
-    return (
-      <div style={{ marginTop: 8 }}>
-        <Form.Item
-          name={[stageIndex, 'approverIdsResolver']}
-          label="审批人解析器"
-          tooltip="动态审批人策略名（如 primary_project_owner）。填了就以它为准，approverIds 列表失效。" >
-          <Input placeholder="如 primary_project_owner（运行时动态查主仓库 owner）" />
-        </Form.Item>
-        <Form.Item name={[stageIndex, 'approverIds']} label="审批人（静态列表，resolver 为空时才用）">
-          <Select mode="multiple" placeholder="选择审批人" options={dingtalkUsers.map(u => ({ value: u.userId, label: u.name }))} />
-        </Form.Item>
-        <Form.Item name={[stageIndex, 'approvalDescription']} label="审批描述">
-          <Input placeholder="审批卡片展示的操作描述（resolver 有自带描述时被覆盖）" />
-        </Form.Item>
-      </div>
-    )
-  }
-
-  const isCapability = stageType === 'llm_agent'
-
-  // script / llm_agent 共用 textarea
-  // - script 类型：shell 脚本
-  // - llm_agent 类型：capabilityKey（后端将 script 字段的 trim() 值当 capabilityKey，
-  //   capabilityParams 自动补 {reportId: '{{triggerParams.reportId}}'}）
-  return (
-    <div style={{ marginTop: 8 }}>
-      <Form.Item name={[stageIndex, 'script']} label={
-        isCapability
-          ? <span>Capability Key</span>
-          : <span>脚本 <Button type="link" size="small" icon={<RobotOutlined />} onClick={() => setAiModalOpen(true)}>AI 生成</Button></span>
-      }>
-        <Input.TextArea
-          ref={textAreaRef}
-          rows={isCapability ? 1 : 5}
-          placeholder={
-            isCapability
-              ? '如 fix_bug_l2 / create_mr / ai_review_mr / notify_bug'
-              : '输入要执行的 shell 脚本'
-          }
-          style={{ fontFamily: 'monospace', fontSize: 12 }}
-        />
-      </Form.Item>
-      {!isCapability && (
-        <div style={{ marginBottom: 8 }}>
-          <span style={{ fontSize: 12, color: '#999', marginRight: 8 }}>可用变量（点击插入）：</span>
-          {variableCatalog.map(v => (
-            <Tag key={v.key} color="blue" style={{ cursor: 'pointer', marginBottom: 4 }}
-              onClick={() => insertVariable(v.key)} title={v.description}>
-              {'{{' + v.key + '}}'}
-            </Tag>
-          ))}
-        </div>
-      )}
-      {!isCapability && (
-        <AiCommandModal open={aiModalOpen} capabilityName="脚本" targetRoles={[]}
-          onConfirm={(cmd) => { form.setFieldValue(['stages', stageIndex, 'script'], cmd); setAiModalOpen(false) }}
-          onCancel={() => setAiModalOpen(false)} />
-      )}
-    </div>
-  )
-}
-
-function ArtifactPreviewButton({ form, fieldName }: { form: any; fieldName: number }) {
-  const [loading, setLoading] = useState(false)
-  async function handleClick() {
-    const listUrl = form.getFieldValue(['artifactInputs', fieldName, 'listUrl'])
-    const glob = form.getFieldValue(['artifactInputs', fieldName, 'glob'])
-    if (!listUrl) { message.warning('请先填写仓库 URL'); return }
-    setLoading(true)
-    try {
-      const files = await listArtifacts(listUrl, glob || undefined)
-      if (files.length === 0) {
-        message.info(`没有匹配 ${glob || '*'} 的文件`)
-        return
-      }
-      const head = files.slice(0, 5).map(f => `${f.name} (${new Date(f.mtime).toISOString().slice(0, 10)})`).join('\n')
-      Modal.info({
-        title: `匹配 ${files.length} 个文件（按 mtime 倒序，展示前 5）`,
-        content: <pre style={{ margin: 0, fontFamily: 'monospace' }}>{head}</pre>,
-        width: 600,
-      })
-    } catch (e: any) {
-      message.error(e?.response?.data?.error ?? '请求失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-  return <Button size="small" loading={loading} onClick={handleClick}>预览匹配</Button>
 }
