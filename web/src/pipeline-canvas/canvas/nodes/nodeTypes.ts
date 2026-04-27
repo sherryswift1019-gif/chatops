@@ -16,6 +16,8 @@ function makeSimpleNode(color: string, typeLabel: string, footerFn?: (d: StageNo
       typeLabel,
       title: data.name,
       footer: footerFn ? footerFn(data) : undefined,
+      onRunHere: (data as any).__onRunHere,
+      dryRunPhase: (data as any).__dryRunPhase,
     })
   }
 }
