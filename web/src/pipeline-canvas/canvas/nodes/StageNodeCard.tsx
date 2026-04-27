@@ -8,6 +8,13 @@ interface Props {
   title: string
   footer?: ReactNode
 }
+
+const handleStyle: CSSProperties = {
+  width: 12, height: 12,
+  border: '2px solid #fff',
+  background: '#1677ff',
+}
+
 export function StageNodeCard({ color, typeLabel, title, footer }: Props) {
   const barStyle: CSSProperties = {
     position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, background: color,
@@ -16,11 +23,11 @@ export function StageNodeCard({ color, typeLabel, title, footer }: Props) {
   return (
     <Card size="small" style={{ width: 220, position: 'relative' }} styles={{ body: { padding: '8px 12px' } }}>
       <div style={barStyle} />
-      <Handle type="target" position={Position.Top} />
+      <Handle type="target" position={Position.Top} style={handleStyle} />
       <Tag color={color}>{typeLabel}</Tag>
       <div style={{ fontWeight: 500, marginTop: 4 }}>{title || <span style={{ color: '#aaa' }}>未命名</span>}</div>
       {footer && <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{footer}</div>}
-      <Handle type="source" position={Position.Bottom} />
+      <Handle type="source" position={Position.Bottom} style={handleStyle} />
     </Card>
   )
 }
