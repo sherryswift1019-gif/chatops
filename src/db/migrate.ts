@@ -13,147 +13,127 @@ import { PRD_REVIEW_SYSTEM_PROMPT } from '../agent/prd-submit/prompts.js'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
-const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf8')
-await pool.query(schema)
+// 所有 schema 文件按版本号升序，新增 schema 时在尾部追加一行。
+// 注意 v27 缺号 (开发阶段被 squash)，按现状跳过。
+const SCHEMA_FILES: ReadonlyArray<readonly [string, string]> = [
+  ['v1',  'schema.sql'],
+  ['v2',  'schema-v2.sql'],
+  ['v3',  'schema-v3.sql'],
+  ['v4',  'schema-v4.sql'],
+  ['v5',  'schema-v5.sql'],
+  ['v6',  'schema-v6.sql'],
+  ['v7',  'schema-v7.sql'],
+  ['v8',  'schema-v8.sql'],
+  ['v9',  'schema-v9.sql'],
+  ['v10', 'schema-v10.sql'],
+  ['v11', 'schema-v11.sql'],
+  ['v12', 'schema-v12.sql'],
+  ['v13', 'schema-v13.sql'],
+  ['v14', 'schema-v14.sql'],
+  ['v15', 'schema-v15.sql'],
+  ['v16', 'schema-v16.sql'],
+  ['v17', 'schema-v17.sql'],
+  ['v18', 'schema-v18.sql'],
+  ['v19', 'schema-v19.sql'],
+  ['v20', 'schema-v20.sql'],
+  ['v21', 'schema-v21.sql'],
+  ['v22', 'schema-v22.sql'],
+  ['v23', 'schema-v23.sql'],
+  ['v24', 'schema-v24.sql'],
+  ['v25', 'schema-v25.sql'],
+  ['v26', 'schema-v26.sql'],
+  ['v28', 'schema-v28.sql'],
+  ['v29', 'schema-v29.sql'],
+  ['v30', 'schema-v30.sql'],
+  ['v31', 'schema-v31.sql'],
+  ['v32', 'schema-v32.sql'],
+  ['v33', 'schema-v33.sql'],
+  ['v34', 'schema-v34.sql'],
+  ['v35', 'schema-v35.sql'],
+  ['v36', 'schema-v36.sql'],
+  ['v37', 'schema-v37.sql'],
+  ['v38', 'schema-v38.sql'],
+  ['v39', 'schema-v39.sql'],
+  ['v40', 'schema-v40.sql'],
+  ['v41', 'schema-v41.sql'],
+]
 
-const schemaV2 = readFileSync(join(__dirname, 'schema-v2.sql'), 'utf8')
-await pool.query(schemaV2)
+// _migrations: 已 applied 的 schema 版本登记表。
+// 引入此表前老库的 schema 文件每次 migrate 都重跑——v33 DROP capabilities.category
+// 之后, v2/v4/v8/v12/v13/v16/v21/v24/v26/v28 的 INSERT INTO capabilities (..., category, ...)
+// 在 SQL 解析阶段就报 42703,根本走不到 ON CONFLICT。改用版本登记 + 跳过已 applied 修掉。
+await pool.query(`
+  CREATE TABLE IF NOT EXISTS _migrations (
+    version    TEXT PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )
+`)
 
-const schemaV3 = readFileSync(join(__dirname, 'schema-v3.sql'), 'utf8')
-await pool.query(schemaV3)
+const { rows: appliedRows } = await pool.query(
+  `SELECT version FROM _migrations`
+)
+const applied = new Set<string>(appliedRows.map((r: { version: string }) => r.version))
 
-const schemaV4 = readFileSync(join(__dirname, 'schema-v4.sql'), 'utf8')
-await pool.query(schemaV4)
+// Bootstrap legacy DB: _migrations 是空但 capabilities 表已存在 → 这是引入登记表
+// 之前已经跑过 migrate 的老库, 用 fingerprint 推断已 applied 到哪个版本。
+if (applied.size === 0) {
+  const { rows: capTable } = await pool.query(
+    `SELECT 1 FROM information_schema.tables WHERE table_name = 'capabilities'`
+  )
+  if (capTable.length > 0) {
+    const { rows: catCol } = await pool.query(
+      `SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'capabilities' AND column_name = 'category'`
+    )
+    const v33Applied = catCol.length === 0
+    if (!v33Applied) {
+      // 老库但停在 v33 之前 (category 列还在), 没有幂等问题, 让下方循环正常按文件跑。
+      console.log('[migrate] legacy DB detected (pre-v33), running all schema files')
+    } else {
+      // v33 之后状态: 顺序执行的 migrate.ts 一旦跑到 v33 必然往后跑到当时最新版本。
+      // 用更新的 fingerprint 锚定上次跑到的最远版本。
+      const { rows: icpTable } = await pool.query(
+        `SELECT 1 FROM information_schema.tables
+          WHERE table_name = 'internal_capability_pipelines'`
+      )
+      const v37Applied = icpTable.length > 0
+      const { rows: fkRow } = await pool.query(
+        `SELECT confdeltype FROM pg_constraint
+          WHERE conname = 'im_triggers_pipeline_id_fkey'`
+      )
+      const v38Applied = fkRow.length > 0 && fkRow[0].confdeltype === 'n'
 
-const schemaV5 = readFileSync(join(__dirname, 'schema-v5.sql'), 'utf8')
-await pool.query(schemaV5)
+      const upTo = v38Applied ? 38 : v37Applied ? 37 : 33
+      for (const [version] of SCHEMA_FILES) {
+        const num = version === 'v1' ? 1 : Number(version.slice(1))
+        if (num <= upTo) {
+          await pool.query(
+            `INSERT INTO _migrations (version) VALUES ($1) ON CONFLICT DO NOTHING`,
+            [version]
+          )
+          applied.add(version)
+        }
+      }
+      console.log(`[migrate] bootstrapped legacy DB: marked v1..v${upTo} as applied`)
+    }
+  }
+}
 
-const schemaV6 = readFileSync(join(__dirname, 'schema-v6.sql'), 'utf8')
-await pool.query(schemaV6)
-
-const schemaV7 = readFileSync(join(__dirname, 'schema-v7.sql'), 'utf8')
-await pool.query(schemaV7)
-
-const schemaV8 = readFileSync(join(__dirname, 'schema-v8.sql'), 'utf8')
-await pool.query(schemaV8)
-
-const schemaV9 = readFileSync(join(__dirname, 'schema-v9.sql'), 'utf8')
-await pool.query(schemaV9)
-
-const schemaV10 = readFileSync(join(__dirname, 'schema-v10.sql'), 'utf8')
-await pool.query(schemaV10)
-
-const schemaV11 = readFileSync(join(__dirname, 'schema-v11.sql'), 'utf8')
-await pool.query(schemaV11)
-
-const schemaV12 = readFileSync(join(__dirname, 'schema-v12.sql'), 'utf8')
-await pool.query(schemaV12)
-console.log('[migrate] schema-v12 applied')
-
-const schemaV13 = readFileSync(join(__dirname, 'schema-v13.sql'), 'utf8')
-await pool.query(schemaV13)
-console.log('[migrate] schema-v13 applied')
-
-const schemaV14 = readFileSync(join(__dirname, 'schema-v14.sql'), 'utf8')
-await pool.query(schemaV14)
-console.log('[migrate] schema-v14 applied')
-
-const schemaV15 = readFileSync(join(__dirname, 'schema-v15.sql'), 'utf8')
-await pool.query(schemaV15)
-console.log('[migrate] schema-v15 applied')
-
-const schemaV16 = readFileSync(join(__dirname, 'schema-v16.sql'), 'utf8')
-await pool.query(schemaV16)
-console.log('[migrate] schema-v16 applied')
-
-const schemaV17 = readFileSync(join(__dirname, 'schema-v17.sql'), 'utf8')
-await pool.query(schemaV17)
-console.log('[migrate] schema-v17 applied')
-
-const schemaV18 = readFileSync(join(__dirname, 'schema-v18.sql'), 'utf8')
-await pool.query(schemaV18)
-console.log('[migrate] schema-v18 applied')
-
-const schemaV19 = readFileSync(join(__dirname, 'schema-v19.sql'), 'utf8')
-await pool.query(schemaV19)
-console.log('[migrate] schema-v19 applied')
-
-const schemaV20 = readFileSync(join(__dirname, 'schema-v20.sql'), 'utf8')
-await pool.query(schemaV20)
-console.log('[migrate] schema-v20 applied')
-
-const schemaV21 = readFileSync(join(__dirname, 'schema-v21.sql'), 'utf8')
-await pool.query(schemaV21)
-console.log('[migrate] schema-v21 applied')
-
-const schemaV22 = readFileSync(join(__dirname, 'schema-v22.sql'), 'utf8')
-await pool.query(schemaV22)
-console.log('[migrate] schema-v22 applied')
-
-const schemaV23 = readFileSync(join(__dirname, 'schema-v23.sql'), 'utf8')
-await pool.query(schemaV23)
-console.log('[migrate] schema-v23 applied')
-
-const schemaV24 = readFileSync(join(__dirname, 'schema-v24.sql'), 'utf8')
-await pool.query(schemaV24)
-console.log('[migrate] schema-v24 applied')
-
-const schemaV25 = readFileSync(join(__dirname, 'schema-v25.sql'), 'utf8')
-await pool.query(schemaV25)
-console.log('[migrate] schema-v25 applied')
-
-const schemaV26 = readFileSync(join(__dirname, 'schema-v26.sql'), 'utf8')
-await pool.query(schemaV26)
-console.log('[migrate] schema-v26 applied')
-
-const schemaV28 = readFileSync(join(__dirname, 'schema-v28.sql'), 'utf8')
-await pool.query(schemaV28)
-console.log('[migrate] schema-v28 applied')
-
-const schemaV29 = readFileSync(join(__dirname, 'schema-v29.sql'), 'utf8')
-await pool.query(schemaV29)
-console.log('[migrate] schema-v29 applied')
-
-const schemaV30 = readFileSync(join(__dirname, 'schema-v30.sql'), 'utf8')
-await pool.query(schemaV30)
-console.log('[migrate] schema-v30 applied')
-
-const schemaV31 = readFileSync(join(__dirname, 'schema-v31.sql'), 'utf8')
-await pool.query(schemaV31)
-console.log('[migrate] schema-v31 applied')
-
-const schemaV32 = readFileSync(join(__dirname, 'schema-v32.sql'), 'utf8')
-await pool.query(schemaV32)
-console.log('[migrate] schema-v32 applied')
-
-const schemaV33 = readFileSync(join(__dirname, 'schema-v33.sql'), 'utf8')
-await pool.query(schemaV33)
-console.log('[migrate] schema-v33 applied')
-
-const schemaV34 = readFileSync(join(__dirname, 'schema-v34.sql'), 'utf8')
-await pool.query(schemaV34)
-console.log('[migrate] schema-v34 applied')
-
-const schemaV35 = readFileSync(join(__dirname, 'schema-v35.sql'), 'utf8')
-await pool.query(schemaV35)
-console.log('[migrate] schema-v35 applied')
-
-const schemaV36 = readFileSync(join(__dirname, 'schema-v36.sql'), 'utf8')
-await pool.query(schemaV36)
-console.log('[migrate] schema-v36 applied')
-
-const schemaV37 = readFileSync(join(__dirname, 'schema-v37.sql'), 'utf8')
-await pool.query(schemaV37)
-console.log('[migrate] schema-v37 applied')
-
-const schemaV40 = readFileSync(join(__dirname, 'schema-v40.sql'), 'utf8')
-await pool.query(schemaV40)
-console.log('[migrate] schema-v40 applied')
-
-const schemaV41 = readFileSync(join(__dirname, 'schema-v41.sql'), 'utf8')
-await pool.query(schemaV41)
-console.log('[migrate] schema-v41 applied')
-
+let appliedThisRun = 0
+for (const [version, file] of SCHEMA_FILES) {
+  if (applied.has(version)) continue
+  const sql = readFileSync(join(__dirname, file), 'utf8')
+  await pool.query(sql)
+  await pool.query(
+    `INSERT INTO _migrations (version) VALUES ($1) ON CONFLICT DO NOTHING`,
+    [version]
+  )
+  console.log(`[migrate] ${version} applied`)
+  appliedThisRun++
+}
+if (appliedThisRun === 0) {
+  console.log('[migrate] all schema files already applied, nothing to run')
+}
 
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
@@ -208,5 +188,8 @@ await pool.query(
   ['prd_ai_review_mr', PRD_REVIEW_SYSTEM_PROMPT]
 )
 
+// touch CREATE_ARCH_SYSTEM_PROMPT to retain import (placeholder for future arch prompt sync)
+void CREATE_ARCH_SYSTEM_PROMPT
+
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v26 + v28 + v29 + v30 + v31 + v32 + v33 + v34 + v35 + v36 + v37 + v40 + v41 + im_triggers v32 + capabilities-cleanup v33 + node-types-7-new v34 + node-types-enable v35 + capability-rename-llm_agent v36 + internal_capability_pipelines v37 + notify-internal v40 + create-mr-internal v41, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26 + PRD active submit MR v28 + product_lines FK cascade v29 + pipeline_node_types v30 + capabilities-extended-fields v31 + im_triggers v32 + capabilities cleanup v33 + node-types-7-new v34 + node-types-enable v35 + capability→llm_agent v36 + internal_capability_pipelines v37 + notify-internal pipeline v40 + create-mr-internal pipeline v41)')
+console.log('✅ Database schema applied via _migrations tracker')
