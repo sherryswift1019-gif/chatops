@@ -131,25 +131,17 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     updatedAt: new Date(),
   }
 
-  async function mockPipelineRow(pipelineId: number, name: string) {
+  async function mockPipelineRow(pipelineId: number, _name?: string) {
     const { getPool } = await import('../../db/client.js')
-    ;(getPool as any).mockReturnValue({
-      query: vi.fn(async () => ({
-        rows: [{
-          id: pipelineId, product_line_id: fakeReport.productLineId, name,
-          description: '', stages: [], server_roles: {}, schedule: '',
-          enabled: true, trigger_params: {}, variables: {},
-          created_at: new Date(), updated_at: new Date(),
-        }],
-      })),
-    })
+    const mockQuery = vi.fn()
+    mockQuery.mockResolvedValueOnce({ rows: [{ pipeline_id: pipelineId, server_role_assignments: {} }] })
+    mockQuery.mockResolvedValue({ rows: [] })
+    ;(getPool as any).mockReturnValue({ query: mockQuery })
   }
 
   async function mockNoPipelineRow() {
     const { getPool } = await import('../../db/client.js')
-    ;(getPool as any).mockReturnValue({
-      query: vi.fn(async () => ({ rows: [] })),
-    })
+    ;(getPool as any).mockReturnValue({ query: vi.fn(async () => ({ rows: [] })) })
   }
 
   it('bug classification → triggers Pipeline and writes pipeline_run_id', async () => {
