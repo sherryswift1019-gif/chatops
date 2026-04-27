@@ -181,6 +181,11 @@ const SCHEMA_FILES = [
   // 不产生 fixture 污染。需要映射的测试自行 bootstrap product_line + 重跑 v37
   // (见 internal-capability-pipelines-repo.test.ts)。
   'schema-v37.sql',
+  // v40 (phase 4 T3 — notify_bug pipeline 迁移): CREATE FUNCTION build_notify_message
+  // (PL/pgSQL, 4 种 scenario 文案拼接) + 在 product_lines 非空时种入 'notify-internal'
+  // pipeline (4 节点 DAG: sql_query → fan_out → db_update × 2) 并注册 'notify_bug'
+  // 映射。空 product_lines 时 seed 自动 skip。同 v37 forward policy。
+  'schema-v40.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

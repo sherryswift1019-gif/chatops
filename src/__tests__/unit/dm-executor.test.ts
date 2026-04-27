@@ -111,4 +111,77 @@ describe('dm node executor (phase 3 T10)', () => {
     expect(result.status).toBe('failed')
     expect(result.error).toMatch(/card/)
   })
+
+  // phase 4 T3: extraMeta 透传 + 模板解析（fan_out 内调用 dm 时下游 db_update 节点用）
+  it('phase4 T3: extraMeta 字段在 success output 中原样透传', async () => {
+    registerImDmSender('dingtalk', async () => ({ messageId: 'm-99' }))
+    const exec = loadDmExecutor()
+    const result = await exec.execute(
+      {
+        platform: 'dingtalk',
+        userId: 'u-owner',
+        text: 'hello',
+        extraMeta: {
+          ownerId: 'u-owner',
+          messageKind: 'fix_success',
+          mrIids: [42, 43],
+        },
+      },
+      makeCtx(),
+    )
+    expect(result.status).toBe('success')
+    const output = result.output as Record<string, unknown>
+    expect(output.extraMeta).toEqual({
+      ownerId: 'u-owner',
+      messageKind: 'fix_success',
+      mrIids: [42, 43],
+    })
+  })
+
+  it('phase4 T3: 默认不带 extraMeta 时 output 不含该字段', async () => {
+    registerImDmSender('dingtalk', async () => ({ messageId: 'm-1' }))
+    const exec = loadDmExecutor()
+    const result = await exec.execute(
+      { platform: 'dingtalk', userId: 'u', text: 'hi' },
+      makeCtx(),
+    )
+    expect(result.status).toBe('success')
+    expect((result.output as Record<string, unknown>).extraMeta).toBeUndefined()
+  })
+
+  it('phase4 T3: dm 内部按 ctx.scopes 解析 {{owner.x}} 模板（fan_out body 用例）', async () => {
+    const calls: Array<{ userId: string; text: string }> = []
+    registerImDmSender('dingtalk', async (userId, text) => {
+      calls.push({ userId, text })
+      return { messageId: 'm-7' }
+    })
+    const exec = loadDmExecutor()
+    const result = await exec.execute(
+      {
+        platform: 'dingtalk',
+        userId: '{{owner.owner_id}}',
+        text: '{{owner.message_text}}',
+        extraMeta: {
+          ownerId: '{{owner.owner_id}}',
+          messageKind: '{{owner.scenario_kind}}',
+        },
+      },
+      makeCtx({
+        scopes: {
+          owner: {
+            owner_id: 'u-bob',
+            message_text: '✅ MR ready',
+            scenario_kind: 'fix_success',
+          },
+        },
+      }),
+    )
+    expect(result.status).toBe('success')
+    expect(calls).toEqual([{ userId: 'u-bob', text: '✅ MR ready' }])
+    const output = result.output as Record<string, unknown>
+    expect(output.extraMeta).toEqual({
+      ownerId: 'u-bob',
+      messageKind: 'fix_success',
+    })
+  })
 })
