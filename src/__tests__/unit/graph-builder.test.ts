@@ -406,7 +406,7 @@ describe('buildGraphFromPipeline with conditional edges', () => {
       nodes: [a, b],
       edges: [{
         id: 'e1', source: 'a', target: 'b',
-        condition: { kind: 'expression', expression: "output.includes('RETRY')" },
+        condition: { kind: 'expression', expression: "output contains 'RETRY'" },
       }],
     }
     const hooks: StageHooks = {

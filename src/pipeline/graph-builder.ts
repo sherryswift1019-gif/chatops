@@ -15,6 +15,7 @@ import { resolveApprovers } from './approval-resolvers.js'
 import { getExecutor } from './node-types/registry.js'
 import type { ExecutionContext, NodeExecutionResult } from './node-types/types.js'
 import { resolveVariables, type VariableContext } from './variables.js'
+import { evalExpression } from './expressions.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -846,20 +847,30 @@ export interface BuildPipelineGraphInput {
   triggerParams?: Record<string, unknown>
 }
 
-// Safe expression evaluator. Only two templates are accepted:
-//   - status === 'success' | 'failed' | 'skipped'
-//   - output.includes('...')
-// Anything else returns false, avoiding eval / new Function.
-function conditionMatches(cond: ConditionSpec | undefined, result: StageResult): boolean {
+// Safe expression evaluator. Uses parseExpression engine (evalExpression).
+export function conditionMatches(
+  cond: ConditionSpec | undefined,
+  result: StageResult,
+  state: typeof PipelineStateAnnotation.State,
+  triggerParams: Record<string, unknown> | undefined,
+): boolean {
   if (!cond) return true
   if (cond.kind === 'onSuccess') return result.status === 'success'
   if (cond.kind === 'onFailure') return result.status === 'failed'
-  // expression
-  const expr = cond.expression.trim()
-  const statusMatch = expr.match(/^status\s*===\s*'(success|failed|skipped)'$/)
-  if (statusMatch) return result.status === statusMatch[1]
-  const outputMatch = expr.match(/^output\.includes\(['"]([^'"]+)['"]\)$/)
-  if (outputMatch) return (result.output ?? '').includes(outputMatch[1])
+  if (cond.kind === 'expression') {
+    const ctx = {
+      status: result.status,
+      output: result.output,
+      steps: state.stepOutputs,
+      vars: state.runtimeVars,
+      triggerParams: triggerParams ?? {},
+    }
+    try {
+      return evalExpression(cond.expression, ctx)
+    } catch {
+      return false
+    }
+  }
   return false
 }
 
@@ -983,7 +994,7 @@ export function buildGraphFromPipeline(
       if (!result) return idToName.get(outs[0].target) ?? END
       if (shouldStopAfter(node, result)) return skipName
       for (const e of outs) {
-        if (conditionMatches(e.condition, result)) return idToName.get(e.target)!
+        if (conditionMatches(e.condition, result, state, triggerParams)) return idToName.get(e.target)!
       }
       return END
     }, routeMap)
