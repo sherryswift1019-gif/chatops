@@ -38,7 +38,7 @@ BEGIN
 
     INSERT INTO test_pipelines (
       product_line_id, name, description, graph, trigger_params, enabled,
-      server_roles, schedule, variables, stages
+      server_roles, variables, stages
     )
     VALUES (
       v_pl_id,
@@ -104,7 +104,6 @@ BEGIN
       '{"reportId":{"type":"integer","required":true},"reason":{"type":"string","required":true}}'::jsonb,
       TRUE,
       '{}'::jsonb,
-      '',
       '{}'::jsonb,
       '[]'::jsonb
     )

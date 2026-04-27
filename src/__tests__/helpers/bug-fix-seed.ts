@@ -108,18 +108,27 @@ export async function seedPipelines(productLineId: number): Promise<void> {
   ]
 
   const pipes = [
-    { name: 'L1-配置类', stages: l1Stages },
-    { name: 'L2-代码缺陷', stages: l2Stages },
-    { name: 'L3-业务逻辑', stages: l3Stages },
-    { name: 'L4-复杂问题', stages: l4Stages },
+    { name: 'L1-配置类', refKey: 'fix_bug_l1', stages: l1Stages },
+    { name: 'L2-代码缺陷', refKey: 'fix_bug_l2', stages: l2Stages },
+    { name: 'L3-业务逻辑', refKey: 'fix_bug_l3', stages: l3Stages },
+    { name: 'L4-复杂问题', refKey: 'fix_bug_l4', stages: l4Stages },
   ]
   for (const p of pipes) {
-    await pool.query(
+    const { rows } = await pool.query(
       `INSERT INTO test_pipelines (product_line_id, name, description, stages, enabled)
        VALUES ($1, $2, '', $3::jsonb, true)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
       [productLineId, p.name, JSON.stringify(p.stages)],
     )
+    if (rows.length > 0) {
+      await pool.query(
+        `INSERT INTO pipeline_bindings (product_line_id, ref_key, pipeline_id, server_role_assignments, description)
+         VALUES ($1, $2, $3, '{}'::jsonb, '')
+         ON CONFLICT (product_line_id, ref_key) DO NOTHING`,
+        [productLineId, p.refKey, rows[0].id],
+      )
+    }
   }
 }
 

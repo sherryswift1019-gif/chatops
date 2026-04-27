@@ -21,6 +21,10 @@ import {
   listIMTriggers, listProductLineIMTriggers, setProductLineIMTriggers,
 } from '../api/imTriggers'
 import type { IMTrigger, ProductLineIMTrigger } from '../types/imTrigger'
+import { listPipelineBindings, deletePipelineBinding } from '../api/pipeline-bindings'
+import type { PipelineBinding } from '../api/pipeline-bindings'
+import { getTestPipelines } from '../api/test-pipelines'
+import { PipelineBindingForm } from '../components/PipelineBindingForm'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
 import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule, TestServer } from '../types'
 
@@ -1075,6 +1079,66 @@ function IMTriggersTab({ productLineId }: { productLineId: number }) {
   )
 }
 
+// ─── Pipeline Bindings Tab ────────────────────────────────────────────────────
+
+function PipelineBindingsTab({ productLineId }: { productLineId: number }) {
+  const [bindings, setBindings] = useState<PipelineBinding[]>([])
+  const [pipelines, setPipelines] = useState<Array<{ id: number; name: string }>>([])
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<PipelineBinding | undefined>()
+
+  async function load() {
+    const [bs, ps] = await Promise.all([
+      listPipelineBindings({ productLineId }),
+      getTestPipelines(),
+    ])
+    setBindings(bs)
+    setPipelines(ps)
+  }
+
+  useEffect(() => { load() }, [productLineId])
+
+  async function handleDelete(b: PipelineBinding) {
+    await deletePipelineBinding(b.productLineId, b.refKey)
+    message.success('已解绑')
+    load()
+  }
+
+  const columns = [
+    { title: 'ref_key', dataIndex: 'refKey' },
+    { title: 'Pipeline', dataIndex: 'pipelineId', render: (v: number) => {
+      const p = pipelines.find(x => x.id === v)
+      return p ? `${p.name} (#${v})` : `#${v}`
+    }},
+    { title: '描述', dataIndex: 'description' },
+    {
+      title: '操作',
+      render: (_: unknown, record: PipelineBinding) => (
+        <Space>
+          <Button size="small" onClick={() => { setEditing(record); setFormOpen(true) }}>编辑</Button>
+          <Button size="small" danger onClick={() => handleDelete(record)}>解绑</Button>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <>
+      <Space style={{ marginBottom: 16 }}>
+        <Button type="primary" onClick={() => { setEditing(undefined); setFormOpen(true) }}>新增绑定</Button>
+      </Space>
+      <Table rowKey="refKey" dataSource={bindings} columns={columns} pagination={false} size="small" />
+      <PipelineBindingForm
+        productLineId={productLineId}
+        initialValue={editing}
+        open={formOpen}
+        onSuccess={() => { setFormOpen(false); load() }}
+        onCancel={() => setFormOpen(false)}
+      />
+    </>
+  )
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function ProductLineDetailPage() {
@@ -1148,6 +1212,11 @@ export default function ProductLineDetailPage() {
       key: 'capabilities',
       label: '能力库 (LLM agent)',
       children: <CapabilitiesTab productLineId={productLineId} />,
+    },
+    {
+      key: 'bindings',
+      label: 'Pipeline 绑定',
+      children: <PipelineBindingsTab productLineId={productLineId} />,
     },
   ]
 

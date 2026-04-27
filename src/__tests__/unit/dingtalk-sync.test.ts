@@ -47,9 +47,12 @@ function setupDingTalkMocks(opts: {
     if (url.includes('oauth2/accessToken')) {
       return { data: { accessToken: 'tok-fake', expireIn: 7200 } }
     }
-    if (url.endsWith('department/listsubid')) {
-      // 没子部门，直接返回根部门 1 即可（递归终止）
-      return { data: { errcode: 0, result: { dept_id_list: [] } } }
+    if (url.endsWith('department/get')) {
+      return { data: { errcode: 0, result: { dept_id: 1, name: '根部门', parent_id: 0 } } }
+    }
+    if (url.endsWith('department/listsub')) {
+      // 没子部门，递归终止
+      return { data: { errcode: 0, result: [] } }
     }
     if (url.endsWith('user/list')) {
       return {
@@ -173,11 +176,19 @@ describe('syncDingTalkUsers', () => {
       if (url.includes('oauth2/accessToken')) {
         return { data: { accessToken: 'tok-fake' } }
       }
-      if (url.endsWith('department/listsubid')) {
+      if (url.endsWith('department/get')) {
+        const deptId = body.dept_id as number
+        const names: Record<number, string> = { 1: '根部门', 2: 'Dept2', 3: 'Dept3' }
+        return { data: { errcode: 0, result: { dept_id: deptId, name: names[deptId] ?? `Dept${deptId}`, parent_id: deptId === 1 ? 0 : 1 } } }
+      }
+      if (url.endsWith('department/listsub')) {
         const parent = body.dept_id as number
         // 根部门 1 下挂两个子部门 2, 3；2、3 都没子
-        if (parent === 1) return { data: { errcode: 0, result: { dept_id_list: [2, 3] } } }
-        return { data: { errcode: 0, result: { dept_id_list: [] } } }
+        if (parent === 1) return { data: { errcode: 0, result: [
+          { dept_id: 2, name: 'Dept2', parent_id: 1 },
+          { dept_id: 3, name: 'Dept3', parent_id: 1 },
+        ] } }
+        return { data: { errcode: 0, result: [] } }
       }
       if (url.endsWith('user/list')) {
         // 让 dup 用户在部门 2 和 3 都返回；solo 仅在部门 3

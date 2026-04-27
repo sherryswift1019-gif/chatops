@@ -334,10 +334,6 @@ async function main(): Promise<void> {
   // Admin API routes (under /admin prefix)
   await app.register(adminPlugin, { prefix: '/admin', adapters, runner })
 
-  // Start pipeline scheduler
-  const { startScheduler } = await import('./pipeline/scheduler.js')
-  startScheduler().catch(err => app.log.error({ err }, 'Failed to start pipeline scheduler'))
-
   // HTTP Routes (DingTalk uses Stream mode — no webhook route needed)
   const feishuAdapter = adapters.find(a => a.platform === 'feishu')
   if (feishuAdapter) {

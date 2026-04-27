@@ -21,7 +21,7 @@ import { mkdir } from 'fs/promises'
 import { join } from 'path'
 import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import { createTestRun, finishTestRun } from '../db/repositories/test-runs.js'
-import { listTestServers, bulkSetServerStatus } from '../db/repositories/test-servers.js'
+import { listTestServersByIds, bulkSetServerStatus, type TestServer } from '../db/repositories/test-servers.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import { resolveArtifact } from './artifact-resolver.js'
 import { buildDefaultHooks } from './executor-hooks.js'
@@ -123,25 +123,25 @@ export async function runPipeline(
   await mkdir(logDir, { recursive: true })
 
   // Resolve server info from DB (serverless pipelines skip this entirely).
-  const hasServers = Object.keys(serverAssignment).length > 0
-  const allServers = hasServers ? await listTestServers(pipeline.productLineId) : []
   const serverMap: Record<string, ServerInfo[]> = {}
   const serverIds: number[] = []
 
-  for (const [role, hosts] of Object.entries(serverAssignment)) {
-    serverMap[role] = hosts.map((host) => {
-      const srv = allServers.find((s) => s.host === host || s.name === host)
-      if (!srv) throw new Error(`Server "${host}" not found in product line`)
-      serverIds.push(srv.id)
-      return {
-        id: srv.id,
-        host: srv.host,
-        port: srv.port,
-        username: srv.username,
-        password: srv.credential,
-        role,
-      }
-    })
+  if (Object.keys(serverAssignment).length > 0) {
+    // 新路径：binding 提供 server id 列表
+    const resolved = await hydrateServerAssignments(serverAssignment)
+    for (const [role, servers] of Object.entries(resolved)) {
+      serverMap[role] = servers.map(s => {
+        serverIds.push(s.id)
+        return {
+          id: s.id,
+          host: s.host,
+          port: s.port,
+          username: s.username,
+          password: s.credential,
+          role,
+        }
+      })
+    }
   }
 
   if (serverIds.length > 0) await bulkSetServerStatus(serverIds, 'in_use')
@@ -205,4 +205,29 @@ export async function runPipeline(
   })
 
   return run.id
+}
+
+/**
+ * 从 server id 列表（string[]，pipeline_bindings.server_role_assignments 格式）
+ * 批量查出 TestServer，按 role 分组返回 ServerInfo-compatible 对象。
+ *
+ * 被 runPipeline 的新路径调用，也被外部测试直接 import。
+ */
+export async function hydrateServerAssignments(
+  assignments: Record<string, string[]>,
+): Promise<Record<string, TestServer[]>> {
+  if (Object.keys(assignments).length === 0) return {}
+  const allIds = Array.from(new Set(Object.values(assignments).flat().map(Number)))
+  const servers = await listTestServersByIds(allIds)
+  const byId = new Map(servers.map(s => [s.id, s]))
+  const result: Record<string, TestServer[]> = {}
+  for (const [role, ids] of Object.entries(assignments)) {
+    result[role] = ids.map(idStr => {
+      const id = Number(idStr)
+      const s = byId.get(id)
+      if (!s) throw new Error(`server id ${id} not found in test_servers`)
+      return s
+    })
+  }
+  return result
 }
