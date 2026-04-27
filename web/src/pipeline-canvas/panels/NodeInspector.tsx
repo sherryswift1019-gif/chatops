@@ -1,5 +1,5 @@
-import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tooltip, Modal, Collapse, Typography, message, Radio, Tabs } from 'antd'
-import { ExclamationCircleTwoTone } from '@ant-design/icons'
+import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tooltip, Modal, Collapse, Typography, message, Radio, Tabs, Button, Popconfirm } from 'antd'
+import { ExclamationCircleTwoTone, DeleteOutlined } from '@ant-design/icons'
 import { useEffect, useMemo, useState } from 'react'
 import type { StageNode, StageFields, ImInputConfig, StageType } from '../types'
 import { BESPOKE_STAGE_TYPES } from '../types'
@@ -21,6 +21,7 @@ interface Props {
   node: StageNode | null
   onClose: () => void
   onChange: (id: string, data: Partial<StageFields>) => void
+  onDelete?: (id: string) => void
   availableRoles: string[]
   dingtalkUsers: { userId: string; name: string }[]
   capabilities: CapabilityOption[]
@@ -230,7 +231,7 @@ function DynamicParamsForm({
       )}
     </>
   )
-}export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers, capabilities, pipelineId, ancestors, onRunUpstream }: Props) {
+}export function NodeInspector({ node, onClose, onChange, onDelete, availableRoles, dingtalkUsers, capabilities, pipelineId, ancestors, onRunUpstream }: Props) {
   const [form] = Form.useForm()
   // paramSchema 作为 JSON 字符串在 Inspector 本地维护，避免 antd Form 在每次按键
   // 时重新受控导致编辑中断；onBlur 时解析并提交。
@@ -334,7 +335,25 @@ function DynamicParamsForm({
   }
 
   return (
-    <Drawer title={`节点: ${node.data.name || '未命名'}`} open onClose={onClose} width={420} mask={false}>
+    <Drawer
+      title={`节点: ${node.data.name || '未命名'}`}
+      open
+      onClose={onClose}
+      width={420}
+      mask={false}
+      extra={onDelete ? (
+        <Popconfirm
+          title="确认删除该节点？"
+          description="删除节点将同时移除所有连接到该节点的连线，可通过撤销恢复。"
+          onConfirm={() => { onDelete(node.id); onClose() }}
+          okText="删除"
+          cancelText="取消"
+          okButtonProps={{ danger: true }}
+        >
+          <Button danger icon={<DeleteOutlined />}>删除节点</Button>
+        </Popconfirm>
+      ) : null}
+    >
       <Tabs
         items={[
           {

@@ -352,6 +352,10 @@ export default function PipelineCanvasPage() {
           node={selectedNode}
           onClose={() => setSelectedId(null)}
           onChange={graph.updateNodeData}
+          onDelete={(id) => {
+            graph.deleteNode(id)
+            setSelectedId(null)
+          }}
           availableRoles={availableRoles}
           dingtalkUsers={dingtalkUsers}
           capabilities={capabilityOptions}
@@ -371,6 +375,7 @@ export default function PipelineCanvasPage() {
           nodes={graph.nodes}
           updateSwitchCaseWhen={graph.updateSwitchCaseWhen}
           moveCase={graph.moveCase}
+          deleteEdge={graph.deleteEdge}
         />
         <DryRunStartModal
           open={startModalOpen}

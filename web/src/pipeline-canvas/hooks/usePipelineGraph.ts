@@ -146,6 +146,88 @@ export function usePipelineGraph(initial: PipelineGraphWire) {
   }, [])
 
   /**
+   * 删除一条 edge：从 edges 列表移除；若 source 是 switch 节点，
+   * 同步重算 params.cases / params.default（与 React Flow onEdgesChange 删除路径一致）。
+   */
+  const deleteEdge = useCallback((edgeId: string) => {
+    setState(s => {
+      const edge = s.edges.find(e => e.id === edgeId)
+      if (!edge) return s
+      pushHistory({ nodes: s.nodes, edges: s.edges })
+      const nextEdges = s.edges.filter(e => e.id !== edgeId)
+      const sourceIsSwitch = s.nodes.find(n => n.id === edge.source)?.data.stageType === 'switch'
+      const next = { ...s, edges: nextEdges, dirty: true }
+      if (sourceIsSwitch) {
+        // 直接在这里复算，避免依赖外部 setTimeout
+        const switchEdges = nextEdges.filter(e => e.source === edge.source)
+        const cases: Array<{ when: string; target: string }> = []
+        let defaultTarget: string | undefined
+        const switchNode = s.nodes.find(n => n.id === edge.source)
+        const existingCases = ((switchNode?.data.params as any)?.cases ?? []) as Array<{ when: string; target: string }>
+        for (const e of switchEdges) {
+          if (e.data?.isDefault || e.sourceHandle === 'default') {
+            defaultTarget = e.target
+          } else {
+            const existing = existingCases.find(c => c.target === e.target)
+            cases.push({ when: existing?.when ?? '', target: e.target })
+          }
+        }
+        next.nodes = s.nodes.map(n => n.id === edge.source
+          ? { ...n, data: { ...n.data, params: { ...(n.data.params as any), cases, default: defaultTarget } } }
+          : n)
+      }
+      return next
+    })
+  }, [pushHistory])
+
+  /**
+   * 删除一个节点：移除节点本身 + 所有以该节点为 source/target 的 edges；
+   * 对受影响的 switch 节点重新同步 params.cases / params.default。
+   */
+  const deleteNode = useCallback((nodeId: string) => {
+    setState(s => {
+      const node = s.nodes.find(n => n.id === nodeId)
+      if (!node) return s
+      pushHistory({ nodes: s.nodes, edges: s.edges })
+
+      const removedEdges = s.edges.filter(e => e.source === nodeId || e.target === nodeId)
+      const nextEdges = s.edges.filter(e => e.source !== nodeId && e.target !== nodeId)
+      const nextNodes = s.nodes.filter(n => n.id !== nodeId)
+
+      // 收集需要 resync 的 switch source（只看 target 端被删除的边的 source）
+      const affectedSwitches = new Set<string>()
+      for (const e of removedEdges) {
+        if (e.target === nodeId && e.source !== nodeId) {
+          const src = nextNodes.find(n => n.id === e.source)
+          if (src?.data.stageType === 'switch') affectedSwitches.add(e.source)
+        }
+      }
+
+      let syncedNodes = nextNodes
+      for (const switchId of affectedSwitches) {
+        const switchEdges = nextEdges.filter(e => e.source === switchId)
+        const cases: Array<{ when: string; target: string }> = []
+        let defaultTarget: string | undefined
+        const switchNode = s.nodes.find(n => n.id === switchId)
+        const existingCases = ((switchNode?.data.params as any)?.cases ?? []) as Array<{ when: string; target: string }>
+        for (const e of switchEdges) {
+          if (e.data?.isDefault || e.sourceHandle === 'default') {
+            defaultTarget = e.target
+          } else {
+            const existing = existingCases.find(c => c.target === e.target)
+            cases.push({ when: existing?.when ?? '', target: e.target })
+          }
+        }
+        syncedNodes = syncedNodes.map(n => n.id === switchId
+          ? { ...n, data: { ...n.data, params: { ...(n.data.params as any), cases, default: defaultTarget } } }
+          : n)
+      }
+
+      return { ...s, nodes: syncedNodes, edges: nextEdges, dirty: true }
+    })
+  }, [pushHistory])
+
+  /**
    * 写回某条 switch case 的 when 表达式。
    */
   const updateSwitchCaseWhen = useCallback((switchId: string, caseIdx: number, when: string) => {
@@ -179,6 +261,7 @@ export function usePipelineGraph(initial: PipelineGraphWire) {
     setNodes, setEdges, replaceGraph,
     updateNodeData, updateEdgeCondition,
     isSwitch, syncSwitchParams, moveCase, updateSwitchCaseWhen,
+    deleteEdge, deleteNode,
     undo, resetDirty, toWire,
   }
 }
