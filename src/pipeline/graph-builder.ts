@@ -14,18 +14,61 @@ import { resolveApprovers } from './approval-resolvers.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
+
+/**
+ * DryRunFlavor — injected by dryrun-runner to intercept side-effect nodes.
+ * When present, side-effect nodes (dm/db_update/script/approval/http) call
+ * beforeSideEffect to get a decision before executing. Non-side-effect nodes
+ * (sql_query etc.) are not intercepted but do still emit recordSnapshot.
+ */
+export interface DryRunFlavor {
+  /**
+   * Called before a side-effect node executes.
+   * Returns a decision: 'real' (execute the real hook), 'stub' (skip, use
+   * default empty output), or 'manual' (skip, use caller-supplied output).
+   */
+  beforeSideEffect: (
+    nodeId: string,
+    nodeType: string,
+    params: unknown,
+  ) => Promise<{ decision: 'real' | 'stub' | 'manual'; output?: Record<string, unknown> }>
+  /**
+   * Called after each node (side-effect or not) completes. Persists the result
+   * to pipeline_dryrun_snapshots for Inspector "upstream fields" display.
+   */
+  recordSnapshot: (nodeId: string, snapshot: {
+    status: 'success' | 'failed' | 'skipped'
+    output: Record<string, unknown>
+    source: 'real' | 'stub' | 'manual'
+    durationMs: number
+    error?: string
+  }) => Promise<void>
+  /**
+   * Returns the upstream params hash for a given node id (pre-computed before
+   * graph execution starts, used for stale-detection in snapshots).
+   */
+  upstreamHashOf: (nodeId: string) => string
+}
+
 export interface StageHooks {
   runScript(
     stage: StageDefinition,
     ctx: StageContext,
     targetServers: ServerInfo[],
   ): Promise<StageExecutionResult>
-  runCapability(
+  runCapability?(
     stage: StageDefinition,
     ctx: StageContext,
     triggerParams?: Record<string, unknown>,
     runtimeVars?: Record<string, unknown>,
   ): Promise<StageExecutionResult>
+  /** Called for 'dm' stage type. Optional — if absent, dm nodes are no-ops. */
+  runDm?(
+    stage: StageDefinition,
+    ctx: StageContext,
+  ): Promise<StageExecutionResult>
+  /** DryRunFlavor — injected only during dry runs. When absent, zero overhead. */
+  dryRunFlavor?: DryRunFlavor
 }
 
 // StageContext minus stageIndex — the builder fills stageIndex per node.
@@ -224,7 +267,11 @@ function buildCapabilityNode(
     const runtimeVars = { ...(ctxBase.variables ?? {}), ...(state.runtimeVars ?? {}) }
     let exec: StageExecutionResult
     try {
-      exec = await hooks.runCapability(stage, ctx, triggerParams, runtimeVars)
+      if (!hooks.runCapability) {
+        exec = { status: 'failed', output: 'capability hook not configured', error: 'no_hook' }
+      } else {
+        exec = await hooks.runCapability(stage, ctx, triggerParams, runtimeVars)
+      }
     } catch (err) {
       exec = {
         status: 'failed',
@@ -232,6 +279,60 @@ function buildCapabilityNode(
         error: String(err),
       }
     }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult(stage, startedAt, startedMs, exec),
+    }
+  }
+}
+
+// Build a DM (direct message) node. Calls hooks.runDm if present;
+// falls back to a no-op success result (useful in tests that don't need IM).
+function buildDmNode(
+  stage: StageDefinition,
+  index: number,
+  ctxBase: StageContextBase,
+  hooks: StageHooks,
+) {
+  return async () => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const ctx: StageContext = { ...ctxBase, stageIndex: index }
+    let exec: StageExecutionResult
+    try {
+      if (hooks.runDm) {
+        exec = await hooks.runDm(stage, ctx)
+      } else {
+        exec = { status: 'success', output: '(dm hook not configured, skipped)' }
+      }
+    } catch (err) {
+      exec = {
+        status: 'failed',
+        output: `dm hook error: ${String(err)}`,
+        error: String(err),
+      }
+    }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult(stage, startedAt, startedMs, exec),
+    }
+  }
+}
+
+// Build a sql_query node. V1 is a read-only non-side-effect node.
+// The actual DB execution is not wired in graph-builder (it goes through
+// executor hooks in production). In dry-run it just records a snapshot.
+function buildSqlQueryNode(
+  stage: StageDefinition,
+  index: number,
+) {
+  return async () => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    // In dry-run context, sql_query is treated as a non-side-effect node:
+    // it runs directly without a decision prompt. The real implementation
+    // (graph-runtime / executor) provides the actual SQL execution.
+    const exec: StageExecutionResult = { status: 'success', output: '(sql_query: no executor wired)' }
     return {
       currentStageIndex: index,
       stageResults: finishedResult(stage, startedAt, startedMs, exec),
@@ -642,26 +743,162 @@ export function buildGraphFromPipeline(
 
   const idToName = new Map(graph.nodes.map((n, i) => [n.id, nodeName(i, n)]))
 
+  // Stage types that have external side effects (send messages, modify DB,
+  // run scripts, trigger approvals, make HTTP calls). These are intercepted
+  // by the dryRunFlavor wrapper when present.
+  // wait_webhook and im_input are excluded: they use their own interrupt loop
+  // and are not wrapped (the user triggers them externally).
+  const SIDE_EFFECT_TYPES = new Set<string>(['script', 'dm', 'db_update', 'http', 'approval'])
+
+  /**
+   * Wraps a side-effect node with a dryRunFlavor interrupt.
+   *
+   * Flow:
+   *   1. Call beforeSideEffect → get decision (real/stub/manual)
+   *   2. 'real': run the actual node, then recordSnapshot(source='real')
+   *   3. 'stub' / 'manual': skip the real node, construct stepOutputs from
+   *      decision.output, then recordSnapshot(source=decision)
+   */
+  function wrapSideEffect(
+    node: PipelineGraph['nodes'][number],
+    index: number,
+    realNodeFn: (state: typeof PipelineStateAnnotation.State) => Promise<unknown>,
+  ): (state: typeof PipelineStateAnnotation.State) => Promise<unknown> {
+    const dr = hooks.dryRunFlavor!
+    return async (state: typeof PipelineStateAnnotation.State) => {
+      const startedAt = Date.now()
+      const params = (node as unknown as { params?: unknown }).params
+      const { decision, output: decisionOutput } = await dr.beforeSideEffect(node.id, node.stageType, params)
+
+      if (decision === 'real') {
+        const result = await realNodeFn(state) as Record<string, unknown>
+        // Extract the stepOutput produced by the real node (if any)
+        const stepOutput = (result?.stepOutputs as Record<string, unknown> | undefined)?.[node.id] as
+          { status?: string; output?: unknown } | undefined
+        const outputVal = (stepOutput?.output ?? {}) as Record<string, unknown>
+        const status = (stepOutput?.status ?? 'success') as 'success' | 'failed' | 'skipped'
+        await dr.recordSnapshot(node.id, {
+          status,
+          output: outputVal,
+          source: 'real',
+          durationMs: Date.now() - startedAt,
+        })
+        return result
+      }
+
+      // stub or manual: skip real execution, use provided output
+      const output = decisionOutput ?? {}
+      await dr.recordSnapshot(node.id, {
+        status: 'success',
+        output,
+        source: decision,
+        durationMs: Date.now() - startedAt,
+      })
+      return {
+        currentStageIndex: index,
+        stageResults: {
+          name: node.name,
+          status: 'success' as const,
+          output: JSON.stringify(output),
+          startedAt: new Date(startedAt).toISOString(),
+          durationMs: Date.now() - startedAt,
+        },
+        stepOutputs: { [node.id]: { status: 'success' as const, output } },
+      }
+    }
+  }
+
+  /**
+   * Wraps a non-side-effect node with a snapshot recorder (source='real' always).
+   * Only active when dryRunFlavor is present.
+   */
+  function wrapWithSnapshot(
+    node: PipelineGraph['nodes'][number],
+    index: number,
+    fn: (state: typeof PipelineStateAnnotation.State) => Promise<unknown>,
+  ): (state: typeof PipelineStateAnnotation.State) => Promise<unknown> {
+    if (!hooks.dryRunFlavor) return fn
+    const dr = hooks.dryRunFlavor
+    return async (state: typeof PipelineStateAnnotation.State) => {
+      const startedAt = Date.now()
+      const result = await fn(state) as Record<string, unknown>
+      const stepOutput = (result?.stepOutputs as Record<string, unknown> | undefined)?.[node.id] as
+        { status?: string; output?: unknown } | undefined
+      const outputVal = (stepOutput?.output ?? {}) as Record<string, unknown>
+      const status = (stepOutput?.status ?? 'success') as 'success' | 'failed' | 'skipped'
+      await dr.recordSnapshot(node.id, {
+        status,
+        output: outputVal,
+        source: 'real',
+        durationMs: Date.now() - startedAt,
+      })
+      return result
+    }
+  }
+
   // addNode
   for (let i = 0; i < graph.nodes.length; i++) {
     const node = graph.nodes[i]
     const name = idToName.get(node.id)!
+
+    // Build the base node function per stageType, then apply dryRunFlavor wrapping.
     switch (node.stageType) {
       case 'script':
-        builder = builder.addNode(name, buildScriptNode(node, i, stageContext, hooks)); break
-      case 'capability':
-        builder = builder.addNode(name, buildCapabilityNode(node, i, stageContext, hooks, triggerParams)); break
       case 'approval':
-        builder = builder.addNode(name, buildApprovalNode(node, i, triggerParams)); break
+      case 'dm':
+      case 'db_update' as string:
+      case 'http' as string: {
+        // ---- Side-effect nodes: optionally wrapped with dryRunFlavor interrupt ----
+        let realFn: (state: typeof PipelineStateAnnotation.State) => Promise<unknown>
+        if (node.stageType === 'script') {
+          realFn = buildScriptNode(node, i, stageContext, hooks) as typeof realFn
+        } else if (node.stageType === 'approval') {
+          realFn = buildApprovalNode(node, i, triggerParams) as typeof realFn
+        } else if (node.stageType === 'dm') {
+          realFn = buildDmNode(node, i, stageContext, hooks) as typeof realFn
+        } else {
+          // db_update / http: not yet implemented; no-op placeholder
+          realFn = async () => ({
+            currentStageIndex: i,
+            stageResults: finishedResult(node, nowIso(), Date.now(), {
+              status: 'success' as const,
+              output: `(${node.stageType}: not implemented)`,
+            }),
+          })
+        }
+        const nodeFn = hooks.dryRunFlavor
+          ? wrapSideEffect(node, i, realFn)
+          : realFn
+        builder = builder.addNode(name, nodeFn)
+        break
+      }
+
+      case 'capability':
+        builder = builder.addNode(name, wrapWithSnapshot(node, i,
+          buildCapabilityNode(node, i, stageContext, hooks, triggerParams) as (state: typeof PipelineStateAnnotation.State) => Promise<unknown>))
+        break
+
       case 'wait_webhook':
-        builder = builder.addNode(name, buildWaitWebhookNode(node, i)); break
+        // Not wrapped: wait_webhook uses its own interrupt loop + external trigger.
+        builder = builder.addNode(name, buildWaitWebhookNode(node, i))
+        break
+
       case 'im_input':
-        builder = builder.addNode(name, buildImInputNode(node, i, stageContext)); break
+        // Not wrapped: im_input uses its own interrupt loop.
+        builder = builder.addNode(name, buildImInputNode(node, i, stageContext))
+        break
+
+      case 'sql_query':
+        builder = builder.addNode(name, wrapWithSnapshot(node, i,
+          buildSqlQueryNode(node, i) as (state: typeof PipelineStateAnnotation.State) => Promise<unknown>))
+        break
+
       default: {
         const unknown: never = node.stageType
         throw new Error(`Unsupported stage type: ${String(unknown)}`)
       }
     }
+
     builder = builder.addNode(skipRestName(i), buildSkipRestNode(graph.nodes, i + 1))
   }
 

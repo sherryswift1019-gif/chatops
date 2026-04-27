@@ -64,6 +64,13 @@ export const PipelineStateAnnotation = Annotation.Root({
     reducer: (current, update) => current || !!update,
     default: () => false,
   }),
+  // stepOutputs: keyed by node id, stores the structured output of each node.
+  // Used by dry-run to record stub/manual outputs and by downstream variable resolution.
+  // Reducer: shallow merge by node id (latest wins per node).
+  stepOutputs: Annotation<Record<string, { status: 'success' | 'failed'; output: unknown }>>({
+    reducer: (current, update) => ({ ...current, ...(update ?? {}) }),
+    default: () => ({}),
+  }),
 })
 
 export type PipelineState = typeof PipelineStateAnnotation.State
