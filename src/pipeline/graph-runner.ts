@@ -140,6 +140,19 @@ export function getRegistrySize(): number {
 }
 
 /**
+ * Test-only helper: nuke every in-memory bookkeeping structure used by the
+ * graph-runner module (runRegistry / resolvedInterrupts / interruptTimers).
+ * Useful in test setup when prior tests in the same vitest worker may have
+ * leaked entries that affect singleton-driven flows like approval/wait_webhook.
+ */
+export function resetGraphRunnerForTesting(): void {
+  runRegistry.clear()
+  resolvedInterrupts.clear()
+  for (const t of interruptTimers.values()) clearTimeout(t)
+  interruptTimers.clear()
+}
+
+/**
  * Start a pipeline run. Returns after the graph ENDs or hits its first
  * interrupt — in the latter case finalize is deferred until resumeRun drains
  * the rest.

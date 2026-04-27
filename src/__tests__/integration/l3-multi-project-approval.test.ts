@@ -71,7 +71,7 @@ import { handleNotify } from '../../agent/notify/notify-handler.js'
 import { getBugAnalysisReportById } from '../../db/repositories/bug-analysis-reports.js'
 import { findByReport } from '../../db/repositories/bug-fix-events.js'
 import { PipelineApprovalManager } from '../../pipeline/approval-manager.js'
-import { resumeRun, initGraphRunnerDispatchers } from '../../pipeline/graph-runner.js'
+import { resumeRun, initGraphRunnerDispatchers, resetGraphRunnerForTesting, getRegistrySize } from '../../pipeline/graph-runner.js'
 import { resetCheckpointerForTesting } from '../../pipeline/graph-runtime.js'
 import { registerBuiltinApprovalResolvers } from '../../agent/approval/resolvers.js'
 import { runFilterStage, runDetailStage } from '../../agent/analysis/claude-runs.js'
@@ -115,6 +115,11 @@ describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
     // 必须重置 PostgresSaver 的 singleton cache，否则 case 2+ 会用老 saver 实例连
     // 不存在的 checkpoints 表，报 "relation public.checkpoints does not exist"
     resetCheckpointerForTesting()
+    // graph-runner 的 runRegistry / resolvedInterrupts 是 module-level 状态，
+    // 上轮测试（同 vitest worker 内的 handler-vs-pipeline-notify / full-bug-fix-flow 等）
+    // 留下的 entry 会影响 approval rejection 流（具体表现：rejected 决策被错误覆盖
+    // 成 success，coordinator 错走 pipeline_success 分支）。每个 case 前清干净。
+    resetGraphRunnerForTesting()
     vi.clearAllMocks()
 
     const seed = await baseSeed()
@@ -166,9 +171,18 @@ describe('AC2: L3 多 project 审批 + 主/从仓库', () => {
   })
 
   afterEach(async () => {
-    // 等上个 case 的 fire-and-forget pipeline 背景 async flush（notify_bug / coordinator.onComplete 等）
-    // 否则下个 case 的 resetTestDb 可能打断未完成的 stage，导致 runRegistry 残留
-    await new Promise(r => setTimeout(r, 300))
+    // 等上个 case 的 fire-and-forget pipeline 真正 finalize：poll runRegistry 直到清空。
+    // 若不等：case 1 (approved) 的 pipeline 还在跑 fix/mr/review/notify，
+    // case 2 resetTestDb 让 bug_analysis_reports.id 重置回 1；case 1 的 onComplete
+    // 此时 fire 会拿同一个 reportId=1 调 updateReportStatus('pipeline_success')，
+    // 把 case 2 的 (rejected) 新报告状态错改成 pipeline_success（即此 test 的 flake 根因）。
+    const stallStart = Date.now()
+    while (getRegistrySize() > 0 && Date.now() - stallStart < 10_000) {
+      await new Promise(r => setTimeout(r, 100))
+    }
+    // 兜底再缓 1500ms 让 onComplete 内部的 await DB 写入 + handover/notify 全部 settle
+    // (onComplete 是 fire-and-forget 调用，registry 清空 ≠ 内部 await 全完)
+    await new Promise(r => setTimeout(r, 1500))
     vi.restoreAllMocks()
   })
 

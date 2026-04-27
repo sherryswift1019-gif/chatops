@@ -16,3 +16,4 @@ playwright-report/
 src/db/system-config.local.sql
 .worktrees
 .DS_Store
+logs/
