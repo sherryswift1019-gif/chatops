@@ -237,9 +237,28 @@ function buildCapabilityNode(
         error: String(err),
       }
     }
+
+    const outputFormat = stage.outputFormat ?? 'json'
+    let stepOutput: { status: 'success'; output: Record<string, unknown> } | null = null
+
+    if (outputFormat === 'json' && exec.status === 'success') {
+      try {
+        const parsed = JSON.parse(exec.output)
+        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          exec = { status: 'failed', output: exec.output, error: 'outputFormat=json: 输出必须是 JSON 对象' }
+        } else {
+          stepOutput = { status: 'success', output: parsed as Record<string, unknown> }
+        }
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        exec = { status: 'failed', output: exec.output, error: `outputFormat=json: parse 失败: ${msg}` }
+      }
+    }
+
     return {
       currentStageIndex: index,
       stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      ...(stepOutput ? { stepOutputs: { [(stage as PipelineNode).id ?? stage.name]: stepOutput } } : {}),
     }
   }
 }

@@ -73,7 +73,7 @@ describe('buildGraphFromStages — linear all-success', () => {
   it('runs script → capability → approval(approved) → wait_webhook(data)', async () => {
     const stages: StageDefinition[] = [
       makeStage({ name: 's1-script', stageType: 'script', targetRoles: ['app'] }),
-      makeStage({ name: 's2-cap', stageType: 'llm_agent', capabilityKey: 'build' }),
+      makeStage({ name: 's2-cap', stageType: 'llm_agent', capabilityKey: 'build', outputFormat: 'string' }),
       makeStage({
         name: 's3-approval',
         stageType: 'approval',
@@ -124,7 +124,7 @@ describe('buildGraphFromStages — onFailure=stop skips downstream', () => {
       makeStage({ name: 's1', stageType: 'script', targetRoles: ['app'] }),
       makeStage({ name: 's2', stageType: 'script', targetRoles: ['app'], onFailure: 'stop' }),
       makeStage({ name: 's3', stageType: 'script', targetRoles: ['app'] }),
-      makeStage({ name: 's4', stageType: 'llm_agent', capabilityKey: 'notify' }),
+      makeStage({ name: 's4', stageType: 'llm_agent', capabilityKey: 'notify', outputFormat: 'string' }),
     ]
 
     let call = 0
@@ -162,6 +162,7 @@ describe('buildGraphFromStages — onFailure=continue keeps going', () => {
         stageType: 'llm_agent',
         capabilityKey: 'flaky',
         onFailure: 'continue',
+        outputFormat: 'string',
       }),
       makeStage({ name: 's3', stageType: 'script', targetRoles: ['app'] }),
     ]
