@@ -611,11 +611,13 @@ function buildImInputDryRunNode(
     }
 
     // 按 paramSchema.properties 过滤 triggerParams，只取 schema 声明过的 key，
-    // 避免脏字段进入 vars。schema 缺失或非 object 时取全量。
+    // 避免脏字段进入 vars。schema 缺失 / 非 object / properties 为空时都回落
+    // 到全量 triggerParams（避免用户写残缺 schema 时 dry-run 输出全空）。
     const props = (cfg.paramSchema as { properties?: Record<string, unknown> } | undefined)?.properties
+    const propKeys = props && typeof props === 'object' ? Object.keys(props) : []
     const collected: Record<string, unknown> = {}
-    if (props && typeof props === 'object') {
-      for (const key of Object.keys(props)) {
+    if (propKeys.length > 0) {
+      for (const key of propKeys) {
         if (key in triggerParams) collected[key] = triggerParams[key]
       }
     } else {
