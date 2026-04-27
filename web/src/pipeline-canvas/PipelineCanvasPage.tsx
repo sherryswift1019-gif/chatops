@@ -267,6 +267,10 @@ export default function PipelineCanvasPage() {
             if (!editingEdgeId) return
             graph.updateEdgeCondition(editingEdgeId, c ? { condition: c } : undefined)
           }}
+          edge={editingEdge}
+          nodes={graph.nodes}
+          updateSwitchCaseWhen={graph.updateSwitchCaseWhen}
+          moveCase={graph.moveCase}
         />
       </div>
     </ReactFlowProvider>
