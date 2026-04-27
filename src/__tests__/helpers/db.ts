@@ -191,6 +191,8 @@ const SCHEMA_FILES = [
   // pipeline (4 节点 DAG: sql_query → fan_out → db_update × 2) 并注册 'create_mr'
   // 映射。空 product_lines 时 seed 自动 skip。同 v37/v40 forward policy。
   'schema-v41.sql',
+  // v42: pipeline 解绑产线，新建 pipeline_bindings 关联表 + 老数据迁移 + 删 schedule。
+  'schema-v42.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

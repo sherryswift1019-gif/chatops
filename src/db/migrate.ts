@@ -154,6 +154,10 @@ const schemaV41 = readFileSync(join(__dirname, 'schema-v41.sql'), 'utf8')
 await pool.query(schemaV41)
 console.log('[migrate] schema-v41 applied')
 
+const schemaV42 = readFileSync(join(__dirname, 'schema-v42.sql'), 'utf8')
+await pool.query(schemaV42)
+console.log('[migrate] schema-v42 applied')
+
 
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
