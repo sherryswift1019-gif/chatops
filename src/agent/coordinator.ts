@@ -37,15 +37,19 @@ const handlers = new Map<string, CapabilityHandler>()
 /**
  * phase 4 双轨灰度 feature flag。
  * 逗号分隔的 capability key 列表，命中则走 internal_capability_pipelines 映射的
- * pipeline 路径，否则走原 handler 路径。默认空字符串 = 行为不变。
+ * pipeline 路径，否则走原 handler 路径。
+ *
+ * phase 4 T5 (2026-04-27): 默认值从空字符串改为 'request_handover,notify_bug,create_mr'
+ * —— L1+L2+L3 三个迁移完成后默认全切 pipeline。如 production 撞 pipeline bug，
+ * 设 PIPELINE_DAG_HANDLERS='' 即整体回退到 handler 路径（handler 文件本期保留）。
  *
  * 每次读取 process.env（不在 module load 时 freeze），方便测试用 process.env
- * 动态切换灰度集合做行为对等比较（见 T2 行为对等测试）。
- *
- * 例: PIPELINE_DAG_HANDLERS=request_handover,notify_bug
+ * 动态切换灰度集合做行为对等比较（见 T2/T3/T4 行为对等测试）。
  */
+const PIPELINE_DAG_HANDLERS_DEFAULT = 'request_handover,notify_bug,create_mr'
+
 function isPipelineDagEnabled(capabilityKey: string): boolean {
-  const raw = process.env.PIPELINE_DAG_HANDLERS ?? ''
+  const raw = process.env.PIPELINE_DAG_HANDLERS ?? PIPELINE_DAG_HANDLERS_DEFAULT
   return raw
     .split(',')
     .map((s) => s.trim())
@@ -198,9 +202,10 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     }
   }
 
-  // phase 4 双轨灰度：PIPELINE_DAG_HANDLERS feature flag 命中且 internal_capability_pipelines
-  // 有映射 → 走 pipeline 路径；缺映射时退化到 handler（不静默吞掉，打 warn 便于排查灰度配置错误）。
-  // flag 默认空，行为不变。回滚 = export PIPELINE_DAG_HANDLERS=""，立刻回到 handler。
+  // phase 4 双轨：PIPELINE_DAG_HANDLERS feature flag 命中且 internal_capability_pipelines
+  // 有映射 → 走 pipeline 路径；缺映射时退化到 handler（不静默吞掉，打 warn 便于排查配置错误）。
+  // T5 (2026-04-27) 起默认含 'request_handover,notify_bug,create_mr' —— 这 3 个 capability
+  // 默认走 pipeline。回滚 = export PIPELINE_DAG_HANDLERS=""，立刻回到 handler 路径。
   if (isPipelineDagEnabled(opts.capabilityKey)) {
     const pipelineId = await getInternalPipelineId(opts.capabilityKey)
     if (pipelineId) {
