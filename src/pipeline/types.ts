@@ -23,6 +23,7 @@ export type ExecutorNodeStageType =
   | 'file_read'
   | 'template_render'
   | 'fan_out'
+  | 'switch'
 
 export interface StageDefinition {
   name: string
@@ -56,6 +57,8 @@ export interface StageDefinition {
   // capability stage（研发 AI 助手：触发 Agent capability）
   capabilityKey?: string
   capabilityParams?: Record<string, unknown>
+  /** 仅对 llm_agent 节点有意义。运行时默认 'json'（stage 级默认）；旧 graph 经 v44 migration 显式补 'string' 保现状 */
+  outputFormat?: 'string' | 'json'
   // wait_webhook stage（等待外部 Webhook 恢复）
   webhookTag?: string
   // im_input stage（IM 对话式参数采集）
