@@ -186,6 +186,11 @@ const SCHEMA_FILES = [
   // pipeline (4 节点 DAG: sql_query → fan_out → db_update × 2) 并注册 'notify_bug'
   // 映射。空 product_lines 时 seed 自动 skip。同 v37 forward policy。
   'schema-v40.sql',
+  // v41 (phase 4 T4 — create_mr pipeline 迁移): CREATE FUNCTION build_mr_description
+  // / build_mr_title (PL/pgSQL) + 在 product_lines 非空时种入 'create-mr-internal'
+  // pipeline (4 节点 DAG: sql_query → fan_out → db_update × 2) 并注册 'create_mr'
+  // 映射。空 product_lines 时 seed 自动 skip。同 v37/v40 forward policy。
+  'schema-v41.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
