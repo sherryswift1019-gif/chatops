@@ -15,6 +15,7 @@ interface Props {
   onUndo: () => void
   onBackToList: () => void
   onAddNode: (type: StageType) => void
+  onRunAll: () => void
 }
 
 const addMenuItems: MenuProps['items'] = [
@@ -48,6 +49,9 @@ export function CanvasToolbar(p: Props) {
         <Tooltip title="撤销"><Button icon={<UndoOutlined />} onClick={p.onUndo} /></Tooltip>
         <Button icon={<DeploymentUnitOutlined />} onClick={p.onAutoLayout}>自动排版</Button>
         <Button icon={<PlayCircleOutlined />} onClick={p.onTrigger}>触发执行</Button>
+        <Tooltip title="从入口跑到所有终端节点">
+          <Button icon={<PlayCircleOutlined />} onClick={p.onRunAll}>试运行整图</Button>
+        </Tooltip>
         <Button type="primary" icon={<SaveOutlined />} onClick={p.onSave} disabled={!p.dirty}>保存</Button>
         <Button icon={<RollbackOutlined />} onClick={p.onBackToList}>返回列表</Button>
       </Space>
