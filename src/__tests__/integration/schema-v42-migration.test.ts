@@ -17,14 +17,14 @@ async function seedPreV42State(): Promise<{ pl1: number; pl2: number; p1: number
   for (const pl of [pl1, pl2]) {
     for (let i = 0; i < 3; i++) {
       await pool.query(
-        `INSERT INTO test_servers (product_line_id, host, port, username, role, name, key_path)
-         VALUES ($1, $2, 22, 'root', 'web', $3, '')`,
+        `INSERT INTO test_servers (product_line_id, host, port, username, role, name)
+         VALUES ($1, $2, 22, 'root', 'web', $3)`,
         [pl, `web${i}-pl${pl}.example.com`, `web${i}-pl${pl}`],
       )
     }
     await pool.query(
-      `INSERT INTO test_servers (product_line_id, host, port, username, role, name, key_path)
-       VALUES ($1, $2, 22, 'root', 'db', $3, '')`,
+      `INSERT INTO test_servers (product_line_id, host, port, username, role, name)
+       VALUES ($1, $2, 22, 'root', 'db', $3)`,
       [pl, `db-pl${pl}.example.com`, `db-pl${pl}`],
     )
   }
