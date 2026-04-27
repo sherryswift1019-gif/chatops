@@ -5,11 +5,10 @@ import {
   setPipelineRunId,
   updateReportStatus,
 } from '../db/repositories/bug-analysis-reports.js'
-import type { TestPipeline } from '../db/repositories/test-pipelines.js'
 import { findByReportCode } from '../db/repositories/bug-fix-events.js'
 import { getProjectByGitlabPath } from '../db/repositories/projects-repo.js'
 import { getInternalPipelineId } from '../db/repositories/internal-capability-pipelines.js'
-import { getPool } from '../db/client.js'
+import { resolvePipelineForTrigger } from '../db/repositories/pipeline-bindings.js'
 import { runPipeline, apiTrigger } from '../pipeline/executor.js'
 import { PipelineApprovalManager } from '../pipeline/approval-manager.js'
 import type { IMAdapter } from '../adapters/im/types.js'
@@ -285,41 +284,6 @@ async function runPipelineAsCapability(
   }
 }
 
-/** Pipeline 名称约定（按 level 查找 product_line 对应 Pipeline） */
-const PIPELINE_NAMES: Record<string, string> = {
-  l1: 'L1-配置类',
-  l2: 'L2-代码缺陷',
-  l3: 'L3-业务逻辑',
-  l4: 'L4-复杂问题',
-}
-
-async function findPipelineByLevel(productLineId: number, level: string): Promise<TestPipeline | null> {
-  const name = PIPELINE_NAMES[level]
-  if (!name) return null
-  const { rows } = await getPool().query(
-    `SELECT * FROM test_pipelines WHERE product_line_id = $1 AND name = $2 AND enabled = true LIMIT 1`,
-    [productLineId, name],
-  )
-  const r = rows[0]
-  if (!r) return null
-  return {
-    id: r.id as number,
-    productLineId: r.product_line_id as number,
-    name: r.name as string,
-    description: (r.description ?? '') as string,
-    stages: (r.stages ?? []) as unknown[],
-    graph: (r.graph ?? null) as TestPipeline['graph'],
-    serverRoles: (r.server_roles ?? {}) as Record<string, { count: number }>,
-    artifactInputs: (r.artifact_inputs ?? []) as unknown[],
-    schedule: (r.schedule ?? '') as string,
-    enabled: r.enabled as boolean,
-    triggerParams: (r.trigger_params ?? {}) as Record<string, unknown>,
-    variables: (r.variables ?? {}) as Record<string, string>,
-    createdAt: r.created_at as Date,
-    updatedAt: r.updated_at as Date,
-  }
-}
-
 /**
  * runner 触发 analyze_bug 完成后的后置钩子：若 result 含 (reportId, level, classification)，
  * 转调 handleAnalysisComplete 把 Pipeline 拉起来。
@@ -372,9 +336,10 @@ export async function handleAnalysisComplete(
     throw new Error(`report ${reportId} not found`)
   }
 
-  const pipeline = await findPipelineByLevel(report.productLineId, level)
-  if (!pipeline) {
-    console.error(`[AgentCoordinator] no pipeline for productLine=${report.productLineId} level=${level}, mark aborted`)
+  const refKey = `fix_bug_${level}`
+  const binding = await resolvePipelineForTrigger(report.productLineId, refKey)
+  if (!binding) {
+    console.error(`[AgentCoordinator] no pipeline binding for productLine=${report.productLineId} ref_key=${refKey}, mark aborted`)
     await updateReportStatus(reportId, 'aborted')
     return
   }
@@ -523,8 +488,8 @@ export async function handleAnalysisComplete(
   }
 
   const runId = await runPipeline(
-    pipeline.id,
-    {},  // capability-only pipeline，无需服务器
+    binding.pipelineId,
+    binding.serverRoleAssignments,
     apiTrigger({ triggeredBy, params: { reportId } }),
     // runtimeVars: 把 reportId 同时写进 runtime 变量（test_runs.runtime_vars），
     // 这样 resume 时 reloadContext 能合并回 triggerParams——approval node 在
