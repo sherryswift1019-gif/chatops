@@ -30,6 +30,7 @@ import { registerOnboardingRoutes } from './routes/onboarding.js'
 import { registerPrdDocumentRoutes } from './routes/prd-documents.js'
 import { registerPrdChatRoutes } from './routes/prd-chat.js'
 import { registerPrdMetricsRoutes } from './routes/prd-metrics.js'
+import { pipelineBindingsRoutes } from './routes/pipeline-bindings.js'
 
 export async function adminPlugin(
   app: FastifyInstance,
@@ -80,4 +81,5 @@ export async function adminPlugin(
   if (opts.runner) {
     await registerPrdChatRoutes(app, { runner: opts.runner })
   }
+  await app.register(pipelineBindingsRoutes)
 }
