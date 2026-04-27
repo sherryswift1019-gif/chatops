@@ -2,7 +2,7 @@ import { getPool } from '../client.js'
 
 export interface TestPipeline {
   id: number
-  productLineId: number
+  productLineId: number  // 0 表示未绑定产线（DB 列 nullable，mapRow 把 null 映射为 0）
   name: string
   description: string
   stages: unknown[]
@@ -18,7 +18,7 @@ export interface TestPipeline {
 
 function mapRow(r: Record<string, unknown>): TestPipeline {
   return {
-    id: r.id as number, productLineId: r.product_line_id as number,
+    id: r.id as number, productLineId: (r.product_line_id ?? 0) as number,
     name: r.name as string, description: (r.description ?? '') as string,
     stages: (r.stages ?? []) as unknown[], serverRoles: (r.server_roles ?? {}) as Record<string, { count: number }>,
     enabled: r.enabled as boolean,
@@ -53,8 +53,8 @@ export async function getTestPipelineByName(name: string): Promise<TestPipeline 
 }
 
 export async function createTestPipeline(data: {
-  productLineId: number; name: string; description?: string
-  stages: unknown[]; serverRoles: Record<string, { count: number }>
+  productLineId?: number | null; name: string; description?: string
+  stages?: unknown[]; serverRoles?: Record<string, { count: number }>
   enabled?: boolean; triggerParams?: Record<string, unknown>
   variables?: Record<string, string>
   artifactInputs?: unknown[]
@@ -64,8 +64,8 @@ export async function createTestPipeline(data: {
   const { rows } = await pool.query(
     `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, enabled, trigger_params, variables, artifact_inputs, graph)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
-    [data.productLineId, data.name, data.description ?? '', JSON.stringify(data.stages),
-     JSON.stringify(data.serverRoles), data.enabled ?? true,
+    [data.productLineId ?? null, data.name, data.description ?? '', JSON.stringify(data.stages ?? []),
+     JSON.stringify(data.serverRoles ?? {}), data.enabled ?? true,
      JSON.stringify(data.triggerParams ?? {}), JSON.stringify(data.variables ?? {}),
      JSON.stringify(data.artifactInputs ?? []),
      data.graph !== undefined ? JSON.stringify(data.graph) : null]
