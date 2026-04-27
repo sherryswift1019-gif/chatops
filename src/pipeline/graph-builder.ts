@@ -961,6 +961,23 @@ export function buildGraphFromPipeline(
     }
 
     const lookupName = nodeStageResultName(node)
+
+    if (node.stageType === 'switch') {
+      builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
+        const result = state.stageResults.find(r => r.name === lookupName)
+        if (result && shouldStopAfter(node, result)) return skipName
+        if (!result || result.status === 'failed') return skipName  // 求值错走 sink
+        const stepOutput = state.stepOutputs[node.id]
+        const matchedTarget = (stepOutput?.output as { matchedTarget?: unknown } | undefined)?.matchedTarget
+        if (typeof matchedTarget !== 'string') return END
+        const targetName = idToName.get(matchedTarget)
+        if (!targetName || !routeMap[targetName]) return END
+        return targetName
+      }, routeMap)
+      builder = builder.addEdge(skipName, END)
+      continue
+    }
+
     builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
       const result = state.stageResults.find((r) => r.name === lookupName)
       if (!result) return idToName.get(outs[0].target) ?? END
