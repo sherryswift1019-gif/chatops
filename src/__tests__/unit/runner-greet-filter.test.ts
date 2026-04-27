@@ -6,7 +6,7 @@ import type { ProductLineIMTrigger } from '../../db/repositories/product-line-im
 function trig(key: string, opts: { enabled?: boolean } = {}): IMTrigger {
   return {
     id: 0, key, displayName: key, description: '',
-    pipelineId: null, intentHints: '', examples: [], failureMessages: {},
+    pipelineId: null, capabilityKey: null, intentHints: '', examples: [], failureMessages: {},
     defaultApprovalRuleId: null, isSystem: false,
     enabled: opts.enabled ?? true,
     createdAt: new Date(), updatedAt: new Date(),
