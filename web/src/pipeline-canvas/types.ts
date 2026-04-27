@@ -65,11 +65,13 @@ export type StageNode = Node<StageFields>
 
 export interface ConditionEdgeData extends Record<string, unknown> {
   condition?: ConditionSpec
+  /** switch 出边专属：是否为 default handle 拖出的边 */
+  isDefault?: boolean
 }
 export type StageEdge = Edge<ConditionEdgeData>
 
 // Backend wire format — mirrors src/pipeline/types.ts PipelineGraph.
 export interface PipelineGraphWire {
   nodes: Array<StageFields & { position: { x: number; y: number } }>
-  edges: Array<{ id: string; source: string; target: string; condition?: ConditionSpec }>
+  edges: Array<{ id: string; source: string; target: string; condition?: ConditionSpec; sourceHandle?: string }>
 }

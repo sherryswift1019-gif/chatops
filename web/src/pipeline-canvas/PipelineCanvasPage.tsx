@@ -243,6 +243,8 @@ export default function PipelineCanvasPage() {
               setNodes={graph.setNodes} setEdges={graph.setEdges}
               onSelectNode={setSelectedId}
               onEdgeClick={setEditingEdgeId}
+              isSwitch={graph.isSwitch}
+              syncSwitchParams={graph.syncSwitchParams}
             />
           </div>
           <div style={{ width: 280, borderLeft: '1px solid #f0f0f0', padding: 12, overflow: 'auto' }}>
