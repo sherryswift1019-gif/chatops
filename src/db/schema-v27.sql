@@ -1,6 +1,8 @@
--- v46: pipeline_node_types 节点类型注册表
--- 注：本 migration 原本占 v30，但 main 上 commit 455d9c6
--- (PRD 主动提交 imUserId 切换) 抢先用了 v30，本次 merge 让到 v46。
+-- v27: pipeline_node_types 节点类型注册表
+-- 注：本 migration 原本占本地 v30，但 main 上 commit 455d9c6
+-- (PRD 主动提交 imUserId 切换) 抢先用了 v30。本次 merge 改占 v27 这个
+-- 历史 squash 留下的空号——v34/v35/v36/v44 都引用 pipeline_node_types，
+-- 必须在 v34 之前建表。v27 在数字顺序上恰好 < v30(远端) < v34(首次引用)。
 -- 节点类型元信息在 DB（display_name / param_schema / output_schema），
 -- 执行器在代码（src/pipeline/node-types/<key>.ts 通过 registerNodeType() 注册）。
 -- 启动时一致性检查：DB enabled 行 ↔ 代码 register 调用必须一致。

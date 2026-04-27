@@ -14,7 +14,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const pool = new Pool({ connectionString: process.env.DATABASE_URL })
 
 // 所有 schema 文件按版本号升序，新增 schema 时在尾部追加一行。
-// 注意 v27 缺号 (开发阶段被 squash)，按现状跳过。
+// v27 原本是空号（开发阶段被 squash），merge main 后被 pipeline_node_types
+// 注册表占用——必须早于 v34/v35/v36/v44（这些 schema 都 INSERT/UPDATE 该表）。
 const SCHEMA_FILES: ReadonlyArray<readonly [string, string]> = [
   ['v1',  'schema.sql'],
   ['v2',  'schema-v2.sql'],
@@ -42,6 +43,7 @@ const SCHEMA_FILES: ReadonlyArray<readonly [string, string]> = [
   ['v24', 'schema-v24.sql'],
   ['v25', 'schema-v25.sql'],
   ['v26', 'schema-v26.sql'],
+  ['v27', 'schema-v27.sql'],
   ['v28', 'schema-v28.sql'],
   ['v29', 'schema-v29.sql'],
   ['v30', 'schema-v30.sql'],
@@ -60,7 +62,6 @@ const SCHEMA_FILES: ReadonlyArray<readonly [string, string]> = [
   ['v43', 'schema-v43.sql'],
   ['v44', 'schema-v44.sql'],
   ['v45', 'schema-v45.sql'],
-  ['v46', 'schema-v46.sql'],
 ]
 
 // _migrations: 已 applied 的 schema 版本登记表。

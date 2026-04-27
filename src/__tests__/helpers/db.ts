@@ -146,10 +146,12 @@ const SCHEMA_FILES = [
   // 目前没有单元测试依赖；globalSetup 的 pg-container.ts 会扫全部文件
   // 支持首次 bootstrap，业务代码运行时 migrate.ts 也会跑全套。
   //
-  // v30 (pipeline_node_types) 例外：全新表 + 非污染 catalog seed（5 行节点
-  // 类型定义），所有依赖此表的测试都期望这 5 行存在，不会干扰其它 fixture。
-  // 后续 v31+ schema 遵循同样规则：纯 DDL 或"全新表 + 所有测试都期望存在
-  // 的 catalog seed"才能加进 SCHEMA_FILES。
+  // v27 (pipeline_node_types): 全新表 + 非污染 catalog seed（5 行节点类型
+  // 定义），所有依赖此表的测试都期望这 5 行存在；不加会让 v34/v35/v36/v44
+  // 引用此表时炸"relation does not exist"。原本占 v30，merge main 时让到
+  // v27 占用历史 squash 空号。
+  'schema-v27.sql',
+  // 后续 v3X 例外：全新表 + 非污染 catalog seed 才能加进 SCHEMA_FILES。
   'schema-v30.sql',
   // v31 (capabilities 4 字段): 纯 ALTER TABLE ADD + 对已有行的 UPDATE backfill。
   // 不引入新 capability 行,不影响其它 fixture。所有依赖 capabilities 表
