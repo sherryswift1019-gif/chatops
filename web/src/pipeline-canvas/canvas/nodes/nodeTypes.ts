@@ -3,6 +3,7 @@ import { ApprovalNode } from './ApprovalNode'
 import { CapabilityNode } from './CapabilityNode'
 import { WebhookNode } from './WebhookNode'
 import { ImInputNode } from './ImInputNode'
+import { SwitchNode } from './SwitchNode'
 
 export const nodeTypes = {
   script: ScriptNode,
@@ -10,4 +11,5 @@ export const nodeTypes = {
   capability: CapabilityNode,
   wait_webhook: WebhookNode,
   im_input: ImInputNode,
+  switch: SwitchNode,
 }
