@@ -146,6 +146,10 @@ const schemaV37 = readFileSync(join(__dirname, 'schema-v37.sql'), 'utf8')
 await pool.query(schemaV37)
 console.log('[migrate] schema-v37 applied')
 
+const schemaV40 = readFileSync(join(__dirname, 'schema-v40.sql'), 'utf8')
+await pool.query(schemaV40)
+console.log('[migrate] schema-v40 applied')
+
 
 // Sync PRD system prompts from prompts.ts (code is the truth source).
 // - default_system_prompt: always refreshed from code.
@@ -201,4 +205,4 @@ await pool.query(
 )
 
 await pool.end()
-console.log('✅ Database schema applied (v1 ~ v26 + v28 + v29 + v30 + v31 + v32 + v33 + v34 + v35 + v36 + v37 + im_triggers v32 + capabilities-cleanup v33 + node-types-7-new v34 + node-types-enable v35 + capability-rename-llm_agent v36 + internal_capability_pipelines v37, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26 + PRD active submit MR v28 + product_lines FK cascade v29 + pipeline_node_types v30 + capabilities-extended-fields v31 + im_triggers v32 + capabilities cleanup v33 + node-types-7-new v34 + node-types-enable v35 + capability→llm_agent v36 + internal_capability_pipelines v37)')
+console.log('✅ Database schema applied (v1 ~ v26 + v28 + v29 + v30 + v31 + v32 + v33 + v34 + v35 + v36 + v37 + v40 + im_triggers v32 + capabilities-cleanup v33 + node-types-7-new v34 + node-types-enable v35 + capability-rename-llm_agent v36 + internal_capability_pipelines v37 + notify-internal v40, 含 PRD v16/v17 + pipeline canvas v18 + IM binding v19 + drop module_owners v20 + view_branches v21 + trigger_sources v22 + PRD V2 metrics v23 + Arch Agent v24 + pam bootstrap v25 + capability prompts v26 + PRD active submit MR v28 + product_lines FK cascade v29 + pipeline_node_types v30 + capabilities-extended-fields v31 + im_triggers v32 + capabilities cleanup v33 + node-types-7-new v34 + node-types-enable v35 + capability→llm_agent v36 + internal_capability_pipelines v37 + notify-internal pipeline v40)')
