@@ -5,10 +5,12 @@
  * PostgresSaver checkpointer, LangGraph stream loop, SSE push protocol.
  *
  * Public API:
- *   runDryRun(opts)            — start a dry-run execution
- *   decideSideEffect(...)      — resume a pending decision waiter
+ *   runDryRun(opts)              — start a dry-run execution
+ *   decideSideEffect(...)        — resume a pending decision waiter
+ *   resumeDryRunFromWebhook(...) — T6: resume a wait_webhook interrupt in dry-run
  */
 
+import { Command } from '@langchain/langgraph'
 import { computeAncestors } from './graph-validation.js'
 import { computeUpstreamHash } from './dryrun-hash.js'
 import { generateStubFromSchema } from './dryrun-stub.js'
@@ -17,8 +19,20 @@ import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import { getPool } from '../db/client.js'
 import { getCheckpointer } from './graph-runtime.js'
 import { buildDefaultHooks } from './executor-hooks.js'
-import { buildGraphFromPipeline, type DryRunFlavor, type StageHooks } from './graph-builder.js'
+import {
+  buildGraphFromPipeline,
+  WEBHOOK_INTERRUPT,
+  type DryRunFlavor,
+  type StageHooks,
+  type WebhookInterruptValue,
+} from './graph-builder.js'
 import type { PipelineGraph } from './types.js'
+import {
+  buildDryRunWebhookUrl,
+  registerDryRunWebhookWaiter,
+  unregisterDryRunWebhookWaiter,
+  dispatchDryRunWebhook,
+} from './dryrun-webhook-router.js'
 // Trigger self-registration of all NodeExecutor implementations (sql_query,
 // http, db_update, dm, file_read, template_render, fan_out, switch, etc.)
 // so getExecutor() resolves correctly during dry-run graph execution.
@@ -41,6 +55,11 @@ export interface RunDryRunOpts {
   triggerType: string
   triggeredBy: string
   ssePush: SsePushFn
+  /**
+   * Base URL used to generate wait_webhook trigger URLs in dry-run mode.
+   * Defaults to empty string (relative URL) when not provided.
+   */
+  baseUrl?: string
 }
 
 type DecisionPayload = {
@@ -97,7 +116,7 @@ function truncateGraphBefore(graph: PipelineGraph, targetNodeId: string): Pipeli
 // ---------------------------------------------------------------------------
 
 export async function runDryRun(opts: RunDryRunOpts): Promise<void> {
-  const { sessionId, pipelineId, targetNodeId, triggerParams, ssePush } = opts
+  const { sessionId, pipelineId, targetNodeId, triggerParams, ssePush, baseUrl = '' } = opts
 
   // 1. Advisory lock — prevents concurrent dry-runs on the same pipeline.
   //    pg_try_advisory_lock takes a bigint key; pipelineId is an integer, safe.
@@ -210,17 +229,63 @@ export async function runDryRun(opts: RunDryRunOpts): Promise<void> {
     const app = (builder as any).compile({ checkpointer })
     const config = { configurable: { thread_id: threadId } }
 
-    // 8. Stream execution.
+    // 8. Stream execution — multi-pass loop to handle wait_webhook interrupts.
     ssePush({ type: 'started', sessionId })
 
-    // LangGraph stream yields chunks of shape { [nodeName]: stateUpdate }.
-    // Each key is the graph node name that just completed.
-    const stream = await app.stream({ runId: 0 }, config) as AsyncIterable<Record<string, unknown>>
-    for await (const chunk of stream) {
-      // Extract node names from the chunk (langgraph streams one node per chunk).
-      const nodeNames = Object.keys(chunk).filter(k => k !== '__end__')
-      for (const nodeName of nodeNames) {
-        ssePush({ type: 'progress', nodeName })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let nextInput: any = { runId: 0 }
+    let done = false
+
+    while (!done) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stream = await app.stream(nextInput, config) as AsyncIterable<any>
+      let interrupted = false
+
+      for await (const chunk of stream) {
+        // Detect LangGraph interrupt chunks (shape: { __interrupt__: Interrupt[] })
+        const interrupts = (chunk as { __interrupt__?: { value?: unknown }[] }).__interrupt__
+        if (Array.isArray(interrupts) && interrupts.length > 0) {
+          for (const it of interrupts) {
+            const value = it.value as { type?: string } | undefined
+            if (value?.type === WEBHOOK_INTERRUPT) {
+              const p = value as WebhookInterruptValue
+              // T6: generate dry-run webhook URL and register waiter.
+              const webhookUrl = buildDryRunWebhookUrl({
+                baseUrl,
+                webhookTag: p.tag,
+                sessionId,
+              })
+              ssePush({
+                type: 'waiting-external',
+                sessionId,
+                webhookTag: p.tag,
+                webhookUrl,
+              })
+
+              // Wait for the external webhook to arrive via resumeDryRunFromWebhook.
+              const webhookPayload = await new Promise<unknown>((resolve) => {
+                registerDryRunWebhookWaiter(sessionId, resolve)
+              })
+
+              // Resume the graph with the received payload.
+              nextInput = new Command({ resume: { data: webhookPayload } })
+              interrupted = true
+            }
+          }
+          if (interrupted) break
+          continue
+        }
+
+        // Normal chunk: extract node names for progress SSE.
+        const nodeNames = Object.keys(chunk).filter(k => k !== '__end__')
+        for (const nodeName of nodeNames) {
+          ssePush({ type: 'progress', nodeName })
+        }
+      }
+
+      if (!interrupted) {
+        // Stream exhausted without an unhandled interrupt → graph reached END.
+        done = true
       }
     }
 
@@ -228,6 +293,8 @@ export async function runDryRun(opts: RunDryRunOpts): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     ssePush({ type: 'error', error: msg, fatal: true })
+    // Clean up any registered webhook waiter on error.
+    unregisterDryRunWebhookWaiter(sessionId)
     throw e
   } finally {
     sessions.delete(sessionId)
@@ -272,4 +339,34 @@ export async function decideSideEffect(
 
   waiter(decision)
   session.decisionWaiters.delete(nodeId)
+}
+
+// ---------------------------------------------------------------------------
+// resumeDryRunFromWebhook  (T6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Called by the generic webhook HTTP handler (T7 admin route) when an external
+ * POST arrives for a dry-run session's wait_webhook stage.
+ *
+ * Delegates to `dispatchDryRunWebhook` from dryrun-webhook-router, which
+ * resolves the Promise that the `runDryRun` streaming loop is awaiting.
+ *
+ * Returns `true` if a matching waiter was found and notified; `false` otherwise.
+ *
+ * Note on v1 simplification: im_input nodes in dry-run mode are treated as
+ * side-effect nodes (walk the beforeSideEffect fallback → decision modal).
+ * IM-group message routing for dry-run is deferred to T7/post-T7.
+ */
+export function resumeDryRunFromWebhook(
+  sessionId: string,
+  payload: unknown,
+): boolean {
+  if (!sessions.has(sessionId)) {
+    console.warn(
+      `[dryrun-runner] resumeDryRunFromWebhook: session ${sessionId} not found or expired`,
+    )
+    return false
+  }
+  return dispatchDryRunWebhook(sessionId, payload)
 }
