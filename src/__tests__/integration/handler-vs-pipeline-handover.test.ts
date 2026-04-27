@@ -4,24 +4,21 @@
  * 目标：通过 PIPELINE_DAG_HANDLERS feature flag 切换两条执行路径，比较
  *   1) 旧 handler 路径 (handleRequestHandover)
  *   2) 新 pipeline 路径 (handover-internal 5 节点 DAG)
- * 产生的三个 side effects 是否一致：
+ * 产生的三个 side effects：
  *   - INSERT bug_fix_events (code='handover', status='success', ...)
- *   - GitLab API PUT /projects/<path>/issues/<issue_id> (add_labels='needs-manual')
+ *   - GitLab API POST /projects/<path>/issues/<issue_id>/labels（添加 needs-manual）
  *   - UPDATE bug_analysis_reports SET status='pending_manual'
  *
- * ⚠️ 关键发现 (BLOCKER 候选)：
- *   schema-v37 种入的 handover-internal pipeline DAG 使用 stageType=
- *   sql_query/http/db_update 三个新节点类型；这些 executor 在 phase 3 已通过
- *   registerNodeType 注册到 node-types/registry，但 graph-builder.ts 的
- *   stageType switch 仍只识别 5 个老类型 (script/llm_agent/approval/
- *   wait_webhook/im_input)，default 分支直接 throw "Unsupported stage type"。
+ * 历史背景：phase 3 引入了 7 个新 NodeExecutor 类型 (sql_query/http/db_update/
+ * dm/file_read/template_render/fan_out)，但 graph-builder.ts 的 stageType
+ * switch 没有同步扩展，第一次运行此测试时 pipeline 路径在 compile 阶段抛
+ * "Unsupported stage type"。修复见 commit fix(pipeline): graph-builder
+ * switch 加 7 新节点类型 dispatch。
  *
- *   这意味着 PIPELINE_DAG_HANDLERS=request_handover 命中后 runPipeline 会
- *   compile() 失败 —— test_runs 立刻被 finishTestRun 写成 status='failed'，
- *   不产生任何 side effects。本测试断言这一现状（pipeline 路径目前不可执行），
- *   提示 phase 4 后续 task 必须先把 graph-builder 接到 node-types 注册表。
- *
- *   handler 路径 (默认行为) 不受影响，三个 side effects 正常发生。
+ * 当前断言: pipeline 路径必须 success，三个 side effects 全部命中；同时显式
+ * 记录 handler 与 pipeline 的 bug_fix_events.data 字段差异（pipeline 仅写
+ * {reason}，handler 写 {reason,projectPaths,fixBranch,...}）——这块对等
+ * 由后续 task 通过扩展 DAG 节点补齐。
  */
 import { describe, it, expect, beforeEach, beforeAll, afterEach, vi } from 'vitest'
 import { readFileSync } from 'fs'
@@ -43,6 +40,11 @@ import {
 import { createEvent, findByReportCode } from '../../db/repositories/bug-fix-events.js'
 import { getInternalPipelineId } from '../../db/repositories/internal-capability-pipelines.js'
 import { getTestRunById } from '../../db/repositories/test-runs.js'
+// resetCheckpointerForTesting 让 PostgresSaver 在每个 case 前重新 setup()——
+// 否则 resetTestDb 的 DROP SCHEMA CASCADE 会把 checkpoints/checkpoint_writes 表
+// 删掉，但 saver 单例缓存仍认为已初始化，下一个 case 跑 pipeline 立即抛
+// "relation public.checkpoints does not exist"。
+import { resetCheckpointerForTesting } from '../../pipeline/graph-runtime.js'
 // 触发 pipeline node-types 自注册（http/sql_query/db_update 等）
 import '../../pipeline/node-types/index.js'
 
@@ -147,6 +149,8 @@ describe('L1: request_handover handler vs pipeline 行为对等', () => {
 
   beforeEach(async () => {
     await resetTestDb()
+    // DROP SCHEMA 把 PostgresSaver 自己的表也删了；让 saver 重新 setup()。
+    resetCheckpointerForTesting()
     await bootstrapHandoverPipelineMapping()
     await seedRequestHandoverCapability()
     vi.clearAllMocks()
@@ -208,7 +212,7 @@ describe('L1: request_handover handler vs pipeline 行为对等', () => {
     expect(report?.status).toBe('pending_manual')
   })
 
-  it('pipeline 路径：feature flag 命中 + 映射存在 → runPipeline 启动', async () => {
+  it('pipeline 路径：feature flag 命中 + 映射存在 → runPipeline 成功并产生 3 个 side effects', async () => {
     // 验证 mapping 已 bootstrap
     const pipelineId = await getInternalPipelineId('request_handover')
     expect(pipelineId).not.toBeNull()
@@ -229,29 +233,11 @@ describe('L1: request_handover handler vs pipeline 行为对等', () => {
     expect(data?.runId).toBeGreaterThan(0)
     expect(data?.pipelineId).toBe(pipelineId)
 
-    // handler 路径的 axios mock 不应被调（pipeline 路径不会走 axios，而走 fetch）
+    // handler 路径的 axios mock 不应被调（pipeline 路径走 fetch，handler 走 axios）
     expect(gitlabAddIssueLabel).not.toHaveBeenCalled()
 
     // 等待 pipeline 终态
     const finished = await pollTestRunFinished(data!.runId!, 5000)
-
-    // ⚠️ 当前 phase 4 状态：graph-builder 不识别 sql_query/http/db_update，
-    //   compile 阶段抛 "Unsupported stage type"，run 直接 failed。
-    // 该断言把"已知阻塞"显式 codify —— phase 4 后续 task 修好 graph-builder
-    // 后这条 expect 会反向失败，提示需要打开下面被注释的"成功路径断言"。
-    if (finished.status === 'failed') {
-      expect(finished.errorMessage).toMatch(/Unsupported stage type|sql_query|http|db_update/i)
-
-      // 已知差异：pipeline 路径未跑通，三个 side effects 全部缺席。
-      const events = await findByReportCode(fx.reportId, 'handover')
-      expect(events).toHaveLength(0)
-      const report = await getBugAnalysisReportById(fx.reportId)
-      expect(report?.status).not.toBe('pending_manual')
-      expect(fetchSpy).not.toHaveBeenCalled()
-      return
-    }
-
-    // ── 当 phase 4 后续 task 把 graph-builder 接到 node-types/registry 后启用： ──
     expect(finished.status).toBe('success')
 
     // side effect 1: bug_fix_events（pipeline write_event 节点写）
@@ -275,7 +261,7 @@ describe('L1: request_handover handler vs pipeline 行为对等', () => {
     expect(report?.status).toBe('pending_manual')
   })
 
-  it('两条路径 bug_fix_events 行内容差异（已知不对等）', async () => {
+  it('两条路径 bug_fix_events 行内容差异（已知不对等：pipeline data 仅 {reason}）', async () => {
     // ── 1. handler 路径 ──
     process.env.PIPELINE_DAG_HANDLERS = ''
     const fxA = await seedFixture()
@@ -291,6 +277,7 @@ describe('L1: request_handover handler vs pipeline 行为对等', () => {
 
     // 重置：reset DB 重新种 fixture（不能简单删 events，pipeline 会做幂等检查）
     await resetTestDb()
+    resetCheckpointerForTesting()
     await bootstrapHandoverPipelineMapping()
     await seedRequestHandoverCapability()
     vi.clearAllMocks()
@@ -309,25 +296,8 @@ describe('L1: request_handover handler vs pipeline 行为对等', () => {
     })
     const data = result.data as { runId?: number } | undefined
     const finished = await pollTestRunFinished(data?.runId ?? 0, 5000)
+    expect(finished.status).toBe('success')
 
-    if (finished.status === 'failed') {
-      // BLOCKED 状态：pipeline 跑不起来，diff 不存在。把不对等显式记录下来。
-      // 文档化：handler 路径会写出形如 {reason, projectPaths, fixBranch, fixBranchUrl,
-      //   owner, failedAt, attemptCount, comment, failureSummary, nextAction,
-      //   labelAdded[, labelError]} 的丰富 data；
-      // pipeline 的 write_event 节点 sqlTemplate 仅写 {reason} 单字段（详见
-      //   schema-v37.sql:84）。这是已知不对等，phase 4 后续 task 必须扩展 DAG
-      //   或加一个 write_event 节点版本以达到字段一致。
-      expect(handlerData).toHaveProperty('reason')
-      expect(handlerData).toHaveProperty('projectPaths')
-      expect(handlerData).toHaveProperty('fixBranch')
-      expect(handlerData).toHaveProperty('nextAction')
-      expect(handlerData).toHaveProperty('labelAdded')
-      expect(finished.errorMessage).toMatch(/Unsupported stage type|sql_query|http|db_update/i)
-      return
-    }
-
-    // ── 当 pipeline 路径可执行后启用以下断言： ──
     const pipelineEvents = await findByReportCode(fxB.reportId, 'handover')
     expect(pipelineEvents).toHaveLength(1)
     const pipelineEvent = pipelineEvents[0]
@@ -341,7 +311,7 @@ describe('L1: request_handover handler vs pipeline 行为对等', () => {
     // 已知差异（schema-v37 DAG write_event 节点仅写 {reason}）：
     //   - handler data 还含 projectPaths/fixBranch/owner/attemptCount/...
     //   - pipeline data 缺这些字段
-    // 此差异短期内显式接受，后续 task 修复 DAG 时移除下面这个 not 断言。
+    // 此差异短期内显式接受，后续 task 扩展 DAG 节点时移除下面这两个 not 断言。
     expect(pipelineData.projectPaths).toBeUndefined()
     expect(pipelineData.fixBranch).toBeUndefined()
   })
