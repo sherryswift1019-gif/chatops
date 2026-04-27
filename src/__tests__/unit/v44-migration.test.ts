@@ -28,6 +28,19 @@ describe('v44 migration', () => {
     expect(r.rows[0].graph.nodes[0].outputFormat).toBe('string')
   })
 
+  it("旧 linear stages 字段：llm_agent 显式补 outputFormat='string'", async () => {
+    const pool = getTestPool()
+    // 插入 fixture pipeline，stages 字段（旧格式）含 llm_agent 节点（无 outputFormat）
+    await pool.query(
+      `INSERT INTO test_pipelines (name, stages) VALUES ('legacy', $1::jsonb)`,
+      [JSON.stringify([{ id: 'q', stageType: 'llm_agent', capabilityKey: 'k' }])],
+    )
+    const sql = readFileSync(join(process.cwd(), 'src/db/schema-v44.sql'), 'utf8')
+    await pool.query(sql)
+    const r = await pool.query("SELECT stages FROM test_pipelines WHERE name='legacy'")
+    expect(r.rows[0].stages[0].outputFormat).toBe('string')
+  })
+
   it("edge.condition.expression 归一化：=== → ==、.includes() → contains", async () => {
     const pool = getTestPool()
     await pool.query(

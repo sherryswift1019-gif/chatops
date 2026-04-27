@@ -1,8 +1,10 @@
 -- v44: switch node type + llm_agent outputFormat backfill + edge expression syntax normalization
 
 -- 7.1 注册 switch 节点类型
-INSERT INTO pipeline_node_types (key, display_name, description, category)
-VALUES ('switch', 'Switch 分支', '按 cases 表达式路由到不同下游节点', 'flow')
+INSERT INTO pipeline_node_types (key, display_name, description, category, param_schema, output_schema)
+VALUES ('switch', 'Switch 分支', '按 cases 表达式路由到不同下游节点', 'flow',
+  '{"type":"object","properties":{"cases":{"type":"array","items":{"type":"object","properties":{"when":{"type":"string"},"target":{"type":"string"}},"required":["when","target"]}},"default":{"type":"string"}},"required":["cases","default"]}'::jsonb,
+  '{"type":"object","properties":{"matchedCaseIndex":{"type":["number","null"]},"matchedTarget":{"type":"string"},"matchedWhen":{"type":["string","null"]}}}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
 -- 7.2 给现存 llm_agent 节点显式补 outputFormat='string'（graph.nodes[]）
@@ -58,7 +60,7 @@ UPDATE test_pipelines tp
                        regexp_replace(
                          regexp_replace(
                            e->'condition'->>'expression',
-                           '\.includes\(([^)]+)\)', ' contains \1', 'g'
+                           $$\.includes\(([^)]+)\)$$, ' contains \1', 'g'
                          ),
                          '===', '==', 'g'
                        )
