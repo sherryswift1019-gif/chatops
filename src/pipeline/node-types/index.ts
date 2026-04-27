@@ -13,6 +13,7 @@ import './file-read.js'
 import './template-render.js'
 // Phase 3 T15 fan_out scheduler (standalone NodeExecutor; v1 limits in fan-out.ts)
 import './fan-out.js'
+import './switch.js'
 
 export * from './registry.js'
 export * from './types.js'
