@@ -4,8 +4,9 @@ import { Tag } from 'antd'
 import type { StageNode } from '../../types'
 
 const handleBase = {
-  width: 12, height: 12,
-  border: '2px solid #fff',
+  width: 18, height: 18,
+  border: '3px solid #fff',
+  boxShadow: '0 0 0 1px #722ed1',
 } as const
 
 export function SwitchNode({ data, selected }: NodeProps<StageNode>) {
@@ -14,7 +15,7 @@ export function SwitchNode({ data, selected }: NodeProps<StageNode>) {
 
   return (
     <div style={{
-      width: 180, padding: '14px 12px',
+      width: 200, padding: '14px 12px',
       background: '#f9f0ff',
       border: `2px solid ${selected ? '#722ed1' : '#b37feb'}`,
       borderRadius: 8,
@@ -33,14 +34,13 @@ export function SwitchNode({ data, selected }: NodeProps<StageNode>) {
 
       {/* cases handle：底部居中（拖出 = 创建 case） */}
       <Handle id="cases" type="source" position={Position.Bottom}
-        style={{ ...handleBase, left: '40%', background: '#b37feb' }}>
-      </Handle>
-      <span style={{ position: 'absolute', bottom: -22, left: '30%', fontSize: 10, color: '#722ed1' }}>case</span>
+        style={{ ...handleBase, left: '35%', background: '#b37feb' }} />
+      <span style={{ position: 'absolute', bottom: -28, left: '25%', fontSize: 11, color: '#722ed1' }}>case</span>
 
       {/* default handle：底部右侧（拖出 = 设 default） */}
       <Handle id="default" type="source" position={Position.Bottom}
-        style={{ ...handleBase, left: '75%', background: '#722ed1', width: 14, height: 14 }} />
-      <span style={{ position: 'absolute', bottom: -22, left: '67%', fontSize: 10, color: '#722ed1', fontWeight: 600 }}>default</span>
+        style={{ ...handleBase, left: '75%', background: '#722ed1' }} />
+      <span style={{ position: 'absolute', bottom: -28, left: '65%', fontSize: 11, color: '#722ed1', fontWeight: 600 }}>default</span>
     </div>
   )
 }

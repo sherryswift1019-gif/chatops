@@ -10,9 +10,10 @@ interface Props {
 }
 
 const handleStyle: CSSProperties = {
-  width: 12, height: 12,
-  border: '2px solid #fff',
+  width: 18, height: 18,
+  border: '3px solid #fff',
   background: '#1677ff',
+  boxShadow: '0 0 0 1px #1677ff',
 }
 
 export function StageNodeCard({ color, typeLabel, title, footer }: Props) {
