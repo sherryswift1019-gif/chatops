@@ -67,11 +67,6 @@ export interface StageHooks {
     triggerParams?: Record<string, unknown>,
     runtimeVars?: Record<string, unknown>,
   ): Promise<StageExecutionResult>
-  /** Called for 'dm' stage type. Optional — if absent, dm nodes are no-ops. */
-  runDm?(
-    stage: StageDefinition,
-    ctx: StageContext,
-  ): Promise<StageExecutionResult>
   /** DryRunFlavor — injected only during dry runs. When absent, zero overhead. */
   dryRunFlavor?: DryRunFlavor
 }
