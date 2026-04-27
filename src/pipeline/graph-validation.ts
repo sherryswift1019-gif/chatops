@@ -34,6 +34,13 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
     if (e.condition?.kind === 'expression' && !e.condition.expression?.trim()) {
       errors.push(`edge ${e.id} condition.expression is empty`)
     }
+    if (e.condition?.kind === 'expression' && e.condition.expression?.trim()) {
+      try { parseExpression(e.condition.expression) }
+      catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        errors.push(`edge "${e.source}->${e.target}" expression 语法错误: ${msg}`)
+      }
+    }
     if (nodeIds.has(e.source) && nodeIds.has(e.target)) {
       const arr = adjacency.get(e.source) ?? []
       arr.push(e.target)
@@ -67,6 +74,8 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
   // 1) fan_out body 必须非空
   // 2) retry_when / shortCircuitWhen 表达式语法预解析
   // 3) {{steps.<id>.output...}} 引用必须是当前节点的祖先
+  // 4) switch 节点字段 / target 引用 / when 表达式预解析
+  // 5) outputFormat enum 校验
   for (const n of graph.nodes) {
     // 1) fan_out body 非空
     // n.stageType 静态 union 暂不含 'fan_out'(StageDefinition.stageType 未扩);
@@ -105,6 +114,60 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
         const msg = e instanceof Error ? e.message : String(e)
         errors.push(`node "${n.id}" shortCircuitWhen 语法错误: ${msg}`)
       }
+    }
+
+    // 4) switch 节点：必填字段校验
+    if (stageTypeStr === 'switch') {
+      const switchParams = (n as unknown as { params?: { cases?: unknown; default?: unknown } }).params ?? {}
+      if (!Array.isArray(switchParams.cases) || switchParams.cases.length === 0) {
+        errors.push(`node "${n.id}" (stageType=switch): cases is required (non-empty array)`)
+      }
+      if (typeof switchParams.default !== 'string' || !(switchParams.default as string).trim()) {
+        errors.push(`node "${n.id}" (stageType=switch): default is required`)
+      }
+      if (Array.isArray(switchParams.cases)) {
+        ;(switchParams.cases as Array<{ when?: unknown; target?: unknown }>).forEach((c, i) => {
+          if (typeof c?.when !== 'string' || !c.when.trim()) {
+            errors.push(`switch "${n.id}" cases[${i}].when 必填`)
+          }
+          if (typeof c?.target !== 'string' || !c.target.trim()) {
+            errors.push(`switch "${n.id}" cases[${i}].target 必填`)
+          }
+          // when 表达式预解析
+          if (typeof c?.when === 'string' && c.when.trim()) {
+            try { parseExpression(c.when) }
+            catch (e) {
+              const msg = e instanceof Error ? e.message : String(e)
+              errors.push(`switch "${n.id}" cases[${i}].when 语法错误: ${msg}`)
+            }
+          }
+        })
+      }
+      // target 引用合法性 + 自环检测
+      const cases = Array.isArray(switchParams.cases) ? switchParams.cases : []
+      ;(cases as Array<{ target?: unknown }>).forEach((c, i) => {
+        if (typeof c?.target === 'string' && c.target) {
+          if (c.target === n.id) {
+            errors.push(`switch "${n.id}" cases[${i}].target 不能指向自己`)
+          } else if (!nodeIds.has(c.target)) {
+            errors.push(`switch "${n.id}" cases[${i}].target references unknown node: ${c.target}`)
+          }
+        }
+      })
+      const dt = switchParams.default
+      if (typeof dt === 'string' && dt) {
+        if (dt === n.id) {
+          errors.push(`switch "${n.id}" default 不能指向自己`)
+        } else if (!nodeIds.has(dt)) {
+          errors.push(`switch "${n.id}" default references unknown node: ${dt}`)
+        }
+      }
+    }
+
+    // 5) outputFormat enum 校验
+    const of_ = (n as unknown as { outputFormat?: unknown }).outputFormat
+    if (of_ !== undefined && of_ !== 'string' && of_ !== 'json') {
+      errors.push(`node "${n.id}" outputFormat 必须是 'string' 或 'json'，得到 ${JSON.stringify(of_)}`)
     }
   }
 
