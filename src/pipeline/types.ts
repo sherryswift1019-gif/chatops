@@ -9,9 +9,30 @@ export interface ImInputConfig {
   timeoutSeconds?: number
 }
 
+/**
+ * Phase 3 引入的 7 种 NodeExecutor 类型字面量。
+ * graph-builder switch 通过这些 union 落到通用 dispatch（buildExecutorNode）。
+ * 注：这些类型对应的运行时参数走 PipelineNode.params (松散字段)，不在 StageDefinition
+ * 上分别声明字段——参数 schema 由 src/pipeline/node-types/*.ts 各 executor 自行约定。
+ */
+export type ExecutorNodeStageType =
+  | 'sql_query'
+  | 'http'
+  | 'db_update'
+  | 'dm'
+  | 'file_read'
+  | 'template_render'
+  | 'fan_out'
+
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval' | 'llm_agent' | 'wait_webhook' | 'im_input'
+  stageType:
+    | 'script'
+    | 'approval'
+    | 'llm_agent'
+    | 'wait_webhook'
+    | 'im_input'
+    | ExecutorNodeStageType
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
@@ -41,7 +62,7 @@ export interface StageDefinition {
   imInputConfig?: ImInputConfig
 }
 
-export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'llm_agent' | 'wait_webhook' | 'im_input' {
+export function getStageType(stage: StageDefinition): StageDefinition['stageType'] {
   return stage.stageType ?? 'script'
 }
 

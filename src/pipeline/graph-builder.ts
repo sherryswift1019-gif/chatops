@@ -1,5 +1,5 @@
 import { StateGraph, START, END, interrupt } from '@langchain/langgraph'
-import { PipelineStateAnnotation, type StageResult } from './graph-state.js'
+import { PipelineStateAnnotation, type StageResult, type StepOutput } from './graph-state.js'
 import { consultImInputAgent } from './im-input-agent.js'
 import type {
   StageDefinition,
@@ -7,10 +7,14 @@ import type {
   StageExecutionResult,
   ServerInfo,
   PipelineGraph,
+  PipelineNode,
   PipelineEdge,
   ConditionSpec,
 } from './types.js'
 import { resolveApprovers } from './approval-resolvers.js'
+import { getExecutor } from './node-types/registry.js'
+import type { ExecutionContext, NodeExecutionResult } from './node-types/types.js'
+import { resolveVariables, type VariableContext } from './variables.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -523,6 +527,247 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   )
 }
 
+// ---- Executor-node dispatch (Phase 3 sql_query/http/db_update/dm/file_read/
+// template_render/fan_out) -----------------------------------------------
+//
+// These 7 node types are implemented as standalone NodeExecutor instances
+// (see src/pipeline/node-types/*.ts) rather than as bespoke graph-builder
+// nodes. The dispatcher here:
+//
+//   1. Resolves all string templates inside `node.params` against the merged
+//      template context (vars + triggerParams + steps + scopes).
+//   2. Builds an ExecutionContext from PipelineState + closure context.
+//   3. Calls the executor and translates NodeExecutionResult → StageResult.
+//   4. Persists structured `output` (Record<string, unknown>) into
+//      state.stepOutputs keyed by node id, so downstream `{{steps.<id>.x}}`
+//      templates resolve against the structured value (not the JSON string
+//      we put on StageResult.output for the run report).
+//
+// shortCircuitWhen is **not** wired here (phase 3 deferred); see the comment
+// inside `buildExecutorNode` and the report message.
+const TEMPLATE_RX = /\{\{[^}]+\}\}/
+
+function hasTemplate(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  return TEMPLATE_RX.test(value)
+}
+
+/**
+ * Recursively render `{{...}}` templates inside any string contained in
+ * `params`. Non-string leaves pass through untouched. Resolution uses
+ * `resolveVariables` against a synthesized VariableContext that adds
+ * `steps`/`triggerParams`/`scopes` as siblings of `vars`.
+ *
+ * Templates that don't resolve are left as the literal `{{...}}` string,
+ * matching `resolveVariables` semantics (so executors can give clearer
+ * "unresolved placeholder" errors than a silent empty value).
+ */
+function renderParamTemplates(
+  params: Record<string, unknown>,
+  ctx: VariableContext & Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(params)) {
+    out[k] = renderValueTemplates(v, ctx)
+  }
+  return out
+}
+
+function renderValueTemplates(
+  value: unknown,
+  ctx: VariableContext & Record<string, unknown>,
+): unknown {
+  if (typeof value === 'string') {
+    if (!hasTemplate(value)) return value
+    return resolveVariables(value, ctx)
+  }
+  if (Array.isArray(value)) {
+    return value.map((v) => renderValueTemplates(v, ctx))
+  }
+  if (isPlainObject(value)) {
+    return renderParamTemplates(value as Record<string, unknown>, ctx)
+  }
+  return value
+}
+
+/**
+ * Produce a VariableContext from the current PipelineState + closure ctxBase
+ * + per-run triggerParams. Mirrors what executor-hooks.resolveCapabilityParams
+ * builds, but exposes all four namespaces (`vars` / `triggerParams` /
+ * `steps` / `scopes`) so SQL/HTTP/template_render templates can dot-walk
+ * structured upstream outputs (e.g. `steps.load_report.output.rows[0].id`).
+ */
+function buildVariableContext(
+  state: typeof PipelineStateAnnotation.State,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+  stage: StageDefinition,
+  index: number,
+): VariableContext & Record<string, unknown> {
+  const mergedVars: Record<string, string> = {}
+  for (const [k, v] of Object.entries(ctxBase.variables ?? {})) {
+    mergedVars[k] = String(v)
+  }
+  for (const [k, v] of Object.entries(state.runtimeVars ?? {})) {
+    mergedVars[k] = typeof v === 'string' ? v : JSON.stringify(v)
+  }
+  return {
+    productLine: ctxBase.productLine
+      ? { name: ctxBase.productLine.name, displayName: ctxBase.productLine.displayName }
+      : { name: '', displayName: '' },
+    pipeline: ctxBase.pipeline ?? { id: 0, name: '' },
+    run: ctxBase.run ?? { id: ctxBase.runId, triggeredBy: '', triggerType: '' },
+    stage: { name: stage.name ?? '', index },
+    server: { host: '', port: 0, username: '', name: '', role: '' },
+    vars: mergedVars,
+    steps: state.stepOutputs ?? {},
+    triggerParams,
+    // scopes 由 fan_out body 子运行注入；外层 graph dispatch 永远是空。
+    scopes: {},
+  }
+}
+
+/**
+ * StageResult.name we publish into state. Pipeline graph nodes (canvas)
+ * have an `id`; legacy stage definitions only have `name`. Use `name` when
+ * present, fall back to `id` so the conditional-edge router and the steps
+ * registry stay consistent.
+ */
+function nodeStageResultName(node: PipelineNode | StageDefinition): string {
+  const n = (node as PipelineNode & StageDefinition).name
+  if (n && n.length > 0) return n
+  const id = (node as PipelineNode).id
+  return id ?? ''
+}
+
+/**
+ * Generic dispatch to the NodeExecutor registry. Used by the 7 phase-3
+ * stage types (sql_query / http / db_update / dm / file_read /
+ * template_render / fan_out).
+ *
+ * Failure semantics mirror buildScriptNode: any throw inside the executor
+ * is caught and materialised as a failed StageResult so the conditional
+ * router still runs (otherwise an uncaught throw would break the
+ * superstep without writing a result, and onFailure='continue' would
+ * silently stop the graph).
+ *
+ * shortCircuitWhen (phase 3 spec §4.6) is **not** wired here yet — phase 3
+ * landed only the expression parser. When parser+runtime are reconnected
+ * the early-return below should evaluate `node.params.shortCircuitWhen`
+ * against the same VariableContext and short-circuit to a `skipped` result.
+ */
+function buildExecutorNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  const executor = getExecutor(node.stageType)
+  if (!executor) {
+    // Defensive: dispatch should only call this for registered types. Wrap
+    // in a node action that fails the run rather than throwing at compile.
+    return async () => {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `No executor registered for stage type "${node.stageType}"`,
+        error: 'no_executor_registered',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult(node, nowIso(), Date.now(), exec),
+      }
+    }
+  }
+
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+
+    let resolvedParams: Record<string, unknown>
+    try {
+      resolvedParams = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `param template resolve failed: ${String(err)}`,
+        error: err instanceof Error ? err.message : String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const execCtx: ExecutionContext = {
+      runId: ctxBase.runId,
+      pipelineId: ctxBase.pipeline?.id ?? 0,
+      nodeId: node.id ?? stageName,
+      triggerParams,
+      vars: state.runtimeVars ?? ctxBase.variables ?? {},
+      steps: state.stepOutputs ?? {},
+    }
+
+    let result: NodeExecutionResult
+    try {
+      result = await executor.execute(resolvedParams, execCtx)
+    } catch (err) {
+      result = {
+        status: 'failed',
+        output: {},
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+
+    // StageResult.output is `string` per existing schema — JSON-encode the
+    // structured executor output so the run report still gets readable
+    // diagnostics. Templates that need the structured value read it from
+    // state.stepOutputs (which keeps the original Record).
+    let outputStr: string
+    try {
+      outputStr = JSON.stringify(result.output)
+    } catch {
+      outputStr = String(result.output)
+    }
+
+    const exec: StageExecutionResult = {
+      status: result.status === 'skipped' ? 'failed' : result.status, // StageExecutionResult only has success/failed
+      output: outputStr,
+      ...(result.error ? { error: result.error } : {}),
+    }
+
+    // For 'skipped' status (not currently produced by any executor in v1, but
+    // reserved for the shortCircuitWhen path) emit a literally-skipped
+    // StageResult instead of bending it through StageExecutionResult.
+    const stageResult: StageResult =
+      result.status === 'skipped'
+        ? {
+            name: stageName,
+            type: node.stageType,
+            status: 'skipped',
+            startedAt,
+            finishedAt: nowIso(),
+            durationMs: Date.now() - startedMs,
+            output: outputStr,
+          }
+        : finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec)
+
+    const stepOutput: StepOutput = {
+      status: result.status,
+      output: result.output ?? {},
+    }
+
+    return {
+      currentStageIndex: index,
+      stageResults: stageResult,
+      stepOutputs: { [node.id ?? stageName]: stepOutput },
+    }
+  }
+}
+
 function extractRuntimeVars(
   tag: string,
   data: unknown,
@@ -657,6 +902,18 @@ export function buildGraphFromPipeline(
         builder = builder.addNode(name, buildWaitWebhookNode(node, i)); break
       case 'im_input':
         builder = builder.addNode(name, buildImInputNode(node, i, stageContext)); break
+      // Phase 3 NodeExecutor-backed types — generic dispatch to registry.
+      case 'sql_query':
+      case 'http':
+      case 'db_update':
+      case 'dm':
+      case 'file_read':
+      case 'template_render':
+      case 'fan_out':
+        builder = builder.addNode(
+          name,
+          buildExecutorNode(node, i, stageContext, triggerParams ?? {}),
+        ); break
       default: {
         const unknown: never = node.stageType
         throw new Error(`Unsupported stage type: ${String(unknown)}`)
@@ -686,8 +943,9 @@ export function buildGraphFromPipeline(
 
     if (outs.length === 0) {
       // Terminal node → END (with skip_rest guard for onFailure=stop).
+      const lookupName = nodeStageResultName(node)
       builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
-        const result = state.stageResults.find((r) => r.name === node.name)
+        const result = state.stageResults.find((r) => r.name === lookupName)
         if (result && shouldStopAfter(node, result)) return skipName
         return END
       }, { [END]: END, [skipName]: skipName })
@@ -701,8 +959,9 @@ export function buildGraphFromPipeline(
       routeMap[targetName] = targetName
     }
 
+    const lookupName = nodeStageResultName(node)
     builder = builder.addConditionalEdges(name, (state: typeof PipelineStateAnnotation.State) => {
-      const result = state.stageResults.find((r) => r.name === node.name)
+      const result = state.stageResults.find((r) => r.name === lookupName)
       if (!result) return idToName.get(outs[0].target) ?? END
       if (shouldStopAfter(node, result)) return skipName
       for (const e of outs) {

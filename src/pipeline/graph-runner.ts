@@ -407,15 +407,21 @@ function summarizeStatus(
   stageResults: StageResult[],
   fatalError?: string,
 ): { status: 'success' | 'failed'; errorMessage: string } {
+  // Fatal errors (compile / stream throws before any stage finished) must
+  // surface as failed even when stageResults is empty — otherwise the run
+  // is reported success despite never executing.
+  if (fatalError) {
+    return { status: 'failed', errorMessage: fatalError }
+  }
   for (const r of stageResults) {
     if (r.status === 'failed') {
       return {
         status: 'failed',
-        errorMessage: fatalError ?? `Stage "${r.name}" failed: ${r.error ?? r.output ?? ''}`,
+        errorMessage: `Stage "${r.name}" failed: ${r.error ?? r.output ?? ''}`,
       }
     }
   }
-  return { status: 'success', errorMessage: fatalError ?? '' }
+  return { status: 'success', errorMessage: '' }
 }
 
 /** Run AI failure analysis on failed script stages (best effort). */
