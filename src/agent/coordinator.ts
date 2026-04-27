@@ -164,43 +164,71 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     return { success: false, error: msg }
   }
 
-  // Phase 2 cleanup: 路由从 capability.defaultPipelineId 改为 im_triggers.pipeline_id。
-  // capability 仅承载 LLM agent 配置；IM 入口职责（key/pipeline 绑定）已剥到 im_triggers。
-  // 部分 key（如 analyze_bug、fix_bug_l*、notify_bug、request_handover）不在 im_triggers，
-  // 这些走下面的 handler 路径。
+  // IM 触发器路由：优先查 im_triggers 表。
+  // 有 im_trigger → 必须显式配置 pipeline_id 或 capability_key；两者均空时报错（不静默降级）。
+  // 无 im_trigger → 走下面的 PIPELINE_DAG_HANDLERS 和 handler 路径（内部 capability）。
   const imTrigger = await getIMTrigger(opts.capabilityKey)
-  if (imTrigger?.pipelineId) {
-    try {
-      // 动态 import 避免 coordinator ↔ executor-hooks ↔ coordinator 循环依赖。
-      const { runPipeline, imTrigger: imTriggerCtx } = await import('../pipeline/executor.js')
-      const runId = await runPipeline(
-        imTrigger.pipelineId,
-        {},  // IM 触发场景通常不预分配服务器，由 pipeline 内部按需处理
-        imTriggerCtx({
-          triggeredBy: opts.context.initiatorId,
-          platform: opts.context.platform,
-          groupId: opts.context.groupId,
-          userId: opts.context.initiatorId,
-          params: opts.extraParams ?? {},
-        }),
-        {},  // runtimeVars 走 trigger.params 通道
-        undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
-      )
-      console.log(
-        `[AgentCoordinator] pipeline run #${runId} started for "${opts.capabilityKey}" (via im_trigger)`,
-      )
-      return {
-        success: true,
-        output: `Pipeline run #${runId} started`,
-        data: { runId, pipelineId: imTrigger.pipelineId },
+  if (imTrigger) {
+    if (imTrigger.pipelineId) {
+      try {
+        // 动态 import 避免 coordinator ↔ executor-hooks ↔ coordinator 循环依赖。
+        const { runPipeline, imTrigger: imTriggerCtx } = await import('../pipeline/executor.js')
+        const runId = await runPipeline(
+          imTrigger.pipelineId,
+          {},  // IM 触发场景通常不预分配服务器，由 pipeline 内部按需处理
+          imTriggerCtx({
+            triggeredBy: opts.context.initiatorId,
+            platform: opts.context.platform,
+            groupId: opts.context.groupId,
+            userId: opts.context.initiatorId,
+            params: opts.extraParams ?? {},
+          }),
+          {},  // runtimeVars 走 trigger.params 通道
+          undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
+        )
+        console.log(
+          `[AgentCoordinator] pipeline run #${runId} started for "${opts.capabilityKey}" (via im_trigger)`,
+        )
+        return {
+          success: true,
+          output: `Pipeline run #${runId} started`,
+          data: { runId, pipelineId: imTrigger.pipelineId },
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[AgentCoordinator] pipeline start failed for ${opts.capabilityKey}:`, msg)
+        return { success: false, error: `启动 pipeline 失败: ${msg}` }
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[AgentCoordinator] pipeline start failed for ${opts.capabilityKey}:`, msg)
-      return { success: false, error: `启动 pipeline 失败: ${msg}` }
     }
+
+    if (imTrigger.capabilityKey) {
+      const handler = handlers.get(imTrigger.capabilityKey)
+      if (!handler) {
+        const msg = `im trigger "${opts.capabilityKey}" 关联的 capability "${imTrigger.capabilityKey}" 未注册 handler`
+        console.error(`[AgentCoordinator] ${msg}`)
+        return { success: false, error: msg }
+      }
+      try {
+        const result = await handler({ ...opts, capabilityKey: imTrigger.capabilityKey })
+        console.log(`[AgentCoordinator] completed: ${opts.capabilityKey} (via im_trigger.capabilityKey=${imTrigger.capabilityKey})`, {
+          success: result.success,
+          ...(result.success ? {} : { error: result.error }),
+        })
+        return result
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        console.error(`[AgentCoordinator] error in ${opts.capabilityKey} (via im_trigger):`, msg)
+        return { success: false, error: msg }
+      }
+    }
+
+    // IM 触发器存在但两者均为空：配置缺失，明确报错
+    const msg = `im trigger "${opts.capabilityKey}" 未配置执行目标（pipeline_id 或 capability_key 均为空）`
+    console.error(`[AgentCoordinator] ${msg}`)
+    return { success: false, error: msg }
   }
 
+  // im_trigger 不存在：内部 capability（fix_bug、analyze_bug 等），走原有路径。
   // phase 4 双轨：PIPELINE_DAG_HANDLERS feature flag 命中且 internal_capability_pipelines
   // 有映射 → 走 pipeline 路径；缺映射时退化到 handler（不静默吞掉，打 warn 便于排查配置错误）。
   // T5 (2026-04-27) 起默认含 'request_handover,notify_bug,create_mr' —— 这 3 个 capability
@@ -215,7 +243,6 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     )
   }
 
-  // 降级：走原 handler 路径（capability 无对应 im_trigger 或 im_trigger 未绑 pipeline）
   const handler = handlers.get(opts.capabilityKey)
   if (!handler) {
     const msg = `no handler registered for: ${opts.capabilityKey}`

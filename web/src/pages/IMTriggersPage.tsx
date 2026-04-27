@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import {
   Card, Table, Button, Modal, Form, Input, Select, Switch, Tag, Space, message,
-  Popconfirm, Typography,
+  Popconfirm, Typography, Radio,
 } from 'antd'
 import { PlusOutlined, ExclamationCircleTwoTone } from '@ant-design/icons'
 import {
@@ -10,22 +10,35 @@ import {
 import type { IMTrigger } from '../types/imTrigger'
 import { getTestPipelines } from '../api/test-pipelines'
 import type { TestPipeline } from '../types'
+import { getCapabilities } from '../api/capabilities'
+import type { Capability } from '../api/capabilities'
 
 const { Text } = Typography
+
+type TargetType = 'pipeline' | 'capability' | 'none'
+
+function inferTargetType(record: IMTrigger): TargetType {
+  if (record.pipelineId != null) return 'pipeline'
+  if (record.capabilityKey != null) return 'capability'
+  return 'none'
+}
 
 export default function IMTriggersPage() {
   const [data, setData] = useState<IMTrigger[]>([])
   const [pipelines, setPipelines] = useState<TestPipeline[]>([])
+  const [capabilities, setCapabilities] = useState<Capability[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<IMTrigger | null>(null)
   const [form] = Form.useForm()
   const [failureMessagesText, setFailureMessagesText] = useState<string>('{}')
   const [failureMessagesError, setFailureMessagesError] = useState<string>('')
+  const targetType = Form.useWatch<TargetType>('targetType', form)
 
   useEffect(() => {
     load()
     loadPipelines()
+    loadCapabilities()
   }, [])
 
   async function load() {
@@ -45,13 +58,23 @@ export default function IMTriggersPage() {
     }
   }
 
+  async function loadCapabilities() {
+    try {
+      setCapabilities(await getCapabilities())
+    } catch {
+      /* ignore */
+    }
+  }
+
   function openCreate() {
     setEditing(null)
     form.resetFields()
     form.setFieldsValue({
       enabled: true,
       examples: [],
+      targetType: 'none' as TargetType,
       pipelineId: null,
+      capabilityKey: null,
     })
     setFailureMessagesText('{}')
     setFailureMessagesError('')
@@ -64,7 +87,9 @@ export default function IMTriggersPage() {
       key: record.key,
       displayName: record.displayName,
       description: record.description,
+      targetType: inferTargetType(record),
       pipelineId: record.pipelineId,
+      capabilityKey: record.capabilityKey,
       intentHints: record.intentHints,
       examples: record.examples,
       enabled: record.enabled,
@@ -94,14 +119,17 @@ export default function IMTriggersPage() {
     }
     setFailureMessagesError('')
 
+    // targetType 是 UI 辅助字段，不提交给后端；根据 targetType 决定 pipeline/capability 互斥
+    const { targetType: _targetType, ...rest } = values as { targetType: TargetType } & Partial<IMTrigger>
     const payload: Partial<IMTrigger> = {
-      ...values,
+      ...rest,
+      pipelineId: _targetType === 'pipeline' ? (values.pipelineId ?? null) : null,
+      capabilityKey: _targetType === 'capability' ? (values.capabilityKey ?? null) : null,
       failureMessages,
     }
 
     try {
       if (editing) {
-        // key 不可改:剔除掉
         const { key: _key, ...patch } = payload
         void _key
         await updateIMTrigger(editing.id, patch)
@@ -130,16 +158,28 @@ export default function IMTriggersPage() {
   }
 
   const pipelineMap = new Map(pipelines.map(p => [p.id, p.name]))
+  const capabilityMap = new Map(capabilities.map(c => [c.key, c.displayName]))
 
-  function renderPipeline(pid: number | null): React.ReactNode {
-    if (pid == null) return <Tag color="default">未绑定</Tag>
-    const name = pipelineMap.get(pid)
-    if (name) return <Tag color="blue">{name}</Tag>
-    return (
-      <Tag>
-        <ExclamationCircleTwoTone twoToneColor="#faad14" /> ID:{pid}（不在列表中）
-      </Tag>
-    )
+  function renderTarget(record: IMTrigger): React.ReactNode {
+    if (record.pipelineId != null) {
+      const name = pipelineMap.get(record.pipelineId)
+      if (name) return <Tag color="blue">Pipeline: {name}</Tag>
+      return (
+        <Tag color="blue">
+          <ExclamationCircleTwoTone twoToneColor="#faad14" /> Pipeline ID:{record.pipelineId}（不在列表中）
+        </Tag>
+      )
+    }
+    if (record.capabilityKey != null) {
+      const name = capabilityMap.get(record.capabilityKey)
+      if (name) return <Tag color="green">能力: {record.capabilityKey} <small>({name})</small></Tag>
+      return (
+        <Tag color="green">
+          <ExclamationCircleTwoTone twoToneColor="#faad14" /> 能力: {record.capabilityKey}（不在列表中）
+        </Tag>
+      )
+    }
+    return <Tag color="red">未配置</Tag>
   }
 
   const columns = [
@@ -148,8 +188,9 @@ export default function IMTriggersPage() {
     { title: '显示名', dataIndex: 'displayName' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     {
-      title: '关联流水线', dataIndex: 'pipelineId',
-      render: (v: number | null) => renderPipeline(v),
+      title: '执行目标',
+      key: 'target',
+      render: (_: unknown, record: IMTrigger) => renderTarget(record),
     },
     {
       title: '示例数', dataIndex: 'examples',
@@ -244,22 +285,63 @@ export default function IMTriggersPage() {
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={2} placeholder="描述该触发器的用途" />
           </Form.Item>
+
           <Form.Item
-            name="pipelineId"
-            label="关联流水线"
-            extra="未绑定:IM 触发后只回复诊断信息;绑定:启动对应 pipeline,具备审批/容错/回滚能力"
+            name="targetType"
+            label="执行目标"
+            extra="Pipeline：启动具备审批/容错/回滚能力的流水线。能力：直接调用已注册的 capability handler。未配置：触发时返回错误。"
           >
-            <Select
-              allowClear
-              showSearch
-              placeholder="未绑定 — 无法 IM 触发执行"
-              options={pipelines.map(p => ({ value: p.id, label: `${p.name} (#${p.id})` }))}
-              filterOption={(input, opt) => {
-                const v = String(opt?.label ?? '')
-                return v.toLowerCase().includes(input.toLowerCase())
-              }}
-            />
+            <Radio.Group>
+              <Radio value="pipeline">Pipeline</Radio>
+              <Radio value="capability">能力 (Capability)</Radio>
+              <Radio value="none">未配置</Radio>
+            </Radio.Group>
           </Form.Item>
+
+          {targetType === 'pipeline' && (
+            <Form.Item
+              name="pipelineId"
+              label="关联流水线"
+              rules={[{ required: true, message: '请选择关联流水线' }]}
+            >
+              <Select
+                allowClear
+                showSearch
+                placeholder="选择流水线"
+                options={pipelines.map(p => ({ value: p.id, label: `${p.name} (#${p.id})` }))}
+                filterOption={(input, opt) =>
+                  String(opt?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+              />
+            </Form.Item>
+          )}
+
+          {targetType === 'capability' && (
+            <Form.Item
+              name="capabilityKey"
+              label="关联能力"
+              rules={[{ required: true, message: '请选择关联能力' }]}
+            >
+              <Select
+                allowClear
+                showSearch
+                placeholder="选择能力"
+                filterOption={(input, opt) => {
+                  const label = String(opt?.label ?? '')
+                  const value = String(opt?.value ?? '')
+                  return (
+                    label.toLowerCase().includes(input.toLowerCase()) ||
+                    value.toLowerCase().includes(input.toLowerCase())
+                  )
+                }}
+                options={capabilities.map(c => ({
+                  value: c.key,
+                  label: `${c.displayName} (${c.key})`,
+                }))}
+              />
+            </Form.Item>
+          )}
+
           <Form.Item
             name="intentHints"
             label="意图识别提示词"

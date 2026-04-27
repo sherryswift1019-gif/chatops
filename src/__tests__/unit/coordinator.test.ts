@@ -102,6 +102,40 @@ describe('AgentCoordinator - triggerCapability', () => {
     expect(result.success).toBe(false)
     expect(result.error).toContain('boom')
   })
+
+  it('runs handler referenced by im_trigger.capabilityKey', async () => {
+    const handler = vi.fn().mockResolvedValue({ success: true, output: 'via capabilityKey' })
+    registerCapabilityHandler('test_cap', handler)
+
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'test_cap', pipelineId: null, capabilityKey: 'test_cap', enabled: true,
+    })
+
+    const result = await triggerCapability({
+      capabilityKey: 'test_cap',
+      context: { taskId: 't5', groupId: 'g1', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.output).toBe('via capabilityKey')
+    expect(handler).toHaveBeenCalled()
+  })
+
+  it('returns error when im_trigger has no pipeline or capabilityKey', async () => {
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'test_cap', pipelineId: null, capabilityKey: null, enabled: true,
+    })
+
+    const result = await triggerCapability({
+      capabilityKey: 'test_cap',
+      context: { taskId: 't6', groupId: 'g1', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未配置执行目标')
+  })
 })
 
 describe('AgentCoordinator - handleAnalysisComplete', () => {

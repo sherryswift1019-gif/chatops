@@ -6,6 +6,7 @@ export interface IMTrigger {
   displayName: string
   description: string
   pipelineId: number | null
+  capabilityKey: string | null
   intentHints: string
   examples: string[]
   failureMessages: Record<string, string>
@@ -23,6 +24,7 @@ function mapRow(r: Record<string, unknown>): IMTrigger {
     displayName: r.display_name as string,
     description: (r.description ?? '') as string,
     pipelineId: (r.pipeline_id ?? null) as number | null,
+    capabilityKey: (r.capability_key ?? null) as string | null,
     intentHints: (r.intent_hints ?? '') as string,
     examples: (r.examples ?? []) as string[],
     failureMessages: (r.failure_messages ?? {}) as Record<string, string>,
@@ -49,6 +51,7 @@ export interface CreateIMTriggerInput {
   displayName: string
   description?: string
   pipelineId?: number | null
+  capabilityKey?: string | null
   intentHints?: string
   examples?: string[]
   failureMessages?: Record<string, string>
@@ -60,13 +63,14 @@ export interface CreateIMTriggerInput {
 export async function createIMTrigger(input: CreateIMTriggerInput): Promise<IMTrigger> {
   const { rows } = await getPool().query(
     `INSERT INTO im_triggers
-       (key, display_name, description, pipeline_id, intent_hints, examples, failure_messages,
-        default_approval_rule_id, is_system, enabled)
-     VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8, $9, $10)
+       (key, display_name, description, pipeline_id, capability_key, intent_hints, examples,
+        failure_messages, default_approval_rule_id, is_system, enabled)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)
      RETURNING *`,
     [
       input.key, input.displayName, input.description ?? '',
-      input.pipelineId ?? null, input.intentHints ?? '',
+      input.pipelineId ?? null, input.capabilityKey ?? null,
+      input.intentHints ?? '',
       JSON.stringify(input.examples ?? []),
       JSON.stringify(input.failureMessages ?? {}),
       input.defaultApprovalRuleId ?? null,
@@ -83,6 +87,7 @@ export async function updateIMTrigger(id: number, patch: Partial<CreateIMTrigger
   if (patch.displayName !== undefined) { fields.push(`display_name = $${idx++}`); values.push(patch.displayName) }
   if (patch.description !== undefined) { fields.push(`description = $${idx++}`); values.push(patch.description) }
   if (patch.pipelineId !== undefined) { fields.push(`pipeline_id = $${idx++}`); values.push(patch.pipelineId) }
+  if (patch.capabilityKey !== undefined) { fields.push(`capability_key = $${idx++}`); values.push(patch.capabilityKey) }
   if (patch.intentHints !== undefined) { fields.push(`intent_hints = $${idx++}`); values.push(patch.intentHints) }
   if (patch.examples !== undefined) { fields.push(`examples = $${idx++}::jsonb`); values.push(JSON.stringify(patch.examples)) }
   if (patch.failureMessages !== undefined) { fields.push(`failure_messages = $${idx++}::jsonb`); values.push(JSON.stringify(patch.failureMessages)) }

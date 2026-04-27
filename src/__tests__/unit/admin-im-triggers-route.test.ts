@@ -36,4 +36,38 @@ describe('admin im-triggers route — fastify-inject', () => {
     const del = await app.inject({ method: 'DELETE', url: `/im-triggers/${created.id}` })
     expect(del.statusCode).toBe(204)
   })
+
+  it('POST returns 400 when both pipelineId and capabilityKey are set', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/im-triggers',
+      payload: {
+        key: 'test_both_fields',
+        displayName: '互斥测试',
+        pipelineId: 1,
+        capabilityKey: 'deploy',
+      },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error).toContain('不能同时设置')
+  })
+
+  it('PUT returns 400 when both pipelineId and capabilityKey are set', async () => {
+    // 先创建一个
+    const post = await app.inject({
+      method: 'POST', url: '/im-triggers',
+      payload: { key: 'test_exclusive_put', displayName: '互斥 PUT 测试' },
+    })
+    expect(post.statusCode).toBe(201)
+    const created = post.json() as { id: number }
+
+    const res = await app.inject({
+      method: 'PUT', url: `/im-triggers/${created.id}`,
+      payload: { pipelineId: 1, capabilityKey: 'deploy' },
+    })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error).toContain('不能同时设置')
+
+    // 清理
+    await app.inject({ method: 'DELETE', url: `/im-triggers/${created.id}` })
+  })
 })

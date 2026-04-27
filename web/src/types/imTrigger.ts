@@ -4,6 +4,7 @@ export interface IMTrigger {
   displayName: string
   description: string
   pipelineId: number | null
+  capabilityKey: string | null
   intentHints: string
   examples: string[]
   failureMessages: Record<string, string>

@@ -21,11 +21,19 @@ export async function registerIMTriggersRoutes(app: FastifyInstance): Promise<vo
   })
 
   app.post<{ Body: CreateIMTriggerInput }>('/im-triggers', async (req, reply) => {
+    const { pipelineId, capabilityKey } = req.body
+    if (pipelineId != null && capabilityKey != null) {
+      return reply.status(400).send({ error: 'pipeline_id 和 capability_key 不能同时设置' })
+    }
     const created = await createIMTrigger(req.body)
     return reply.status(201).send(created)
   })
 
   app.put<{ Params: { id: string }, Body: Partial<CreateIMTriggerInput> }>('/im-triggers/:id', async (req, reply) => {
+    const { pipelineId, capabilityKey } = req.body
+    if (pipelineId != null && capabilityKey != null) {
+      return reply.status(400).send({ error: 'pipeline_id 和 capability_key 不能同时设置' })
+    }
     const updated = await updateIMTrigger(Number(req.params.id), req.body)
     if (!updated) return reply.status(404).send({ error: 'not_found' })
     return updated
