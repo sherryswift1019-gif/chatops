@@ -910,6 +910,7 @@ export function buildGraphFromPipeline(
       case 'file_read':
       case 'template_render':
       case 'fan_out':
+      case 'switch':
         builder = builder.addNode(
           name,
           buildExecutorNode(node, i, stageContext, triggerParams ?? {}),

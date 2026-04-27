@@ -4,9 +4,9 @@ import { getExecutor } from '../../pipeline/node-types/registry.js'
 
 const executor = getExecutor('switch')!
 const baseCtx = {
-  runId: 'r', pipelineId: 'p', nodeId: 'sw1',
+  runId: 1, pipelineId: 1, nodeId: 'sw1',
   triggerParams: {}, vars: {},
-  steps: { q: { status: 'success', output: { score: 90, intent: 'rollback' } } },
+  steps: { q: { status: 'success' as const, output: { score: 90, intent: 'rollback' } } },
 }
 
 describe('switch node executor', () => {
