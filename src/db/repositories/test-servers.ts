@@ -91,6 +91,15 @@ export async function setServerStatus(id: number, status: 'idle' | 'in_use' | 'o
   await pool.query('UPDATE test_servers SET status = $2, updated_at = NOW() WHERE id = $1', [id, status])
 }
 
+export async function listTestServersByIds(ids: number[]): Promise<TestServer[]> {
+  if (ids.length === 0) return []
+  const { rows } = await getPool().query<Record<string, unknown>>(
+    `SELECT * FROM test_servers WHERE id = ANY($1::int[])`,
+    [ids],
+  )
+  return rows.map(mapRow)
+}
+
 export async function bulkSetServerStatus(ids: number[], status: 'idle' | 'in_use' | 'offline'): Promise<void> {
   if (ids.length === 0) return
   const pool = getPool()
