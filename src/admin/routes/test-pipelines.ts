@@ -45,16 +45,16 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
   app.post<{ Body: {
     productLineId: number; name: string; description?: string
     stages: unknown[]; serverRoles: Record<string, { count: number }>
-    schedule?: string; enabled?: boolean
+    enabled?: boolean
     triggerParams?: Record<string, unknown>
     artifactInputs?: ArtifactInput[]
   } }>('/test-pipelines', async (req, reply) => {
-    const { productLineId, name, stages, serverRoles, artifactInputs, schedule, triggerParams } = req.body
+    const { productLineId, name, stages, serverRoles, artifactInputs, triggerParams } = req.body
     if (!productLineId || !name || !stages || !serverRoles) {
       return reply.status(400).send({ error: 'productLineId, name, stages, serverRoles required' })
     }
     try {
-      validateArtifactInputsForTrigger(artifactInputs ?? [], { schedule, triggerParams })
+      validateArtifactInputsForTrigger(artifactInputs ?? [], { triggerParams })
     } catch (e) {
       return reply.status(400).send({ error: (e as Error).message })
     }
@@ -70,7 +70,6 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
 
     const body = req.body as {
       artifactInputs?: ArtifactInput[]
-      schedule?: string
       triggerParams?: Record<string, unknown>
     }
     const merged = mergePipelineForValidation(body, existing)

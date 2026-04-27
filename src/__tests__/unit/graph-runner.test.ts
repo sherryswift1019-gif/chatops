@@ -255,7 +255,6 @@ async function mockPipelineStagesOnce(stages: StageDefinition[]) {
     description: '',
     stages,
     serverRoles: {},
-    schedule: '',
     enabled: true,
     triggerParams: {},
     variables: {},
