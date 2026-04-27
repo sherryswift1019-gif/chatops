@@ -60,6 +60,33 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
   return { ok: errors.length === 0, errors }
 }
 
+/**
+ * 收集 nodeId 的所有祖先节点 ID（不含自身）。
+ * BFS 沿 edges 反向遍历：edge.target → edge.source。
+ */
+export function computeAncestors(graph: PipelineGraph, nodeId: string): Set<string> {
+  // 构建反向邻接表：target → source[]
+  const reverseAdj = new Map<string, string[]>()
+  for (const e of graph.edges) {
+    const arr = reverseAdj.get(e.target) ?? []
+    arr.push(e.source)
+    reverseAdj.set(e.target, arr)
+  }
+
+  const ancestors = new Set<string>()
+  const queue: string[] = [nodeId]
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    for (const parent of reverseAdj.get(current) ?? []) {
+      if (!ancestors.has(parent)) {
+        ancestors.add(parent)
+        queue.push(parent)
+      }
+    }
+  }
+  return ancestors
+}
+
 function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
   const prefix = `node ${n.id} (stageType=${n.stageType})`
   switch (n.stageType) {
