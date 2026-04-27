@@ -48,7 +48,7 @@ const autotestTool: AgentTool = {
         const pipelines = await listTestPipelines(productLineId)
         if (pipelines.length === 0) return { success: true, output: '当前没有配置流水线。' }
         const list = pipelines.map(p =>
-          `- [${p.id}] ${p.name}${p.description ? ` — ${p.description}` : ''}${p.schedule ? ` (定时: ${p.schedule})` : ''}${p.enabled ? '' : ' [已禁用]'}`
+          `- [${p.id}] ${p.name}${p.description ? ` — ${p.description}` : ''}${p.enabled ? '' : ' [已禁用]'}`
         ).join('\n')
         return { success: true, output: `流水线列表:\n${list}` }
       }

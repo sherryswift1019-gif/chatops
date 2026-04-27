@@ -13,3 +13,5 @@ test-results/
 playwright-report/
 *.tsbuildinfo
 src/db/system-config.local.sql
+.worktrees
+.DS_Store

@@ -296,8 +296,8 @@ export async function runPipeline(
         continue
       }
 
-      // Capability stages — trigger Agent capability
-      if (getStageType(stage) === 'capability') {
+      // Capability stages (T17 重命名 capability → llm_agent) — trigger Agent capability
+      if (getStageType(stage) === 'llm_agent') {
         const startTime = Date.now()
         stageResults[i] = { ...stageResults[i], status: 'running', startedAt: new Date().toISOString() }
         await updateTestRunStage(run.id, i, stageResults)

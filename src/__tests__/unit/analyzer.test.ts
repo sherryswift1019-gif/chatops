@@ -188,8 +188,8 @@ async function seedBaseData(opts: {
 
   // capability: analyze_bug with systemPrompt
   await pool.query(
-    `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
-     VALUES ('analyze_bug', '分析 Bug', 'desc', 'action', '[]'::jsonb, false, true, 'SYSTEM_PROMPT_FOR_ANALYZE_BUG')
+    `INSERT INTO capabilities (key, display_name, description, tool_names, is_system, system_prompt)
+     VALUES ('analyze_bug', '分析 Bug', 'desc', '[]'::jsonb, true, 'SYSTEM_PROMPT_FOR_ANALYZE_BUG')
      ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
   )
 
@@ -821,8 +821,8 @@ describe('handleAnalyzeBug 入口校验分支', () => {
     )
     const pid = rows[0].id as number
     await pool.query(
-      `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
-       VALUES ('analyze_bug', 'a', '', 'action', '[]'::jsonb, false, true, 'sp')
+      `INSERT INTO capabilities (key, display_name, description, tool_names, is_system, system_prompt)
+       VALUES ('analyze_bug', 'a', '', '[]'::jsonb, true, 'sp')
        ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
     )
     const res = await handleAnalyzeBug(buildOpts(pid))

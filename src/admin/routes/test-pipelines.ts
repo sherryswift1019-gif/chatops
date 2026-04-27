@@ -10,8 +10,8 @@ async function syncPipelineCapability(pipelineId: number, name: string, productL
   const key = `pipeline_${pipelineId}`
   const desc = `执行「${name}」流水线。使用autotest工具，参数: action=trigger_run, pipelineId=${pipelineId}。当用户说"执行${name}"、"运行${name}流水线"、"触发${name}测试"时匹配此能力。`
   await pool.query(
-    `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, param_schema, is_system)
-     VALUES ($1, $2, $3, 'testing', '["autotest"]', false, '{}', false)
+    `INSERT INTO capabilities (key, display_name, description, tool_names, is_system)
+     VALUES ($1, $2, $3, '["autotest"]', false)
      ON CONFLICT (key) DO UPDATE SET display_name = $2, description = $3`,
     [key, `执行流水线: ${name}`, desc]
   )
@@ -43,23 +43,30 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
   })
 
   app.post<{ Body: {
-    productLineId: number; name: string; description?: string
-    stages: unknown[]; serverRoles: Record<string, { count: number }>
-    schedule?: string; enabled?: boolean
+    productLineId?: number | null; name: string; description?: string
+    stages?: unknown[]; serverRoles?: Record<string, { count: number }>
+    enabled?: boolean
     triggerParams?: Record<string, unknown>
     artifactInputs?: ArtifactInput[]
   } }>('/test-pipelines', async (req, reply) => {
-    const { productLineId, name, stages, serverRoles, artifactInputs, schedule, triggerParams } = req.body
-    if (!productLineId || !name || !stages || !serverRoles) {
-      return reply.status(400).send({ error: 'productLineId, name, stages, serverRoles required' })
+    const { productLineId, name, artifactInputs, triggerParams } = req.body
+    if (!name) {
+      return reply.status(400).send({ error: 'name required' })
     }
     try {
-      validateArtifactInputsForTrigger(artifactInputs ?? [], { schedule, triggerParams })
+      validateArtifactInputsForTrigger(artifactInputs ?? [], { triggerParams })
     } catch (e) {
       return reply.status(400).send({ error: (e as Error).message })
     }
-    const item = await createTestPipeline(req.body)
-    await syncPipelineCapability(item.id, item.name, item.productLineId)
+    const item = await createTestPipeline({
+      ...req.body,
+      productLineId: productLineId ?? null,
+      stages: req.body.stages ?? [],
+      serverRoles: req.body.serverRoles ?? {},
+    })
+    if (item.productLineId > 0) {
+      await syncPipelineCapability(item.id, item.name, item.productLineId)
+    }
     return reply.status(201).send(item)
   })
 
@@ -70,7 +77,6 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
 
     const body = req.body as {
       artifactInputs?: ArtifactInput[]
-      schedule?: string
       triggerParams?: Record<string, unknown>
     }
     const merged = mergePipelineForValidation(body, existing)
@@ -82,7 +88,9 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
 
     const item = await updateTestPipeline(id, req.body as any)
     if (!item) return reply.status(404).send({ error: 'not found' })
-    await syncPipelineCapability(item.id, item.name, item.productLineId)
+    if (item.productLineId > 0) {
+      await syncPipelineCapability(item.id, item.name, item.productLineId)
+    }
     return reply.send(item)
   })
 

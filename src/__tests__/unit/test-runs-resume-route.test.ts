@@ -95,6 +95,7 @@ function makeRun(overrides: Partial<TestRun> = {}): TestRun {
     errorMessage: '',
     createdAt: new Date(),
     runtimeVars: {},
+    triggerParams: {},
     ...overrides,
   }
 }

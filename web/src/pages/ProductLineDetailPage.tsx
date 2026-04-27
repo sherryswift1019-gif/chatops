@@ -4,7 +4,7 @@ import {
   Card, Tabs, Button, Table, Form, Input, Select, Modal, Space, Tag, Avatar,
   Popconfirm, message, Switch, Spin, Typography, Divider, Checkbox, Tooltip,
 } from 'antd'
-import { ArrowLeftOutlined, PlusOutlined, SaveOutlined, UserOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, PlusOutlined, SaveOutlined, UserOutlined, ExclamationCircleTwoTone } from '@ant-design/icons'
 import {
   getProductLines, updateProductLine,
   getMembers, addMember, updateMemberRole, removeMember,
@@ -17,6 +17,14 @@ import { getTestServers } from '../api/test-servers'
 import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getCapabilities, getProductLineCapabilities, setProductLineCapabilities } from '../api/capabilities'
 import type { Capability, ProductLineCapability } from '../api/capabilities'
+import {
+  listIMTriggers, listProductLineIMTriggers, setProductLineIMTriggers,
+} from '../api/imTriggers'
+import type { IMTrigger, ProductLineIMTrigger } from '../types/imTrigger'
+import { listPipelineBindings, deletePipelineBinding } from '../api/pipeline-bindings'
+import type { PipelineBinding } from '../api/pipeline-bindings'
+import { getTestPipelines } from '../api/test-pipelines'
+import { PipelineBindingForm } from '../components/PipelineBindingForm'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
 import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule, TestServer } from '../types'
 
@@ -587,13 +595,13 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<ApprovalRule | null>(null)
-  const [capabilities, setCapabilities] = useState<Capability[]>([])
+  const [imTriggers, setImTriggers] = useState<IMTrigger[]>([])
   const [envs, setEnvs] = useState<Environment[]>([])
   const [form] = Form.useForm()
 
   useEffect(() => { load() }, [productLineId])
   useEffect(() => {
-    getCapabilities().then(setCapabilities)
+    listIMTriggers().then(setImTriggers).catch(() => {})
     getEnvironments().then(setEnvs)
   }, [])
 
@@ -613,7 +621,7 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
     const values = await form.validateFields()
     const body: Omit<ApprovalRule, 'id'> = {
       productLineId,
-      action: values.action,
+      imTriggerKey: values.imTriggerKey,
       env: values.env,
       primaryApprovers: values.primaryApprovers ?? [],
       backupApprovers: values.backupApprovers ?? [],
@@ -643,9 +651,22 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
     </Space>
   )
 
+  const triggerNameMap = new Map(imTriggers.map(t => [t.key, t.displayName]))
+  const triggerKeySet = new Set(imTriggers.map(t => t.key))
+
+  function renderImTriggerCell(v: string): React.ReactNode {
+    if (v === '*') return <Tag color="purple">*</Tag>
+    const name = triggerNameMap.get(v)
+    if (name) return <span>{name} <span style={{ color: '#999', fontSize: 11 }}>({v})</span></span>
+    return <span><ExclamationCircleTwoTone twoToneColor="#faad14" /> {v}</span>
+  }
+
   const columns = [
     { title: 'ID', dataIndex: 'id' },
-    { title: '操作类型', dataIndex: 'action' },
+    {
+      title: 'IM 触发器', dataIndex: 'imTriggerKey',
+      render: (v: string) => renderImTriggerCell(v),
+    },
     { title: '环境', dataIndex: 'env' },
     {
       title: '主审批人',
@@ -672,6 +693,27 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
     },
   ]
 
+  function buildImTriggerOptions() {
+    const options: Array<{ value: string; label: React.ReactNode }> = [
+      { value: '*', label: <span><Tag color="purple">*</Tag> 任意触发器（通配）</span> },
+      ...imTriggers.map(t => ({
+        value: t.key,
+        label: <span>{t.displayName} <span style={{ color: '#999', fontSize: 11 }}>({t.key})</span></span>,
+      })),
+    ]
+    if (editing && editing.imTriggerKey !== '*' && !triggerKeySet.has(editing.imTriggerKey)) {
+      options.push({
+        value: editing.imTriggerKey,
+        label: (
+          <span>
+            <ExclamationCircleTwoTone twoToneColor="#faad14" /> {editing.imTriggerKey}（不在列表中）
+          </span>
+        ),
+      })
+    }
+    return options
+  }
+
   return (
     <>
       <div style={{ marginBottom: 16, textAlign: 'right' }}>
@@ -687,17 +729,11 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
         width={640}
       >
         <Form form={form} layout="vertical">
-          <Form.Item name="action" label="操作类型" rules={[{ required: true, message: '请选择操作类型' }]}>
+          <Form.Item name="imTriggerKey" label="IM 触发器" rules={[{ required: true, message: '请选择 IM 触发器' }]}>
             <Select
               showSearch
-              placeholder="选择操作类型"
-              options={[
-                { value: '*', label: <span><Tag color="purple">*</Tag> 任意操作（通配）</span> },
-                ...capabilities.map(c => ({
-                  value: c.key,
-                  label: <span>{c.displayName} <span style={{ color: '#999', fontSize: 11 }}>({c.key})</span></span>,
-                })),
-              ]}
+              placeholder="选择 IM 触发器"
+              options={buildImTriggerOptions()}
               filterOption={(input, opt) => {
                 const v = String((opt as { value?: string } | undefined)?.value ?? '')
                 return v.toLowerCase().includes(input.toLowerCase())
@@ -816,9 +852,6 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     }
   }
 
-  const categoryColors: Record<string, string> = { query: 'blue', action: 'orange', admin: 'red', testing: 'purple' }
-  const categoryLabels: Record<string, string> = { query: '查询', action: '操作', admin: '管理', testing: '测试' }
-
   const enabledCol = {
     title: '启用', key: 'enabled', width: 80,
     render: (_: unknown, record: Capability) => {
@@ -855,8 +888,6 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
     { title: '能力名称', dataIndex: 'displayName' },
     { title: '标识', dataIndex: 'key' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
-    { title: '分类', dataIndex: 'category',
-      render: (v: string) => <Tag color={categoryColors[v]}>{categoryLabels[v] ?? v}</Tag> },
     enabledCol,
     imCol,
   ]
@@ -879,6 +910,231 @@ function CapabilitiesTab({ productLineId }: { productLineId: number }) {
           <Table rowKey="id" columns={pipelineColumns} dataSource={pipelineCaps} loading={loading} pagination={false} size="middle" />
         </>
       )}
+    </>
+  )
+}
+
+// ─── IM Triggers Tab ──────────────────────────────────────────────────────────
+// 产线级 IM 触发器配置:enabled/角色/触发源
+// 数据源:product_line_im_triggers (env_name='*' 单条聚合)
+
+function IMTriggersTab({ productLineId }: { productLineId: number }) {
+  const [triggers, setTriggers] = useState<IMTrigger[]>([])
+  const [plTriggers, setPlTriggers] = useState<ProductLineIMTrigger[]>([])
+  const [loading, setLoading] = useState(false)
+  const [savingKey, setSavingKey] = useState<string | null>(null)
+
+  useEffect(() => { loadData() }, [productLineId])
+
+  async function loadData() {
+    setLoading(true)
+    try {
+      const [trigs, configs] = await Promise.all([
+        listIMTriggers(),
+        listProductLineIMTriggers(productLineId),
+      ])
+      setTriggers(trigs)
+      setPlTriggers(configs)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const DEFAULT_ROLES = ['developer', 'tester', 'ops', 'admin']
+
+  // 取该 trigger 在本产线的"产线级"状态(优先 env_name='*')
+  function getTriggerState(triggerKey: string): {
+    enabled: boolean; allowIm: boolean; allowedRoles: string[]
+  } {
+    const configs = plTriggers.filter(c => c.imTriggerKey === triggerKey)
+    if (configs.length === 0) {
+      return { enabled: false, allowIm: false, allowedRoles: DEFAULT_ROLES }
+    }
+    const star = configs.find(c => c.envName === '*')
+    if (star) {
+      return {
+        enabled: star.enabled,
+        allowIm: star.triggerSources.includes('im'),
+        allowedRoles: star.allowedRoles,
+      }
+    }
+    // residual per-env: 任一 enabled / 任一 IM 即视为开
+    return {
+      enabled: configs.some(c => c.enabled),
+      allowIm: configs.some(c => c.triggerSources.includes('im')),
+      allowedRoles: configs[0]?.allowedRoles ?? DEFAULT_ROLES,
+    }
+  }
+
+  async function updateTrigger(
+    triggerKey: string,
+    patch: { enabled?: boolean; allowIm?: boolean; allowedRoles?: string[] },
+  ) {
+    setSavingKey(triggerKey)
+    try {
+      const current = getTriggerState(triggerKey)
+      const enabled = patch.enabled !== undefined ? patch.enabled : current.enabled
+      const allowIm = patch.allowIm !== undefined ? patch.allowIm : current.allowIm
+      const allowedRoles = patch.allowedRoles !== undefined ? patch.allowedRoles : current.allowedRoles
+      const triggerSources = allowIm ? ['im', 'web'] : ['web']
+
+      const others = plTriggers
+        .filter(c => c.imTriggerKey !== triggerKey)
+        .map(c => ({
+          imTriggerKey: c.imTriggerKey,
+          envName: c.envName,
+          enabled: c.enabled,
+          allowedRoles: c.allowedRoles,
+          triggerSources: c.triggerSources,
+          approvalRuleId: c.approvalRuleId,
+        }))
+
+      const thisOne = {
+        imTriggerKey: triggerKey,
+        envName: '*',
+        enabled,
+        allowedRoles,
+        triggerSources,
+      }
+
+      await setProductLineIMTriggers(productLineId, [...others, thisOne])
+      const verb = patch.enabled !== undefined
+        ? (enabled ? '已启用该触发器' : '已停用该触发器')
+        : patch.allowIm !== undefined
+        ? (allowIm ? '已开启 IM 触发' : '已关闭 IM 触发')
+        : '已更新角色'
+      message.success(verb)
+      await loadData()
+    } catch {
+      message.error('保存失败')
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
+  const columns = [
+    { title: '触发器名称', dataIndex: 'displayName' },
+    { title: '标识', dataIndex: 'key' },
+    { title: '描述', dataIndex: 'description', ellipsis: true },
+    {
+      title: '关联流水线', dataIndex: 'pipelineId',
+      render: (v: number | null) => v == null
+        ? <Tag color="default">未绑定</Tag>
+        : <Tag color="blue">#{v}</Tag>,
+    },
+    {
+      title: '启用', key: 'enabled', width: 80,
+      render: (_: unknown, record: IMTrigger) => {
+        const s = getTriggerState(record.key)
+        return (
+          <Switch
+            size="small"
+            checked={s.enabled}
+            loading={savingKey === record.key}
+            onChange={(v) => updateTrigger(record.key, { enabled: v })}
+          />
+        )
+      },
+    },
+    {
+      title: 'IM 触发', key: 'allowIm', width: 90,
+      render: (_: unknown, record: IMTrigger) => {
+        const s = getTriggerState(record.key)
+        return (
+          <Tooltip title="关闭后该触发器在本产线下不能通过钉钉/飞书群聊触发">
+            <Switch
+              size="small"
+              checked={s.allowIm}
+              loading={savingKey === record.key}
+              onChange={(v) => updateTrigger(record.key, { allowIm: v })}
+            />
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '允许角色', key: 'allowedRoles',
+      render: (_: unknown, record: IMTrigger) => {
+        const s = getTriggerState(record.key)
+        return (
+          <Checkbox.Group
+            value={s.allowedRoles}
+            options={DEFAULT_ROLES.map(r => ({ value: r, label: r }))}
+            onChange={(vs) => updateTrigger(record.key, { allowedRoles: vs as string[] })}
+            disabled={savingKey === record.key}
+          />
+        )
+      },
+    },
+  ]
+
+  return (
+    <>
+      <Title level={5} style={{ marginBottom: 12 }}>IM 触发器配置</Title>
+      <Typography.Paragraph type="secondary" style={{ marginBottom: 16 }}>
+        本产线允许 IM 触发的入口。开关项:启用 = 是否在本产线下生效;IM 触发 = 关闭后仅 web 可触发;角色 = 哪些角色可触发。
+      </Typography.Paragraph>
+      <Table rowKey="id" columns={columns} dataSource={triggers} loading={loading} pagination={false} size="middle" />
+    </>
+  )
+}
+
+// ─── Pipeline Bindings Tab ────────────────────────────────────────────────────
+
+function PipelineBindingsTab({ productLineId }: { productLineId: number }) {
+  const [bindings, setBindings] = useState<PipelineBinding[]>([])
+  const [pipelines, setPipelines] = useState<Array<{ id: number; name: string }>>([])
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState<PipelineBinding | undefined>()
+
+  async function load() {
+    const [bs, ps] = await Promise.all([
+      listPipelineBindings({ productLineId }),
+      getTestPipelines(),
+    ])
+    setBindings(bs)
+    setPipelines(ps)
+  }
+
+  useEffect(() => { load() }, [productLineId])
+
+  async function handleDelete(b: PipelineBinding) {
+    await deletePipelineBinding(b.productLineId, b.refKey)
+    message.success('已解绑')
+    load()
+  }
+
+  const columns = [
+    { title: 'ref_key', dataIndex: 'refKey' },
+    { title: 'Pipeline', dataIndex: 'pipelineId', render: (v: number) => {
+      const p = pipelines.find(x => x.id === v)
+      return p ? `${p.name} (#${v})` : `#${v}`
+    }},
+    { title: '描述', dataIndex: 'description' },
+    {
+      title: '操作',
+      render: (_: unknown, record: PipelineBinding) => (
+        <Space>
+          <Button size="small" onClick={() => { setEditing(record); setFormOpen(true) }}>编辑</Button>
+          <Button size="small" danger onClick={() => handleDelete(record)}>解绑</Button>
+        </Space>
+      ),
+    },
+  ]
+
+  return (
+    <>
+      <Space style={{ marginBottom: 16 }}>
+        <Button type="primary" onClick={() => { setEditing(undefined); setFormOpen(true) }}>新增绑定</Button>
+      </Space>
+      <Table rowKey="refKey" dataSource={bindings} columns={columns} pagination={false} size="small" />
+      <PipelineBindingForm
+        productLineId={productLineId}
+        initialValue={editing}
+        open={formOpen}
+        onSuccess={() => { setFormOpen(false); load() }}
+        onCancel={() => setFormOpen(false)}
+      />
     </>
   )
 }
@@ -948,9 +1204,19 @@ export default function ProductLineDetailPage() {
       children: <ApprovalRulesTab productLineId={productLineId} />,
     },
     {
+      key: 'im-triggers',
+      label: 'IM 触发器',
+      children: <IMTriggersTab productLineId={productLineId} />,
+    },
+    {
       key: 'capabilities',
-      label: '能力配置',
+      label: '能力库 (LLM agent)',
       children: <CapabilitiesTab productLineId={productLineId} />,
+    },
+    {
+      key: 'bindings',
+      label: 'Pipeline 绑定',
+      children: <PipelineBindingsTab productLineId={productLineId} />,
     },
   ]
 

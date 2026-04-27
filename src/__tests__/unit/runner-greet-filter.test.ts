@@ -1,69 +1,73 @@
 import { describe, it, expect } from 'vitest'
-import { filterImTriggerableCapabilities } from '../../agent/runner-greet-filter.js'
-import type { Capability } from '../../db/repositories/capabilities.js'
-import type { ProductLineCapability } from '../../db/repositories/product-line-capabilities.js'
+import { filterImTriggerableTriggers } from '../../agent/runner-greet-filter.js'
+import type { IMTrigger } from '../../db/repositories/im-triggers.js'
+import type { ProductLineIMTrigger } from '../../db/repositories/product-line-im-triggers.js'
 
-function cap(key: string): Capability {
+function trig(key: string, opts: { enabled?: boolean } = {}): IMTrigger {
   return {
-    id: 0, key, displayName: key, description: '', category: 'action',
-    toolNames: [], needsApproval: false, paramSchema: {}, playbook: [],
-    isSystem: false, systemPrompt: null, defaultSystemPrompt: null,
-    defaultPipelineId: null,
+    id: 0, key, displayName: key, description: '',
+    pipelineId: null, capabilityKey: null, intentHints: '', examples: [], failureMessages: {},
+    defaultApprovalRuleId: null, isSystem: false,
+    enabled: opts.enabled ?? true,
     createdAt: new Date(), updatedAt: new Date(),
-  } as Capability
+  }
 }
 
-function plCap(
-  capabilityKey: string,
+function plTrig(
+  imTriggerKey: string,
   opts: { enabled?: boolean; roles?: string[]; sources?: string[]; envName?: string } = {}
-): ProductLineCapability {
+): ProductLineIMTrigger {
   return {
-    id: 0, productLineId: 1, capabilityKey,
+    id: 0, productLineId: 1, imTriggerKey,
     envName: opts.envName ?? '*',
     enabled: opts.enabled ?? true,
     allowedRoles: opts.roles ?? ['developer', 'tester', 'ops', 'admin'],
     triggerSources: opts.sources ?? ['im', 'web'],
+    approvalRuleId: null,
   }
 }
 
-describe('filterImTriggerableCapabilities', () => {
-  it('keeps capability when PL config allows IM', () => {
-    const caps = [cap('deploy')]
-    const plCaps = [plCap('deploy')]
-    expect(filterImTriggerableCapabilities(caps, plCaps, 'developer').map(c => c.key)).toEqual(['deploy'])
+describe('filterImTriggerableTriggers', () => {
+  it('keeps trigger when PL config allows IM', () => {
+    const triggers = [trig('deploy')]
+    const plTriggers = [plTrig('deploy')]
+    expect(filterImTriggerableTriggers(triggers, plTriggers, 'developer').map(t => t.key)).toEqual(['deploy'])
   })
 
-  it('drops capability when trigger_sources excludes im', () => {
-    const caps = [cap('deploy'), cap('rollback')]
-    const plCaps = [plCap('deploy', { sources: ['web'] }), plCap('rollback')]
-    expect(filterImTriggerableCapabilities(caps, plCaps, 'developer').map(c => c.key)).toEqual(['rollback'])
+  it('drops trigger when trigger_sources excludes im', () => {
+    const triggers = [trig('deploy'), trig('rollback')]
+    const plTriggers = [plTrig('deploy', { sources: ['web'] }), plTrig('rollback')]
+    expect(filterImTriggerableTriggers(triggers, plTriggers, 'developer').map(t => t.key)).toEqual(['rollback'])
   })
 
-  it('drops capability when enabled=false', () => {
-    const caps = [cap('deploy')]
-    const plCaps = [plCap('deploy', { enabled: false })]
-    expect(filterImTriggerableCapabilities(caps, plCaps, 'developer')).toEqual([])
+  it('drops trigger when PL config enabled=false', () => {
+    const triggers = [trig('deploy')]
+    const plTriggers = [plTrig('deploy', { enabled: false })]
+    expect(filterImTriggerableTriggers(triggers, plTriggers, 'developer')).toEqual([])
   })
 
-  it('drops capability when user role not allowed', () => {
-    const caps = [cap('deploy')]
-    const plCaps = [plCap('deploy', { roles: ['admin'] })]
-    expect(filterImTriggerableCapabilities(caps, plCaps, 'developer')).toEqual([])
+  it('drops trigger when im_trigger itself is disabled', () => {
+    const triggers = [trig('deploy', { enabled: false })]
+    const plTriggers = [plTrig('deploy')]
+    expect(filterImTriggerableTriggers(triggers, plTriggers, 'developer')).toEqual([])
   })
 
-  it('drops capability with no PL config at all', () => {
-    const caps = [cap('deploy'), cap('unconfigured')]
-    const plCaps = [plCap('deploy')]
-    expect(filterImTriggerableCapabilities(caps, plCaps, 'developer').map(c => c.key)).toEqual(['deploy'])
+  it('drops trigger when user role not allowed', () => {
+    const triggers = [trig('deploy')]
+    const plTriggers = [plTrig('deploy', { roles: ['admin'] })]
+    expect(filterImTriggerableTriggers(triggers, plTriggers, 'developer')).toEqual([])
   })
 
-  it('prefers specific env over wildcard when both exist', () => {
-    // This helper is fed "*" configs in the greet path; specific-env merging is
-    // already handled by checkCapabilityAccess at runtime. Here we only need
-    // wildcard behavior.
-    const caps = [cap('deploy')]
-    const plCaps = [plCap('deploy', { envName: 'prod', sources: ['web'] }), plCap('deploy', { envName: '*' })]
-    // '*' permits; 'prod' row is extra config but wildcard is authoritative for greet
-    expect(filterImTriggerableCapabilities(caps, plCaps, 'developer').map(c => c.key)).toEqual(['deploy'])
+  it('drops trigger with no PL config at all', () => {
+    const triggers = [trig('deploy'), trig('unconfigured')]
+    const plTriggers = [plTrig('deploy')]
+    expect(filterImTriggerableTriggers(triggers, plTriggers, 'developer').map(t => t.key)).toEqual(['deploy'])
+  })
+
+  it('uses wildcard env config and ignores env-specific rows', () => {
+    // greet 场景只看 env='*' 的配置;env 特定配置不参与决策(运行时由 checkIMTriggerAccess 处理)。
+    const triggers = [trig('deploy')]
+    const plTriggers = [plTrig('deploy', { envName: 'prod', sources: ['web'] }), plTrig('deploy', { envName: '*' })]
+    expect(filterImTriggerableTriggers(triggers, plTriggers, 'developer').map(t => t.key)).toEqual(['deploy'])
   })
 })

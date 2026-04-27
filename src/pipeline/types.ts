@@ -9,9 +9,31 @@ export interface ImInputConfig {
   timeoutSeconds?: number
 }
 
+/**
+ * Phase 3 引入的 7 种 NodeExecutor 类型字面量。
+ * graph-builder switch 通过这些 union 落到通用 dispatch（buildExecutorNode）。
+ * 注：这些类型对应的运行时参数走 PipelineNode.params (松散字段)，不在 StageDefinition
+ * 上分别声明字段——参数 schema 由 src/pipeline/node-types/*.ts 各 executor 自行约定。
+ */
+export type ExecutorNodeStageType =
+  | 'sql_query'
+  | 'http'
+  | 'db_update'
+  | 'dm'
+  | 'file_read'
+  | 'template_render'
+  | 'fan_out'
+  | 'switch'
+
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input' | 'dm' | 'sql_query'
+  stageType:
+    | 'script'
+    | 'approval'
+    | 'llm_agent'
+    | 'wait_webhook'
+    | 'im_input'
+    | ExecutorNodeStageType
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number
@@ -35,13 +57,15 @@ export interface StageDefinition {
   // capability stage（研发 AI 助手：触发 Agent capability）
   capabilityKey?: string
   capabilityParams?: Record<string, unknown>
+  /** 仅对 llm_agent 节点有意义。运行时默认 'json'（stage 级默认）；旧 graph 经 v44 migration 显式补 'string' 保现状 */
+  outputFormat?: 'string' | 'json'
   // wait_webhook stage（等待外部 Webhook 恢复）
   webhookTag?: string
   // im_input stage（IM 对话式参数采集）
   imInputConfig?: ImInputConfig
 }
 
-export function getStageType(stage: StageDefinition): 'script' | 'approval' | 'capability' | 'wait_webhook' | 'im_input' | 'dm' | 'sql_query' {
+export function getStageType(stage: StageDefinition): StageDefinition['stageType'] {
   return stage.stageType ?? 'script'
 }
 

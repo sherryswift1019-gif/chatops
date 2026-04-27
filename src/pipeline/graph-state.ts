@@ -33,6 +33,18 @@ function mergeStageResults(
   return next
 }
 
+// Per-node executor outputs keyed by node id. Used by the dispatcher in
+// graph-builder for resolving `{{steps.<id>.output.x}}` templates and by
+// node-types fan_out/template_render for step references.
+//
+// Node ids are unique within a pipeline graph, so we accept a partial-merge
+// reducer (later writes overwrite earlier ones). v1 doesn't support a node
+// firing twice in the same run.
+export interface StepOutput {
+  status: 'success' | 'failed' | 'skipped'
+  output: Record<string, unknown>
+}
+
 // StateGraph runtime state for a pipeline run.
 //
 // Reducer choices match the semantics the executor needs:
@@ -42,6 +54,8 @@ function mergeStageResults(
 //   publish its own result without clobbering peers.
 // - runtimeVars: shallow object merge, matching how the SSH/script stages
 //   already accumulate variables on test_runs.runtime_vars.
+// - stepOutputs: per-node-id merge so executor nodes can read upstream
+//   structured outputs via `{{steps.<id>.output.x}}` templates.
 export const PipelineStateAnnotation = Annotation.Root({
   runId: Annotation<number>({
     reducer: (current, update) => update ?? current,
@@ -59,17 +73,14 @@ export const PipelineStateAnnotation = Annotation.Root({
     reducer: (current, update) => ({ ...current, ...(update ?? {}) }),
     default: () => ({}),
   }),
+  stepOutputs: Annotation<Record<string, StepOutput>>({
+    reducer: (current, update) => ({ ...current, ...(update ?? {}) }),
+    default: () => ({}),
+  }),
   terminated: Annotation<boolean>({
     // OR reducer: once true, never flips back.
     reducer: (current, update) => current || !!update,
     default: () => false,
-  }),
-  // stepOutputs: keyed by node id, stores the structured output of each node.
-  // Used by dry-run to record stub/manual outputs and by downstream variable resolution.
-  // Reducer: shallow merge by node id (latest wins per node).
-  stepOutputs: Annotation<Record<string, { status: 'success' | 'failed'; output: unknown }>>({
-    reducer: (current, update) => ({ ...current, ...(update ?? {}) }),
-    default: () => ({}),
   }),
 })
 

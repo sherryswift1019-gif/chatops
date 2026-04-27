@@ -26,7 +26,7 @@ export interface Environment {
 }
 
 export interface ApprovalRule {
-  id: number; productLineId: number | null; action: string; env: string
+  id: number; productLineId: number | null; imTriggerKey: string; env: string
   primaryApprovers: string[]; backupApprovers: string[]
   primaryTimeoutMin: number; totalTimeoutMin: number
 }
@@ -65,11 +65,11 @@ export interface TestServer {
 }
 
 export interface TestPipeline {
-  id: number; productLineId: number; name: string; description: string
-  stages: StageDefinition[]; serverRoles: Record<string, { count: number }>
+  id: number; productLineId?: number; name: string; description: string
+  stages: StageDefinition[]; serverRoles?: Record<string, { count: number }>
   variables?: Record<string, string>
   artifactInputs?: ArtifactInput[]
-  schedule: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
+  schedule?: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
 }
 
 export interface ArtifactInput {
@@ -85,7 +85,7 @@ export interface ArtifactInput {
 
 export interface StageDefinition {
   name: string
-  stageType: 'script' | 'approval' | 'capability' | 'wait_webhook'
+  stageType: 'script' | 'approval' | 'llm_agent' | 'wait_webhook'
   targetRoles: string[]
   parallel: boolean
   timeoutSeconds: number

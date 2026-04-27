@@ -213,13 +213,12 @@ export async function registerSystemConfigRoutes(
       }
 
       // 3. Capabilities
-      const caps = (data.capabilities ?? []) as Array<{ key: string; displayName: string; description?: string; category?: string; toolNames?: string[]; needsApproval?: boolean }>
+      const caps = (data.capabilities ?? []) as Array<{ key: string; displayName: string; description?: string; toolNames?: string[] }>
       for (const c of caps) {
         try {
           await createCapability({
             key: c.key, displayName: c.displayName, description: c.description ?? '',
-            category: (c.category ?? 'query') as 'query' | 'action' | 'admin',
-            toolNames: c.toolNames ?? [], needsApproval: c.needsApproval ?? false,
+            toolNames: c.toolNames ?? [],
           })
           stats.capabilities++
         } catch { /* duplicate, skip */ }
@@ -281,11 +280,11 @@ export async function registerSystemConfigRoutes(
         }
 
         // Approval rules
-        const rules = (pl.approvalRules ?? []) as Array<{ action: string; env: string; primaryApprovers: string[]; backupApprovers: string[]; primaryTimeoutMin: number; totalTimeoutMin: number }>
+        const rules = (pl.approvalRules ?? []) as Array<{ imTriggerKey: string; env: string; primaryApprovers: string[]; backupApprovers: string[]; primaryTimeoutMin: number; totalTimeoutMin: number }>
         for (const r of rules) {
           try {
             await insertApprovalRule({
-              productLineId: plId, action: r.action, env: r.env,
+              productLineId: plId, imTriggerKey: r.imTriggerKey, env: r.env,
               primaryApprovers: r.primaryApprovers, backupApprovers: r.backupApprovers,
               primaryTimeoutMin: r.primaryTimeoutMin ?? 10, totalTimeoutMin: r.totalTimeoutMin ?? 20,
             })

@@ -17,7 +17,7 @@ function node(partial: Partial<PipelineNode> & Pick<PipelineNode, 'id' | 'name' 
 describe('validatePipelineGraph — 按 stageType 必填校验', () => {
   it('capability 节点缺 capabilityKey → 报错', () => {
     const graph: PipelineGraph = {
-      nodes: [node({ id: 'n1', name: 'cap', stageType: 'capability' })],
+      nodes: [node({ id: 'n1', name: 'cap', stageType: 'llm_agent' })],
       edges: [],
     }
     const r = validatePipelineGraph(graph)
@@ -27,7 +27,7 @@ describe('validatePipelineGraph — 按 stageType 必填校验', () => {
 
   it('capability 节点有 capabilityKey → 通过', () => {
     const graph: PipelineGraph = {
-      nodes: [node({ id: 'n1', name: 'cap', stageType: 'capability', capabilityKey: 'build' })],
+      nodes: [node({ id: 'n1', name: 'cap', stageType: 'llm_agent', capabilityKey: 'build' })],
       edges: [],
     }
     expect(validatePipelineGraph(graph).ok).toBe(true)

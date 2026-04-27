@@ -12,6 +12,8 @@ import { registerDingTalkUserRoutes } from './routes/dingtalk-users.js'
 import { registerToolPermissionRoutes } from './routes/tool-permissions.js'
 import { registerCapabilityRoutes } from './routes/capabilities.js'
 import { registerPipelineToolRoutes } from './routes/pipeline-tools.js'
+import { registerPipelineNodeTypeRoutes } from './routes/pipeline-node-types.js'
+import { registerIMTriggersRoutes } from './routes/im-triggers.js'
 import { registerAiRoutes } from './routes/ai.js'
 import { registerTestServerRoutes } from './routes/test-servers.js'
 import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
@@ -28,6 +30,7 @@ import { registerOnboardingRoutes } from './routes/onboarding.js'
 import { registerPrdDocumentRoutes } from './routes/prd-documents.js'
 import { registerPrdChatRoutes } from './routes/prd-chat.js'
 import { registerPrdMetricsRoutes } from './routes/prd-metrics.js'
+import { pipelineBindingsRoutes } from './routes/pipeline-bindings.js'
 
 export async function adminPlugin(
   app: FastifyInstance,
@@ -58,6 +61,8 @@ export async function adminPlugin(
   await registerToolPermissionRoutes(app)
   await registerCapabilityRoutes(app)
   await registerPipelineToolRoutes(app)
+  await registerPipelineNodeTypeRoutes(app)
+  await registerIMTriggersRoutes(app)
   await registerTestServerRoutes(app)
   await registerTestPipelineRoutes(app)
   await registerTestRunRoutes(app)
@@ -76,4 +81,5 @@ export async function adminPlugin(
   if (opts.runner) {
     await registerPrdChatRoutes(app, { runner: opts.runner })
   }
+  await app.register(pipelineBindingsRoutes)
 }

@@ -31,7 +31,7 @@ describe.skip('Integration: handleAnalysisComplete 触发链路（已由 unit te
     // 确保 capabilities 存在
     for (const key of ['fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr']) {
       await pool.query(
-        `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval) VALUES ($1, $1, 'test', 'action', '[]', false) ON CONFLICT (key) DO NOTHING`,
+        `INSERT INTO capabilities (key, display_name, description, tool_names) VALUES ($1, $1, 'test', '[]') ON CONFLICT (key) DO NOTHING`,
         [key]
       )
     }

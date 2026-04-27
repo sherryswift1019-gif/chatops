@@ -11,6 +11,14 @@
  *
  * capability 第一版仅支持整值替换（^{{...}}$），不支持嵌入式模板
  * （如 "foo-{{vars.x}}"）。
+ *
+ * phase 3 扩展（spec §4.2 / §4.5）：
+ * - 点记法 + JSONPath 子集：`{{steps.x.output.rows[0].id}}`
+ * - 内置过滤器：`{{x | urlEncode}}` / `| jsonStringify` / `| lower` / `| upper`
+ * - fan_out scope 注入：当 `ctx.scopes.<head>` 存在时优先从 scopes 解析
+ *   （priority: scopes > steps > vars > triggerParams）
+ *
+ * ⚠️ v1 不支持 `array[*].field` glob——超出本期范围，需要再扩展。
  */
 export interface VariableContext {
   productLine: { name: string; displayName: string }
@@ -51,26 +59,83 @@ export const VARIABLE_CATALOG: VariableDefinition[] = [
   { key: 'vars.*', description: '自定义变量，在流水线配置中定义', category: '自定义' },
 ]
 
+const FILTERS: Record<string, (v: unknown) => string> = {
+  urlEncode: (v) => encodeURIComponent(String(v)),
+  jsonStringify: (v) => JSON.stringify(v),
+  lower: (v) => String(v).toLowerCase(),
+  upper: (v) => String(v).toUpperCase(),
+}
+
 /**
- * Replace all {{xxx}} templates in script with values from context.
- * Supports dot-notation paths: {{server.host}}, {{productLine.displayName}}, {{vars.APP_NAME}}
- * Unresolved variables are left as-is.
+ * Replace all `{{xxx}}` (with optional `| filter`) templates in script.
+ * Supports dot-notation paths and JSONPath array index:
+ *   `{{server.host}}` / `{{steps.x.output.rows[0].id}}`
+ * Filters: `urlEncode` / `jsonStringify` / `lower` / `upper`.
+ * Unresolved variables are left as-is (literal placeholder preserved).
  */
-export function resolveVariables(script: string, ctx: VariableContext): string {
-  return script.replace(/\{\{([^}]+)\}\}/g, (_match, path: string) => {
-    const trimmed = path.trim()
-    const value = resolvePath(ctx as unknown as Record<string, unknown>, trimmed)
-    if (value === undefined) return `{{${trimmed}}}`
-    return String(value)
+export function resolveVariables(template: string, ctx: VariableContext): string {
+  return template.replace(/\{\{\s*([^}|]+?)(?:\s*\|\s*(\w+))?\s*\}\}/g, (raw, expr: string, filter?: string) => {
+    const value = resolvePath(ctx as unknown as Record<string, unknown>, expr.trim())
+    if (value === undefined) return raw // 未解析保留 {{...}}
+    if (filter) {
+      const fn = FILTERS[filter]
+      if (!fn) throw new Error(`unknown variable filter: ${filter}`)
+      return fn(value)
+    }
+    return typeof value === 'string' ? value : JSON.stringify(value).replace(/^"|"$/g, '')
   })
 }
 
+interface PathPart {
+  kind: 'name' | 'index'
+  name?: string
+  index?: number
+}
+
 function resolvePath(obj: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.')
-  let current: unknown = obj
-  for (const part of parts) {
-    if (current == null || typeof current !== 'object') return undefined
-    current = (current as Record<string, unknown>)[part]
+  // 优先级: scopes > steps > vars > triggerParams (spec §4.5)
+  // 简化实现：若 obj.scopes[<head>] 命中,则从 scopes 取 head；否则从 obj 取 head。
+  const parts = parsePath(path)
+  if (parts.length === 0) return undefined
+
+  const scopes = (obj.scopes ?? {}) as Record<string, unknown>
+  const head = parts[0]
+  let cursor: unknown = head.kind === 'name' && head.name !== undefined && head.name in scopes
+    ? scopes
+    : obj
+
+  for (const p of parts) {
+    if (cursor == null || typeof cursor !== 'object') return undefined
+    if (p.kind === 'name' && p.name !== undefined) {
+      cursor = (cursor as Record<string, unknown>)[p.name]
+    } else if (p.kind === 'index' && p.index !== undefined) {
+      cursor = (cursor as unknown[])[p.index]
+    }
   }
-  return current
+  return cursor
+}
+
+function parsePath(path: string): PathPart[] {
+  const parts: PathPart[] = []
+  let i = 0
+  while (i < path.length) {
+    if (path[i] === '.') {
+      i++
+      continue
+    }
+    if (path[i] === '[') {
+      const j = path.indexOf(']', i)
+      if (j === -1) return []
+      const idx = parseInt(path.slice(i + 1, j), 10)
+      if (Number.isNaN(idx)) return []
+      parts.push({ kind: 'index', index: idx })
+      i = j + 1
+      continue
+    }
+    let j = i
+    while (j < path.length && path[j] !== '.' && path[j] !== '[') j++
+    parts.push({ kind: 'name', name: path.slice(i, j) })
+    i = j
+  }
+  return parts
 }

@@ -10,25 +10,17 @@ function input(partial: Partial<ArtifactInput> = {}): ArtifactInput {
 }
 
 describe('validateArtifactInputsForTrigger', () => {
-  const scheduled = { schedule: '0 * * * *' }
   const apiEnabled = { triggerParams: { apiEnabled: true } }
 
   it('passes when no artifactInputs', () => {
-    expect(() => validateArtifactInputsForTrigger([], scheduled)).not.toThrow()
+    expect(() => validateArtifactInputsForTrigger([], apiEnabled)).not.toThrow()
   })
 
-  it('passes when pipeline is manual-only (no schedule, no API)', () => {
+  it('passes when pipeline is manual-only (no API)', () => {
     expect(() => validateArtifactInputsForTrigger(
       [input()],
-      { schedule: '', triggerParams: {} },
+      { triggerParams: {} },
     )).not.toThrow()
-  })
-
-  it('requires default or defaultStrategy when scheduled', () => {
-    expect(() => validateArtifactInputsForTrigger(
-      [input()],
-      scheduled,
-    )).toThrow(/default|defaultStrategy/)
   })
 
   it('requires default or defaultStrategy when apiEnabled', () => {
@@ -52,13 +44,6 @@ describe('validateArtifactInputsForTrigger', () => {
     )).not.toThrow()
   })
 
-  it('accepts default present', () => {
-    expect(() => validateArtifactInputsForTrigger(
-      [input({ default: 'http://x' })],
-      scheduled,
-    )).not.toThrow()
-  })
-
   it('accepts defaultStrategy present', () => {
     expect(() => validateArtifactInputsForTrigger(
       [input({ defaultStrategy: 'latest-by-mtime' })],
@@ -69,7 +54,7 @@ describe('validateArtifactInputsForTrigger', () => {
   it('error message names the offending input', () => {
     expect(() => validateArtifactInputsForTrigger(
       [input({ name: '选 PAM 包' })],
-      scheduled,
+      apiEnabled,
     )).toThrow(/选 PAM 包/)
   })
 })

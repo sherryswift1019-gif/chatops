@@ -145,6 +145,54 @@ const SCHEMA_FILES = [
   // 混用 seed 会打穿这个假设。v21+ 新建的表（prd_submit_events / arch_*）
   // 目前没有单元测试依赖；globalSetup 的 pg-container.ts 会扫全部文件
   // 支持首次 bootstrap，业务代码运行时 migrate.ts 也会跑全套。
+  //
+  // v30 (pipeline_node_types) 例外：全新表 + 非污染 catalog seed（5 行节点
+  // 类型定义），所有依赖此表的测试都期望这 5 行存在，不会干扰其它 fixture。
+  // 后续 v31+ schema 遵循同样规则：纯 DDL 或"全新表 + 所有测试都期望存在
+  // 的 catalog seed"才能加进 SCHEMA_FILES。
+  'schema-v30.sql',
+  // v31 (capabilities 4 字段): 纯 ALTER TABLE ADD + 对已有行的 UPDATE backfill。
+  // 不引入新 capability 行,不影响其它 fixture。所有依赖 capabilities 表
+  // 4 字段的测试都期望 deploy/rollback/restart 有 deploy lock,
+  // analyze_bug + fix_bug_l1/l2/l3 有 worktree,其余 capability neither。
+  'schema-v31.sql',
+  // v32 (im_triggers + product_line_im_triggers + approval_rules 改名):
+  // 新表 + ALTER + 数据迁移。所有依赖 IM 触发器的测试期望 im_triggers 至少有
+  // 入口类 capability 行数 (~5+)。同 v31 forward policy。
+  'schema-v32.sql',
+  // v33 (capabilities cleanup): DROP 5 个 legacy 字段, 纯 ALTER, 无新行无新表。
+  // 测试期望 capabilities 表只剩 LLM agent 核心字段 (phase 2 cleanup 完成后)。
+  'schema-v33.sql',
+  // v34 (pipeline_node_types 7 新行): 纯 INSERT, ON CONFLICT DO NOTHING, 不影响其它 fixture。
+  // 默认 enabled=FALSE; phase 3 后续 task 启用各类型时通过 schema-v3X 或 admin SQL UPDATE。
+  'schema-v34.sql',
+  // v35 (T9-T14 enable 6 new simple node types): 纯 UPDATE pipeline_node_types
+  // SET enabled=TRUE。每个 executor commit 后追加一行 UPDATE 并 bump 末尾断言。
+  // T15 fan_out 推迟,本文件最终 6 行 enabled = 11(5 phase-0 + 6 simple)。
+  'schema-v35.sql',
+  // v36 (T17 capability → llm_agent rename): pipeline_node_types row 改名
+  // + test_pipelines.graph / .stages JSONB 节点 stageType 改名。
+  // 测试 fixture 里若仍用 'capability' 字面量需要 phase 3 后续清理 —— 但 SQL 迁移
+  // 是幂等 + WHERE EXISTS 守门,空表上是 no-op。
+  'schema-v36.sql',
+  // v37 (phase 4 — internal_capability_pipelines + L1 handover seed):
+  // CREATE TABLE internal_capability_pipelines + 在 product_lines 非空时种入
+  // 'handover-internal' pipeline 并注册映射。空 product_lines 时 seed 自动 skip,
+  // 不产生 fixture 污染。需要映射的测试自行 bootstrap product_line + 重跑 v37
+  // (见 internal-capability-pipelines-repo.test.ts)。
+  'schema-v37.sql',
+  // v40 (phase 4 T3 — notify_bug pipeline 迁移): CREATE FUNCTION build_notify_message
+  // (PL/pgSQL, 4 种 scenario 文案拼接) + 在 product_lines 非空时种入 'notify-internal'
+  // pipeline (4 节点 DAG: sql_query → fan_out → db_update × 2) 并注册 'notify_bug'
+  // 映射。空 product_lines 时 seed 自动 skip。同 v37 forward policy。
+  'schema-v40.sql',
+  // v41 (phase 4 T4 — create_mr pipeline 迁移): CREATE FUNCTION build_mr_description
+  // / build_mr_title (PL/pgSQL) + 在 product_lines 非空时种入 'create-mr-internal'
+  // pipeline (4 节点 DAG: sql_query → fan_out → db_update × 2) 并注册 'create_mr'
+  // 映射。空 product_lines 时 seed 自动 skip。同 v37/v40 forward policy。
+  'schema-v41.sql',
+  // v42: pipeline 解绑产线，新建 pipeline_bindings 关联表 + 老数据迁移 + 删 schedule。
+  'schema-v42.sql',
   // v45: 纯 DDL（pipeline_dryrun_snapshots + test_runs.trigger_params），无 seed 数据，安全加入。
   'schema-v45.sql',
 ]

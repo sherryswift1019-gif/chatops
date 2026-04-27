@@ -7,7 +7,7 @@ import { updateTaskStatus, getTaskById } from '../db/repositories/tasks.js'
 
 export interface ApprovalRequest {
   taskId: string
-  action: string
+  imTriggerKey: string
   env: string
   description: string
   initiatorName: string
@@ -32,7 +32,7 @@ export class ApprovalGate {
 
   async request(req: ApprovalRequest, onDecision: ApprovalCallback): Promise<boolean> {
     if (!this.router) await this.initialize()
-    const rule = this.router!.route(req.action, req.env)
+    const rule = this.router!.route(req.imTriggerKey, req.env)
 
     // No matching rule → auto-approve
     if (!rule) {

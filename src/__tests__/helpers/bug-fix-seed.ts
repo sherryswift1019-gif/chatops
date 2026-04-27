@@ -55,8 +55,8 @@ export async function seedKnowledgeRepo(
 export async function seedAnalyzeBugCapability(): Promise<void> {
   const pool = getTestPool()
   await pool.query(
-    `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
-     VALUES ('analyze_bug', 'Bug 分析', 'Bug 分析', 'action', '[]'::jsonb, false, true, '你是 Bug 分析专家')
+    `INSERT INTO capabilities (key, display_name, description, tool_names, is_system, system_prompt)
+     VALUES ('analyze_bug', 'Bug 分析', 'Bug 分析', '[]'::jsonb, true, '你是 Bug 分析专家')
      ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
   )
 }
@@ -66,8 +66,8 @@ export async function seedFixBugCapabilities(): Promise<void> {
   const pool = getTestPool()
   for (const key of ['fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3']) {
     await pool.query(
-      `INSERT INTO capabilities (key, display_name, description, category, tool_names, needs_approval, is_system, system_prompt)
-       VALUES ($1, $1, 'test', 'action', '[]'::jsonb, false, true, '你是修复专家')
+      `INSERT INTO capabilities (key, display_name, description, tool_names, is_system, system_prompt)
+       VALUES ($1, $1, 'test', '[]'::jsonb, true, '你是修复专家')
        ON CONFLICT (key) DO UPDATE SET system_prompt = EXCLUDED.system_prompt`,
       [key],
     )
@@ -82,44 +82,53 @@ export async function seedPipelines(productLineId: number): Promise<void> {
   const pool = getTestPool()
 
   const l1Stages = [
-    { name: 'L1 修复', stageType: 'capability', capabilityKey: 'fix_bug_l1', timeoutSeconds: 1800, retryCount: 0, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: '创建 MR', stageType: 'capability', capabilityKey: 'create_mr', timeoutSeconds: 300, retryCount: 1, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: 'AI Review', stageType: 'capability', capabilityKey: 'ai_review_mr', timeoutSeconds: 600, retryCount: 0, onFailure: 'continue', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: '通知', stageType: 'capability', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: 'L1 修复', stageType: 'llm_agent', capabilityKey: 'fix_bug_l1', timeoutSeconds: 1800, retryCount: 0, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '创建 MR', stageType: 'llm_agent', capabilityKey: 'create_mr', timeoutSeconds: 300, retryCount: 1, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: 'AI Review', stageType: 'llm_agent', capabilityKey: 'ai_review_mr', timeoutSeconds: 600, retryCount: 0, onFailure: 'continue', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '通知', stageType: 'llm_agent', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
   ]
 
   const l2Stages = [
-    { name: 'L2 修复', stageType: 'capability', capabilityKey: 'fix_bug_l2', timeoutSeconds: 2400, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: '创建 MR', stageType: 'capability', capabilityKey: 'create_mr', timeoutSeconds: 300, retryCount: 1, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: 'AI Review', stageType: 'capability', capabilityKey: 'ai_review_mr', timeoutSeconds: 600, retryCount: 0, onFailure: 'continue', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: '通知', stageType: 'capability', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: 'L2 修复', stageType: 'llm_agent', capabilityKey: 'fix_bug_l2', timeoutSeconds: 2400, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '创建 MR', stageType: 'llm_agent', capabilityKey: 'create_mr', timeoutSeconds: 300, retryCount: 1, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: 'AI Review', stageType: 'llm_agent', capabilityKey: 'ai_review_mr', timeoutSeconds: 600, retryCount: 0, onFailure: 'continue', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '通知', stageType: 'llm_agent', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
   ]
 
   const l3Stages = [
     { name: '方案审批', stageType: 'approval', approverIdsResolver: 'primary_project_owner', approvalDescription: 'L3 Bug 修复方案审批', timeoutSeconds: 3600, retryCount: 0, onFailure: 'stop', targetRoles: [], parallel: false },
-    { name: 'L3 修复', stageType: 'capability', capabilityKey: 'fix_bug_l3', timeoutSeconds: 2400, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: '创建 MR', stageType: 'capability', capabilityKey: 'create_mr', timeoutSeconds: 300, retryCount: 1, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: 'AI Review', stageType: 'capability', capabilityKey: 'ai_review_mr', timeoutSeconds: 600, retryCount: 0, onFailure: 'continue', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
-    { name: '通知', stageType: 'capability', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: 'L3 修复', stageType: 'llm_agent', capabilityKey: 'fix_bug_l3', timeoutSeconds: 2400, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '创建 MR', stageType: 'llm_agent', capabilityKey: 'create_mr', timeoutSeconds: 300, retryCount: 1, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: 'AI Review', stageType: 'llm_agent', capabilityKey: 'ai_review_mr', timeoutSeconds: 600, retryCount: 0, onFailure: 'continue', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '通知', stageType: 'llm_agent', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
   ]
 
   const l4Stages = [
-    { name: '通知', stageType: 'capability', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
+    { name: '通知', stageType: 'llm_agent', capabilityKey: 'notify_bug', timeoutSeconds: 120, retryCount: 2, onFailure: 'stop', targetRoles: [], parallel: false, capabilityParams: { reportId: '{{triggerParams.reportId}}' } },
   ]
 
   const pipes = [
-    { name: 'L1-配置类', stages: l1Stages },
-    { name: 'L2-代码缺陷', stages: l2Stages },
-    { name: 'L3-业务逻辑', stages: l3Stages },
-    { name: 'L4-复杂问题', stages: l4Stages },
+    { name: 'L1-配置类', refKey: 'fix_bug_l1', stages: l1Stages },
+    { name: 'L2-代码缺陷', refKey: 'fix_bug_l2', stages: l2Stages },
+    { name: 'L3-业务逻辑', refKey: 'fix_bug_l3', stages: l3Stages },
+    { name: 'L4-复杂问题', refKey: 'fix_bug_l4', stages: l4Stages },
   ]
   for (const p of pipes) {
-    await pool.query(
+    const { rows } = await pool.query(
       `INSERT INTO test_pipelines (product_line_id, name, description, stages, enabled)
        VALUES ($1, $2, '', $3::jsonb, true)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
       [productLineId, p.name, JSON.stringify(p.stages)],
     )
+    if (rows.length > 0) {
+      await pool.query(
+        `INSERT INTO pipeline_bindings (product_line_id, ref_key, pipeline_id, server_role_assignments, description)
+         VALUES ($1, $2, $3, '{}'::jsonb, '')
+         ON CONFLICT (product_line_id, ref_key) DO NOTHING`,
+        [productLineId, p.refKey, rows[0].id],
+      )
+    }
   }
 }
 

@@ -19,6 +19,12 @@ vi.mock('../../db/repositories/capabilities.js', () => ({
   }),
 }))
 
+// phase 2 cleanup: coordinator 通过 im_triggers.pipeline_id 决定 pipeline 路径。
+// 这些 unit 测试场景全是 handler 路径（无 pipeline），mock 一律返回 null。
+vi.mock('../../db/repositories/im-triggers.js', () => ({
+  getIMTrigger: vi.fn(async () => null),
+}))
+
 vi.mock('../../db/repositories/bug-analysis-reports.js', () => ({
   setPipelineRunId: vi.fn(async () => {}),
   updateReportStatus: vi.fn(async () => null),
@@ -96,6 +102,40 @@ describe('AgentCoordinator - triggerCapability', () => {
     expect(result.success).toBe(false)
     expect(result.error).toContain('boom')
   })
+
+  it('runs handler referenced by im_trigger.capabilityKey', async () => {
+    const handler = vi.fn().mockResolvedValue({ success: true, output: 'via capabilityKey' })
+    registerCapabilityHandler('test_cap', handler)
+
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'test_cap', pipelineId: null, capabilityKey: 'test_cap', enabled: true,
+    })
+
+    const result = await triggerCapability({
+      capabilityKey: 'test_cap',
+      context: { taskId: 't5', groupId: 'g1', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.output).toBe('via capabilityKey')
+    expect(handler).toHaveBeenCalled()
+  })
+
+  it('returns error when im_trigger has no pipeline or capabilityKey', async () => {
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'test_cap', pipelineId: null, capabilityKey: null, enabled: true,
+    })
+
+    const result = await triggerCapability({
+      capabilityKey: 'test_cap',
+      context: { taskId: 't6', groupId: 'g1', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('未配置执行目标')
+  })
 })
 
 describe('AgentCoordinator - handleAnalysisComplete', () => {
@@ -125,25 +165,17 @@ describe('AgentCoordinator - handleAnalysisComplete', () => {
     updatedAt: new Date(),
   }
 
-  async function mockPipelineRow(pipelineId: number, name: string) {
+  async function mockPipelineRow(pipelineId: number, _name?: string) {
     const { getPool } = await import('../../db/client.js')
-    ;(getPool as any).mockReturnValue({
-      query: vi.fn(async () => ({
-        rows: [{
-          id: pipelineId, product_line_id: fakeReport.productLineId, name,
-          description: '', stages: [], server_roles: {}, schedule: '',
-          enabled: true, trigger_params: {}, variables: {},
-          created_at: new Date(), updated_at: new Date(),
-        }],
-      })),
-    })
+    const mockQuery = vi.fn()
+    mockQuery.mockResolvedValueOnce({ rows: [{ pipeline_id: pipelineId, server_role_assignments: {} }] })
+    mockQuery.mockResolvedValue({ rows: [] })
+    ;(getPool as any).mockReturnValue({ query: mockQuery })
   }
 
   async function mockNoPipelineRow() {
     const { getPool } = await import('../../db/client.js')
-    ;(getPool as any).mockReturnValue({
-      query: vi.fn(async () => ({ rows: [] })),
-    })
+    ;(getPool as any).mockReturnValue({ query: vi.fn(async () => ({ rows: [] })) })
   }
 
   it('bug classification → triggers Pipeline and writes pipeline_run_id', async () => {

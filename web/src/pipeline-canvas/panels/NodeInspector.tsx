@@ -1,10 +1,20 @@
-import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tag, Tooltip, Modal } from 'antd'
+import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tooltip, Modal, Collapse, Typography, message, Radio } from 'antd'
 import { ExclamationCircleTwoTone } from '@ant-design/icons'
-import { useEffect, useState } from 'react'
-import type { StageNode, StageFields, ImInputConfig } from '../types'
+import { useEffect, useMemo, useState } from 'react'
+import type { StageNode, StageFields, ImInputConfig, StageType } from '../types'
+import { BESPOKE_STAGE_TYPES } from '../types'
 import type { CapabilityOption } from '../PipelineCanvasPage'
 import { pruneStageFields, obsoleteFieldsOnSwitch } from './pruneStageFields'
 import { CapabilityParamsForm } from './CapabilityParamsForm'
+import { listPipelineNodeTypes } from '../../api/pipelineNodeTypes'
+import type { PipelineNodeType } from '../../types/pipelineNodeType'
+
+const CATEGORY_LABELS: Record<string, string> = {
+  general: '通用',
+  flow: '流程',
+  llm: 'LLM',
+  specialized: '业务',
+}
 
 interface Props {
   node: StageNode | null
@@ -27,7 +37,6 @@ function capabilityOptions(list: CapabilityOption[], currentKey?: string) {
           <div>{c.displayName}</div>
           <div style={{ fontSize: 11, color: '#999' }}>{c.key}</div>
         </div>
-        <Tag>{c.category}</Tag>
       </div>
     ),
     key: c.key,
@@ -63,12 +72,182 @@ function filterParamsBySchema(
   return out
 }
 
-export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers, capabilities }: Props) {
+// ---------------------------------------------------------------------------
+// JSON Schema 驱动的动态参数表单（phase 3 新增 7 节点：http / dm / db_update /
+// sql_query / file_read / template_render / fan_out 共用）
+// ---------------------------------------------------------------------------
+
+interface JsonSchemaField {
+  type?: string
+  title?: string
+  description?: string
+  enum?: string[]
+  format?: string
+  default?: unknown
+  items?: JsonSchemaField
+  properties?: Record<string, JsonSchemaField>
+  required?: string[]
+}
+
+function renderField(
+  fieldSchema: JsonSchemaField,
+  value: unknown,
+  onChange: (v: unknown) => void,
+): JSX.Element {
+  if (Array.isArray(fieldSchema.enum) && fieldSchema.enum.length > 0) {
+    return (
+      <Select
+        value={value as string | undefined}
+        onChange={onChange}
+        options={fieldSchema.enum.map((e) => ({ label: e, value: e }))}
+        style={{ width: '100%' }}
+        allowClear
+      />
+    )
+  }
+  if (fieldSchema.type === 'string' && fieldSchema.format === 'textarea') {
+    return (
+      <Input.TextArea
+        value={(value as string | undefined) ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+        rows={4}
+        style={{ fontFamily: 'monospace', fontSize: 12 }}
+      />
+    )
+  }
+  if (fieldSchema.type === 'string') {
+    return (
+      <Input
+        value={(value as string | undefined) ?? ''}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    )
+  }
+  if (fieldSchema.type === 'number' || fieldSchema.type === 'integer') {
+    return (
+      <InputNumber
+        value={value as number | undefined}
+        onChange={(v) => onChange(v)}
+        style={{ width: '100%' }}
+      />
+    )
+  }
+  if (fieldSchema.type === 'boolean') {
+    return <Switch checked={!!value} onChange={onChange} />
+  }
+  if (fieldSchema.type === 'array' && fieldSchema.items?.type === 'string') {
+    return (
+      <Select
+        mode="tags"
+        value={(value as string[] | undefined) ?? []}
+        onChange={onChange}
+        style={{ width: '100%' }}
+        tokenSeparators={[',']}
+      />
+    )
+  }
+  // 兜底：array(非 string items) / object / 未知类型 → JSON 文本框
+  return <ObjectJsonField value={value} onChange={onChange} />
+}
+
+function ObjectJsonField({ value, onChange }: { value: unknown; onChange: (v: unknown) => void }) {
+  const [text, setText] = useState(() => JSON.stringify(value ?? null, null, 2))
+  const [err, setErr] = useState<string | null>(null)
+  // 当外部 value 变化（如切换节点）时重置文本
+  useEffect(() => {
+    setText(JSON.stringify(value ?? null, null, 2))
+    setErr(null)
+  }, [value])
+  return (
+    <>
+      <Input.TextArea
+        value={text}
+        rows={6}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={() => {
+          try {
+            const parsed = JSON.parse(text)
+            setErr(null)
+            onChange(parsed)
+          } catch (e) {
+            setErr((e as Error).message)
+          }
+        }}
+        style={{ fontFamily: 'monospace', fontSize: 12 }}
+      />
+      {err && <Alert type="error" showIcon style={{ marginTop: 4 }} message={`JSON 解析失败：${err}`} />}
+    </>
+  )
+}
+
+function DynamicParamsForm({
+  schema,
+  value,
+  onChange,
+}: {
+  schema: Record<string, unknown> | undefined
+  value: Record<string, unknown> | undefined
+  onChange: (v: Record<string, unknown>) => void
+}) {
+  if (!schema || (schema as JsonSchemaField).type !== 'object') {
+    return (
+      <Alert
+        type="info"
+        showIcon
+        message="该节点类型未提供 paramSchema，参数请直接以 JSON 形式编辑"
+      />
+    )
+  }
+  const s = schema as JsonSchemaField
+  const props = s.properties ?? {}
+  const required = new Set(s.required ?? [])
+  const v = value ?? {}
+  return (
+    <>
+      {Object.entries(props).map(([key, fieldSchema]) => (
+        <Form.Item
+          key={key}
+          label={
+            <span>
+              {fieldSchema.title ?? key}
+              <Typography.Text type="secondary" style={{ marginLeft: 4, fontSize: 11 }}>
+                ({key})
+              </Typography.Text>
+            </span>
+          }
+          required={required.has(key)}
+          extra={fieldSchema.description}
+        >
+          {renderField(fieldSchema, v[key], (next) => onChange({ ...v, [key]: next }))}
+        </Form.Item>
+      ))}
+      {Object.keys(props).length === 0 && (
+        <Alert type="info" showIcon message="paramSchema.properties 为空" />
+      )}
+    </>
+  )
+}export function NodeInspector({ node, onClose, onChange, availableRoles, dingtalkUsers, capabilities }: Props) {
   const [form] = Form.useForm()
   // paramSchema 作为 JSON 字符串在 Inspector 本地维护，避免 antd Form 在每次按键
   // 时重新受控导致编辑中断；onBlur 时解析并提交。
   const [paramSchemaText, setParamSchemaText] = useState('')
   const [paramSchemaErr, setParamSchemaErr] = useState<string | null>(null)
+  const [nodeTypes, setNodeTypes] = useState<PipelineNodeType[]>([])
+
+  const nodeTypeByKey = useMemo(() => {
+    const m: Record<string, PipelineNodeType> = {}
+    for (const t of nodeTypes) m[t.key] = t
+    return m
+  }, [nodeTypes])
+
+  useEffect(() => {
+    listPipelineNodeTypes()
+      .then(setNodeTypes)
+      .catch((err) => {
+        console.error(err)
+        message.error('节点类型列表加载失败，请刷新页面')
+      })
+  }, [])
 
   useEffect(() => {
     if (node) {
@@ -157,16 +336,29 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
           <Input />
         </Form.Item>
         <Form.Item name="stageType" label="类型">
-          <Select
-            options={[
-              { value: 'script', label: '运行脚本' },
-              { value: 'approval', label: '人员审批' },
-              { value: 'capability', label: 'Agent Capability' },
-              { value: 'wait_webhook', label: '等待 Webhook' },
-              { value: 'im_input', label: 'IM 参数采集' },
-            ]}
-            onChange={(newType) => handleStageTypeChange(newType)}
-          />
+          <Select onChange={(newType) => handleStageTypeChange(newType)}>
+            {Object.entries(
+              nodeTypes.reduce<Record<string, PipelineNodeType[]>>((acc, t) => {
+                ;(acc[t.category] ??= []).push(t)
+                return acc
+              }, {})
+            ).map(([cat, items]) => (
+              <Select.OptGroup key={cat} label={CATEGORY_LABELS[cat] ?? cat}>
+                {items.map(t => (
+                  <Select.Option key={t.key} value={t.key}>
+                    {t.displayName}
+                  </Select.Option>
+                ))}
+              </Select.OptGroup>
+            ))}
+            {node.data?.stageType
+              && !nodeTypes.some(t => t.key === node.data.stageType)
+              && nodeTypes.length > 0 && (
+              <Select.Option value={node.data.stageType} key={`__stale_${node.data.stageType}`}>
+                <ExclamationCircleTwoTone twoToneColor="#faad14" /> {node.data.stageType}（已禁用）
+              </Select.Option>
+            )}
+          </Select>
         </Form.Item>
         <Form.Item name="timeoutSeconds" label="超时(秒)">
           <InputNumber min={10} />
@@ -204,7 +396,7 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                 </Form.Item>
               </>
             )
-            if (t === 'capability') {
+            if (t === 'llm_agent') {
               const selectedKey = getFieldValue('capabilityKey') as string | undefined
               const selected = capabilities.find(c => c.key === selectedKey)
               return (
@@ -223,11 +415,10 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                         return tx.toLowerCase().includes(input.toLowerCase())
                       }}
                       onChange={(newKey) => {
-                        const newSchema = capabilities.find(c => c.key === newKey)?.paramSchema ?? {}
+                        // phase 2 cleanup: capability.paramSchema 已删，新选 capability 时不再按 schema 过滤参数。
+                        // 已填写的 capabilityParams 直接保留（JSON fallback 形式由用户自行编辑）。
                         const currentParams = (getFieldValue('capabilityParams') as Record<string, unknown> | undefined) ?? {}
-                        const filtered = filterParamsBySchema(currentParams, newSchema)
-                        form.setFieldsValue({ capabilityParams: filtered })
-                        onChange(node!.id, { capabilityKey: newKey, capabilityParams: filtered })
+                        onChange(node!.id, { capabilityKey: newKey, capabilityParams: currentParams })
                       }}
                     />
                   </Form.Item>
@@ -235,7 +426,7 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                     <Form.Item shouldUpdate noStyle>
                       {() => (
                         <CapabilityParamsForm
-                          paramSchema={selected.paramSchema}
+                          paramSchema={undefined}
                           value={form.getFieldValue('capabilityParams') as Record<string, unknown> | undefined}
                           onChange={(next) => {
                             form.setFieldsValue({ capabilityParams: next })
@@ -245,7 +436,30 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                       )}
                     </Form.Item>
                   )}
+                  <Form.Item name="outputFormat" label="输出格式" initialValue="json"
+                    extra="JSON 模式下 capability 输出必须是 JSON 对象，否则该节点失败">
+                    <Radio.Group>
+                      <Radio value="json">JSON</Radio>
+                      <Radio value="string">字符串</Radio>
+                    </Radio.Group>
+                  </Form.Item>
                 </>
+              )
+            }
+            if (t === 'switch') {
+              return (
+                <Alert
+                  type="info"
+                  message="Switch 节点配置说明"
+                  description={
+                    <div>
+                      <p><strong>添加 case：</strong>从节点底部居中的 source handle 拖一条线到目标节点。</p>
+                      <p><strong>设置 default：</strong>从节点底部右侧的紫色 handle 拖一条线到目标节点。</p>
+                      <p><strong>编辑表达式：</strong>右键边线 → 编辑 when。</p>
+                      <p><strong>调整顺序：</strong>右键边线 → 上移 / 下移。</p>
+                    </div>
+                  }
+                />
               )
             }
             if (t === 'wait_webhook') return (
@@ -292,7 +506,66 @@ export function NodeInspector({ node, onClose, onChange, availableRoles, dingtal
                 </Form.Item>
               </>
             )
+            // phase 3 7 新节点（http / dm / db_update / sql_query / file_read /
+            // template_render / fan_out）走 paramSchema 驱动的动态表单。读取
+            // node.data.params 而非 form value（params 不在 antd Form 控制范围内）。
+            if (typeof t === 'string' && !BESPOKE_STAGE_TYPES.has(t as StageType)) {
+              const nodeType = nodeTypeByKey[t]
+              if (!nodeType) {
+                return (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    message={`未知节点类型 "${t}"：paramSchema 不可用，参数无法编辑。`}
+                  />
+                )
+              }
+              return (
+                <DynamicParamsForm
+                  schema={nodeType.paramSchema}
+                  value={node!.data.params}
+                  onChange={(next) => onChange(node!.id, { params: next })}
+                />
+              )
+            }
             return null
+          }}
+        </Form.Item>
+
+        {/* phase 3 高级配置：retry_when 表达式 / 重试间隔 + fan_out 子运行参数 */}
+        <Form.Item shouldUpdate={(p, c) => p.stageType !== c.stageType} noStyle>
+          {({ getFieldValue }) => {
+            const t = getFieldValue('stageType') as StageType | undefined
+            return (
+              <Collapse style={{ marginTop: 8 }} ghost>
+                <Collapse.Panel header="高级：重试策略" key="retry">
+                  <Form.Item
+                    name="retryWhen"
+                    label={
+                      <Tooltip title="布尔表达式，命中时重试。例：output.statusCode >= 500，或 error contains 'timeout'">
+                        <span>retry_when 表达式</span>
+                      </Tooltip>
+                    }
+                    extra="留空表示按 retryCount 无条件重试；填写后只有命中表达式才重试"
+                  >
+                    <Input placeholder="output.statusCode >= 500" />
+                  </Form.Item>
+                  <Form.Item name="retryDelayMs" label="重试间隔 (ms)">
+                    <InputNumber min={0} step={500} style={{ width: '100%' }} placeholder="默认 1000" />
+                  </Form.Item>
+                </Collapse.Panel>
+                {t === 'fan_out' && (
+                  <Collapse.Panel header="高级：fan_out 子运行" key="fanOut" forceRender>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 8 }}
+                      message="fan_out 主参数（source / as / parallel / onItemFailure / body）请在上方动态参数表单中填写。此处仅供回顾；body 数组建议用 JSON 编辑。"
+                    />
+                  </Collapse.Panel>
+                )}
+              </Collapse>
+            )
           }}
         </Form.Item>
       </Form>

@@ -65,7 +65,7 @@ describe('im_input → capability: runtimeVars 打通', () => {
       }),
       makeStage({
         name: 'deploy',
-        stageType: 'capability',
+        stageType: 'llm_agent',
         capabilityKey: 'build',
         capabilityParams: { ref: '{{vars.branch}}' },
       }),
@@ -96,7 +96,7 @@ describe('im_input → capability: runtimeVars 打通', () => {
     const stages: StageDefinition[] = [
       makeStage({
         name: 'deploy',
-        stageType: 'capability',
+        stageType: 'llm_agent',
         capabilityKey: 'build',
         capabilityParams: { env: '{{vars.env}}' },
       }),

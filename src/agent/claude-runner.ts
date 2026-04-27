@@ -3,9 +3,10 @@ import type { IMAdapter } from '../adapters/im/types.js'
 import { getTool, getAllTools, getPermittedTools } from './tools/index.js'
 import type { AgentTool, TaskContext, Role } from './tools/types.js'
 import { getRecentTasks } from '../db/repositories/tasks.js'
-import { listCapabilities, getCapabilityByKey, type Capability } from '../db/repositories/capabilities.js'
-import { checkCapabilityAccess, getProductLineCapabilities } from '../db/repositories/product-line-capabilities.js'
-import { filterImTriggerableCapabilities } from './runner-greet-filter.js'
+import { getCapabilityByKey, type Capability } from '../db/repositories/capabilities.js'
+import { listIMTriggers, getIMTrigger } from '../db/repositories/im-triggers.js'
+import { checkIMTriggerAccess, listProductLineIMTriggers } from '../db/repositories/product-line-im-triggers.js'
+import { filterImTriggerableTriggers } from './runner-greet-filter.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import { listProjects } from '../db/repositories/projects-repo.js'
 import { listTestServers } from '../db/repositories/test-servers.js'
@@ -30,39 +31,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
  * 把 capability handler 返回的内部 error code（见 analyzer.classifyError / fix-runner /
  * approve-l3-handler 等）翻译成面向终端用户的中文友好提示。
  *
- * 为什么不直接暴露 error：钉钉群内提问者看到"claude_invalid_json"这类技术码无法行动，
- * 也让产品感观不好。底层 error 仍然 console.error 到日志，内部排查用。
- *
- * 未收录的 error code 走保底："<Capability> 未完成，请稍后重试"——即使字典漏更新，
- * 用户侧体验不会退回到技术码泄露。
+ * phase 2 起,im_trigger.failure_messages (JSONB) 是失败提示的唯一数据源——
+ * key = error code, value = 用户可见文案。未配置 / 字典漏更新时回落到
+ * "<DisplayName>未完成,请稍后重试",避免技术码泄露给用户。底层 error 仍
+ * console.error 到日志,内部排查用。
  */
-const FAILURE_MSGS: Record<string, string> = {
-  claude_invalid_json: '分析用时过长，未能输出完整结论。建议补充具体模块/类名或异常堆栈后重发',
-  claude_timeout: '分析超时，请稍后重试（或补充更聚焦的信息让排查更快）',
-  report_not_found: '找不到对应的分析报告，可能已被清理',
-  no_scope: '分析结果不完整（缺少涉及代码范围），请补充上下文后重发',
-  fix_failed: '自动修复未通过（编译或测试失败）',
-  handler_error: '系统内部错误，已记录日志',
-  no_primary_owner: '主仓库未配置负责人，无法继续',
-  missing_reportId: '缺少报告 ID，无法定位分析结果',
-  invalid_timeout: '审批超时配置异常，请联系管理员',
-}
-
-const CAP_NAMES: Record<string, string> = {
-  analyze_bug: 'Bug 分析',
-  fix_bug_l1: '自动修复',
-  fix_bug_l2: '自动修复',
-  fix_bug_l3: '自动修复',
-  create_mr: 'MR 创建',
-  ai_review_mr: 'AI Review',
-  approve_l3: 'L3 审批',
-  notify_bug: '通知',
-  request_handover: '转人工',
-}
-
-function buildFailureReply(capability: string, errorCode?: string): string {
-  const cap = CAP_NAMES[capability] ?? '处理'
-  const detail = FAILURE_MSGS[errorCode ?? '']
+async function buildFailureReply(imTriggerKey: string, errorCode?: string): Promise<string> {
+  const trigger = await getIMTrigger(imTriggerKey)
+  const cap = trigger?.displayName ?? '处理'
+  const detail = trigger?.failureMessages?.[errorCode ?? ''] ?? null
   return detail ? `${cap}未完成：${detail}` : `${cap}未完成，请稍后重试`
 }
 
@@ -331,23 +308,34 @@ export class ClaudeRunner {
 
       const userRole = context.initiatorRole ?? 'developer'
 
-      // 4a: 未绑定产线的用户无法执行非查询类能力
-      if (!productLineId && capability.category !== 'query') {
-        await adapter.sendMessage(
-          { type: 'group', id: opts.groupId },
-          { text: `⛔ 你还未加入任何产线，无法执行「${capability.displayName}」。请联系管理员将你添加到产线成员中。` }
-        )
-        return
+      // 4a: 未绑定产线 + 非 IM 触发器（纯 handler 类）的能力 → 拒绝
+      // phase 2 cleanup：用 im_triggers 表替代 capability.category 判断。
+      // IM 触发器类（query / action / admin 都已迁入 im_triggers）即使无产线也允许触发；
+      // 不在 im_triggers 的内部 key（fix_bug_l*、notify_bug、request_handover 等）
+      // 由 pipeline 内部触发，无产线用户在 IM 里直触发就拒绝。
+      if (!productLineId) {
+        const imTrigger = await getIMTrigger(intent.capability)
+        if (!imTrigger) {
+          await adapter.sendMessage(
+            { type: 'group', id: opts.groupId },
+            { text: `⛔ 你还未加入任何产线，无法执行「${capability.displayName}」。请联系管理员将你添加到产线成员中。` }
+          )
+          return
+        }
       }
 
-      // 4b: 已有产线的用户检查 capability-level 权限
+      // 4b: 已有产线的用户检查 IM 触发器权限
+      // phase 2 起,IM 入口的允许角色 / trigger_sources 配置从 product_line_im_triggers 读取,
+      // 不再走 product_line_capabilities。intent.capability 与 im_trigger.key 同名(数据迁移保证)。
       if (productLineId) {
         const envName = intent.env ?? '*'
-        const access = await checkCapabilityAccess(productLineId, capability.key, envName, userRole, 'im')
+        const access = await checkIMTriggerAccess(productLineId, intent.capability, envName, userRole, 'im')
         if (!access.allowed) {
+          const imTrigger = await getIMTrigger(intent.capability)
+          const triggerName = imTrigger?.displayName ?? capability.displayName
           const text = access.reason === 'source-blocked'
-            ? `⛔ 能力「${capability.displayName}」在当前产线已禁止通过 IM 触发，请到管理后台执行。`
-            : `⛔ 无法执行「${capability.displayName}」：${access.reason}`
+            ? `⛔ 能力「${triggerName}」在当前产线已禁止通过 IM 触发，请到管理后台执行。`
+            : `⛔ 无法执行「${triggerName}」：${access.reason}`
           await adapter.sendMessage(
             { type: 'group', id: opts.groupId },
             { text }
@@ -374,10 +362,13 @@ export class ClaudeRunner {
         }
       }
 
-      // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent capability 走 handler
-      const HANDLER_CAPABILITIES = new Set(['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr', 'search_knowledge', 'prd_submit'])
+      // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent 走 handler。
+      // 这里集合的是"agent key"——用来决定该 agent 走 handler-path（直接代码 handler）
+      // 而不是 IM 通用对话路径。phase 3 T17 重命名为 HANDLER_AGENT_KEYS,
+      // 澄清这是 agent key 集合,与 IM 触发入口（im_triggers 表）无关。
+      const HANDLER_AGENT_KEYS = new Set(['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3', 'ai_review_mr', 'search_knowledge', 'prd_submit'])
 
-      if (HANDLER_CAPABILITIES.has(intent.capability)) {
+      if (HANDLER_AGENT_KEYS.has(intent.capability)) {
         console.log(`[Runner] Agent capability: ${intent.capability}, routing to handler`)
         await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: '收到，处理中...', atDingtalkIds: atIds } as any)
 
@@ -414,7 +405,7 @@ export class ClaudeRunner {
         // 回复结果
         const replyText = result.success
           ? (result.output ?? '处理完成')
-          : buildFailureReply(intent.capability, result.error)
+          : await buildFailureReply(intent.capability, result.error)
         await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: replyText, atDingtalkIds: atIds } as any)
 
         // analyze_bug 完成后：若 result 含 (reportId, level, classification)，触发 Pipeline（后台跑，不阻塞 IM 响应）
@@ -469,9 +460,8 @@ export class ClaudeRunner {
 
       this.clearSession(userId)
 
-      // 写操作加 deploy lock
-      const writeCapabilities = new Set(['deploy', 'rollback', 'restart'])
-      const needsLock = writeCapabilities.has(intent.capability) && intent.project && intent.env
+      // 写操作加 deploy lock —— 是否需要由 capability.requiresDeployLock 决定（phase 1 起从 DB 读）
+      const needsLock = capability.requiresDeployLock && intent.project && intent.env
       let lockInfo: { project: string; env: string } | undefined
 
       if (needsLock) {
@@ -517,35 +507,25 @@ export class ClaudeRunner {
     productLineId?: number,
     userRole: string = 'developer',
   ): Promise<void> {
-    let caps = await listCapabilities()
+    let triggers = await listIMTriggers()
     if (productLineId) {
-      const plCaps = await getProductLineCapabilities(productLineId)
-      caps = filterImTriggerableCapabilities(caps, plCaps, userRole)
+      const plTriggers = await listProductLineIMTriggers(productLineId)
+      triggers = filterImTriggerableTriggers(triggers, plTriggers, userRole)
+    } else {
+      triggers = triggers.filter(t => t.enabled)
     }
-    if (caps.length === 0) {
+    if (triggers.length === 0) {
       await adapter.sendMessage(
         { type: 'group', id: groupId },
         { text: '你当前在本产线下没有可通过 IM 触发的能力，请联系管理员或到管理后台查看。', atDingtalkIds } as any
       )
       return
     }
-    const examples: Record<string, string> = {
-      deploy: '部署 ssh-proxy 到 dev 环境，分支 develop',
-      rollback: '回滚 ssh-proxy dev 环境',
-      restart: '重启 rdp-proxy dev 环境',
-      custom_script: '在 proxy-server 上执行 df -h',
-      manage_role: '给黄文华 ops 角色',
-      view_deployments: '查看 ssh-proxy 的部署历史',
-      view_images: '查看 rdp-proxy 的镜像列表',
-      view_logs: '查看 ssh-proxy dev 环境最近 50 行日志',
-      view_commits: '查看 ssh-proxy 最近的提交记录',
-      view_projects: '查看当前产线有哪些模块',
-    }
-    const capsList = caps.map(c => {
-      const ex = examples[c.key]
+    const capsList = triggers.map(t => {
+      const ex = t.examples?.[0]
       return ex
-        ? `- **${c.displayName}** — ${c.description}\n  > 💬 \`${ex}\``
-        : `- **${c.displayName}** — ${c.description}`
+        ? `- **${t.displayName}** — ${t.description}\n  > 💬 \`${ex}\``
+        : `- **${t.displayName}** — ${t.description}`
     }).join('\n')
     const text = [
       '## 你好！我是 ChatOps 助手',
@@ -557,8 +537,11 @@ export class ClaudeRunner {
   }
 
   private async detectIntent(prompt: string): Promise<DetectedIntent | null> {
-    const capabilities = await listCapabilities()
-    const capList = capabilities.map(c => `- ${c.key}: ${c.displayName} (${c.description})`).join('\n')
+    const triggers = await listIMTriggers()
+    const capList = triggers
+      .filter(t => t.enabled)
+      .map(t => `- ${t.key}: ${t.displayName}${t.intentHints ? ` (${t.intentHints})` : ''}`)
+      .join('\n')
 
     try {
       console.log('[Runner] Calling porygon.run for intent detection...')
@@ -644,11 +627,10 @@ ${intentRules}
       }
     }
 
-    // 需要代码访问的 capability，自动创建 worktree
-    const CODE_CAPABILITIES = ['analyze_bug', 'fix_bug_l1', 'fix_bug_l2', 'fix_bug_l3']
+    // 需要代码访问的 capability，自动创建 worktree（phase 1 起从 DB 读）
     let worktree: Worktree | null = null
     console.log(`[Runner] worktree check: capability=${capability?.key}, productLineId=${opts.productLineId}`)
-    if (capability && CODE_CAPABILITIES.includes(capability.key) && opts.productLineId) {
+    if (capability?.requiresWorktree && opts.productLineId) {
       try {
         const knowledgeRepo = await getByProductLineId(opts.productLineId)
         if (knowledgeRepo) {
@@ -693,6 +675,9 @@ ${intentRules}
         prompt: prompt + contextNote,
         appendSystemPrompt: systemPrompt,
         ...(existingSessionId ? { resume: existingSessionId } : {}),
+        // phase 1: 按 capability 覆盖 Porygon defaults，让单条 capability
+        // 可以独立配置（如 analyze_bug 长 timeout / view_logs 短 maxTurns）
+        ...(capability ? { maxTurns: capability.maxTurns, timeoutMs: capability.timeoutMs } : {}),
         mcpServers: {
           'chatops-tools': {
             command: 'node',
