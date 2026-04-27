@@ -61,6 +61,9 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
     case 'template_render':
     case 'fan_out':
       return { ...base, ...cleared, params: {} }
+    // switch 节点：params 容器（cases + default 通过画布配置）
+    case 'switch':
+      return { ...base, ...cleared, params: { cases: [], default: undefined } }
   }
 }
 
@@ -82,6 +85,7 @@ export function obsoleteFieldsOnSwitch(prev: StageFields, newType: StageType): s
     file_read: ['params'],
     template_render: ['params'],
     fan_out: ['params'],
+    switch: ['params'],
   }
   const obsolete: string[] = []
   // 切到同类（bespoke ↔ bespoke 之外，dynamic ↔ dynamic 切换会保留 params? 不会 —— 切类型仍清空）
