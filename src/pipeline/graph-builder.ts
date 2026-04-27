@@ -580,6 +580,66 @@ function buildImInputNode(
   }
 }
 
+/**
+ * dry-run 专用 im_input 节点：跳过真实的 IM 多轮采集 interrupt 循环，
+ * 把 triggerParams 按 paramSchema.properties 过滤后直接当作"已采集结果"，
+ * 同步写出 stageResults / stepOutputs / runtimeVars。
+ *
+ * 由 case 'im_input' 在 hooks.dryRunFlavor 存在时走这个 fn，再外套
+ * wrapWithSnapshot 以让 dry-run 快照表能拿到 source='real' 的输出。
+ */
+function buildImInputDryRunNode(
+  stage: StageDefinition,
+  index: number,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (_state: typeof PipelineStateAnnotation.State) => {
+    const cfg = stage.imInputConfig
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+
+    if (!cfg) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'imInputConfig missing on im_input stage',
+        error: 'imInputConfig missing',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      }
+    }
+
+    // 按 paramSchema.properties 过滤 triggerParams，只取 schema 声明过的 key，
+    // 避免脏字段进入 vars。schema 缺失或非 object 时取全量。
+    const props = (cfg.paramSchema as { properties?: Record<string, unknown> } | undefined)?.properties
+    const collected: Record<string, unknown> = {}
+    if (props && typeof props === 'object') {
+      for (const key of Object.keys(props)) {
+        if (key in triggerParams) collected[key] = triggerParams[key]
+      }
+    } else {
+      Object.assign(collected, triggerParams)
+    }
+
+    const collectedKey = `__im_input_collected_${index}`
+    const exec: StageExecutionResult = {
+      status: 'success',
+      output: JSON.stringify(collected),
+    }
+    const stageId = (stage as PipelineNode).id ?? stage.name
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      stepOutputs: { [stageId]: { status: 'success', output: collected } },
+      runtimeVars: {
+        ...collected,
+        [collectedKey]: collected,
+      },
+    }
+  }
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return (
     typeof value === 'object' &&
@@ -1092,8 +1152,14 @@ export function buildGraphFromPipeline(
         break
 
       case 'im_input':
-        // Not wrapped: im_input uses its own interrupt loop.
-        builder = builder.addNode(name, buildImInputNode(node, i, stageContext))
+        // dry-run：跳过 IM 多轮采集，直接拿 triggerParams 当 collected，写 snapshot。
+        // prod：保留原有 interrupt 循环（依赖真实 IM 群消息）。
+        if (hooks.dryRunFlavor) {
+          builder = builder.addNode(name, wrapWithSnapshot(node, i,
+            buildImInputDryRunNode(node, i, triggerParams ?? {}) as (state: typeof PipelineStateAnnotation.State) => Promise<unknown>))
+        } else {
+          builder = builder.addNode(name, buildImInputNode(node, i, stageContext))
+        }
         break
 
       // Non-side-effect NodeExecutor-backed types — wrap with snapshot recorder when dryRunFlavor present.
