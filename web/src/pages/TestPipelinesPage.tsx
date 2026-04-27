@@ -1,46 +1,32 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, Checkbox, message } from 'antd'
-import { PlusOutlined, DeleteOutlined, PlayCircleOutlined, RobotOutlined, PartitionOutlined } from '@ant-design/icons'
+import { Card, Table, Button, Modal, Form, Input, Select, Switch, Popconfirm, Space, Tag, InputNumber, message } from 'antd'
+import { PlusOutlined, DeleteOutlined, RobotOutlined, PartitionOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
-import { getProductLines } from '../api/product-lines'
-import { getTestServers } from '../api/test-servers'
-import { triggerTestRun } from '../api/test-runs'
 import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getPipelineVariables } from '../api/pipeline-variables'
 import { listArtifacts } from '../api/artifacts'
 import AiCommandModal from '../components/AiCommandModal'
-import type { TestPipeline, ProductLine, TestServer, ArtifactInput } from '../types'
+import type { TestPipeline, ArtifactInput } from '../types'
 
 
 export default function TestPipelinesPage() {
   const nav = useNavigate()
   const [data, setData] = useState<TestPipeline[]>([])
-  const [productLines, setProductLines] = useState<ProductLine[]>([])
   const [dingtalkUsers, setDingtalkUsers] = useState<{userId: string; name: string}[]>([])
   const [variableCatalog, setVariableCatalog] = useState<{key: string; description: string; category: string}[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<TestPipeline | null>(null)
-  const [availableRoles, setAvailableRoles] = useState<string[]>([])
-  const [serverRolesConfig, setServerRolesConfig] = useState<Record<string, { enabled: boolean; count: number }>>({})
-  const [triggerModalOpen, setTriggerModalOpen] = useState(false)
-  const [triggerPipeline, setTriggerPipeline] = useState<TestPipeline | null>(null)
-  const [triggerServers, setTriggerServers] = useState<TestServer[]>([])
-  const [triggerServerMap, setTriggerServerMap] = useState<Record<string, string[]>>({})
-  const [triggerRuntimeVars, setTriggerRuntimeVars] = useState<Record<string, string>>({})
   const [form] = Form.useForm()
   const [canvasModalOpen, setCanvasModalOpen] = useState(false)
   const [canvasForm] = Form.useForm()
 
-  useEffect(() => { load(); loadProductLines(); loadDingtalkUsers(); loadVariableCatalog() }, [])
+  useEffect(() => { load(); loadDingtalkUsers(); loadVariableCatalog() }, [])
 
   async function load() {
     setLoading(true)
     try { setData(await getTestPipelines()) } finally { setLoading(false) }
-  }
-  async function loadProductLines() {
-    try { setProductLines(await getProductLines()) } catch { /* */ }
   }
   async function loadDingtalkUsers() {
     try {
@@ -52,19 +38,8 @@ export default function TestPipelinesPage() {
     try { setVariableCatalog(await getPipelineVariables()) } catch { /* */ }
   }
 
-  async function loadServerRoles(productLineId: number) {
-    try {
-      const servers = await getTestServers(productLineId)
-      const roles = [...new Set(servers.map(s => s.role).filter(Boolean))]
-      setAvailableRoles(roles)
-    } catch { setAvailableRoles([]) }
-  }
-
-
   function openCreate() {
     setEditing(null); form.resetFields()
-    setServerRolesConfig({})
-    setAvailableRoles([])
     form.setFieldsValue({
       enabled: true,
       stages: [{
@@ -78,13 +53,6 @@ export default function TestPipelinesPage() {
 
   function openEdit(r: TestPipeline) {
     setEditing(r)
-    // Populate serverRolesConfig from existing serverRoles
-    const rolesConfig: Record<string, { enabled: boolean; count: number }> = {}
-    for (const [role, cfg] of Object.entries(r.serverRoles ?? {})) {
-      rolesConfig[role] = { enabled: true, count: (cfg as any).count ?? 1 }
-    }
-    setServerRolesConfig(rolesConfig)
-    loadServerRoles(r.productLineId)
     const stages = (r.stages as any[]).map((s: any) => ({
       ...s,
       stageType: s.stageType ?? 'script',  // backward compat
@@ -103,19 +71,12 @@ export default function TestPipelinesPage() {
 
   async function handleSubmit() {
     const values = await form.validateFields()
-    const serverRoles: Record<string, { count: number }> = {}
-    for (const [role, cfg] of Object.entries(serverRolesConfig)) {
-      if (cfg.enabled && cfg.count > 0) {
-        serverRoles[role] = { count: cfg.count }
-      }
-    }
     const variables: Record<string, string> = {}
     for (const entry of values.variableEntries ?? []) {
       if (entry.key) variables[entry.key] = entry.value ?? ''
     }
     const payload = {
       ...values,
-      serverRoles,
       variables,
       artifactInputs: (values.artifactInputs ?? []) as ArtifactInput[],
       stages: values.stages.map((s: any) => ({
@@ -170,15 +131,12 @@ export default function TestPipelinesPage() {
     const values = await canvasForm.validateFields()
     try {
       const created = await createTestPipeline({
-        productLineId: values.productLineId,
         name: values.name,
         description: values.description ?? '',
         stages: [],
-        serverRoles: {},
         variables: {},
         artifactInputs: [],
         enabled: values.enabled ?? true,
-        schedule: '',
         triggerParams: {},
       })
       message.success('已创建，进入画布编辑')
@@ -189,58 +147,15 @@ export default function TestPipelinesPage() {
     }
   }
 
-  async function openTrigger(r: TestPipeline) {
-    setTriggerPipeline(r)
-    setTriggerServerMap({})
-    setTriggerRuntimeVars({})
-    try {
-      const servers = await getTestServers(r.productLineId)
-      setTriggerServers(servers)
-    } catch { setTriggerServers([]) }
-    setTriggerModalOpen(true)
-  }
-
-  async function handleTrigger() {
-    if (!triggerPipeline) return
-    const roles = Object.keys(triggerPipeline.serverRoles ?? {})
-    for (const role of roles) {
-      if (!triggerServerMap[role]?.length) {
-        message.warning(`请为角色「${role}」选择服务器`); return
-      }
-    }
-    for (const input of triggerPipeline.artifactInputs ?? []) {
-      const hasValue = !!triggerRuntimeVars[input.outputVar]
-      const hasFallback = !!input.default || !!input.defaultStrategy
-      if (!hasValue && !hasFallback) {
-        message.warning(`请为「${input.name}」选择或填写值`); return
-      }
-    }
-    try {
-      const res = await triggerTestRun({
-        pipelineId: triggerPipeline.id,
-        servers: triggerServerMap,
-        triggerType: 'manual',
-        runtimeVars: triggerRuntimeVars,
-      })
-      message.success(`流水线已触发，执行 ID: ${res.runId}`)
-      setTriggerModalOpen(false)
-    } catch (e: any) {
-      message.error(e?.response?.data?.error ?? '触发失败')
-    }
-  }
-
   const columns = [
     { title: 'ID', dataIndex: 'id' },
     { title: '名称', dataIndex: 'name' },
-    { title: '产线', dataIndex: 'productLineId', render: (v: number) => productLines.find(p => p.id === v)?.displayName ?? v },
     { title: '阶段数', render: (_: unknown, r: TestPipeline) => (r.stages as any[]).length },
-    { title: '定时', dataIndex: 'schedule', render: (v: string) => v || '-' },
     { title: '状态', dataIndex: 'enabled', render: (v: boolean) => <Tag color={v ? 'green' : 'default'}>{v ? '启用' : '禁用'}</Tag> },
     {
       title: '操作',
       render: (_: unknown, r: TestPipeline) => (
         <Space>
-          <a onClick={() => openTrigger(r)}><PlayCircleOutlined /> 执行</a>
           <a onClick={() => nav(`/test-pipelines/${r.id}/canvas`)}>画布编辑</a>
           <a onClick={() => openEdit(r)}>编辑</a>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}><a style={{ color: 'red' }}>删除</a></Popconfirm>
@@ -259,13 +174,8 @@ export default function TestPipelinesPage() {
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal title={editing ? '编辑流水线' : '新增流水线'} open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)} destroyOnClose width={900}>
         <Form form={form} layout="vertical">
-          <Form.Item name="productLineId" label="所属产线" rules={[{ required: true }]}>
-            <Select options={productLines.map(p => ({ value: p.id, label: p.displayName }))} placeholder="选择产线"
-              onChange={(v: number) => loadServerRoles(v)} />
-          </Form.Item>
           <Space style={{ display: 'flex' }}>
             <Form.Item name="name" label="名称" rules={[{ required: true }]} style={{ flex: 1 }}><Input placeholder="如: 回归测试" /></Form.Item>
-            <Form.Item name="schedule" label="定时(cron)"><Input placeholder="如: 0 2 * * *" style={{ width: 200 }} /></Form.Item>
             <Form.Item name="enabled" label="启用" valuePropName="checked"><Switch /></Form.Item>
           </Space>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
@@ -350,25 +260,6 @@ export default function TestPipelinesPage() {
               )}
             </Form.List>
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>服务器角色配置 {availableRoles.length === 0 && <span style={{ fontWeight: 'normal', color: '#999', fontSize: 12 }}>（请先选择产线）</span>}</div>
-            {availableRoles.map(role => {
-              const cfg = serverRolesConfig[role] ?? { enabled: false, count: 1 }
-              return (
-                <div key={role} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-                  <Checkbox checked={cfg.enabled} onChange={e => setServerRolesConfig(prev => ({
-                    ...prev, [role]: { ...prev[role], enabled: e.target.checked, count: prev[role]?.count ?? 1 }
-                  }))}>{role}</Checkbox>
-                  <InputNumber size="small" min={1} max={10} value={cfg.count} disabled={!cfg.enabled}
-                    onChange={v => setServerRolesConfig(prev => ({
-                      ...prev, [role]: { ...prev[role], count: v ?? 1 }
-                    }))} style={{ width: 70 }} />
-                  <span style={{ color: '#999', fontSize: 12 }}>台</span>
-                </div>
-              )
-            })}
-          </div>
-
           <div style={{ marginBottom: 8, fontWeight: 500 }}>阶段配置</div>
           <Form.List name="stages">
             {(fields, { add, remove }) => (
@@ -387,8 +278,7 @@ export default function TestPipelinesPage() {
                         ]} />
                       </Form.Item>
                       <Form.Item {...rest} name={[name, 'targetRoles']} label="目标角色">
-                        <Select mode="multiple" style={{ width: 160 }} placeholder="选择角色"
-                          options={Object.entries(serverRolesConfig).filter(([, c]) => c.enabled).map(([r]) => ({ value: r, label: r }))} />
+                        <Select mode="multiple" style={{ width: 160 }} placeholder="输入角色名" />
                       </Form.Item>
                       <Form.Item {...rest} name={[name, 'timeoutSeconds']} label="超时(秒)"><InputNumber min={10} style={{ width: 100 }} /></Form.Item>
                       <Form.Item {...rest} name={[name, 'retryCount']} label="重试次数"><InputNumber min={0} max={5} style={{ width: 80 }} /></Form.Item>
@@ -413,37 +303,6 @@ export default function TestPipelinesPage() {
           </Form.List>
         </Form>
       </Modal>
-      <Modal title={`触发执行: ${triggerPipeline?.name ?? ''}`} open={triggerModalOpen} onOk={handleTrigger} onCancel={() => setTriggerModalOpen(false)} destroyOnClose width={600}>
-        {triggerPipeline && (triggerPipeline.artifactInputs ?? []).length > 0 && (
-          <div style={{ marginBottom: 16, padding: 12, background: '#fafafa', borderRadius: 4 }}>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>制品输入</div>
-            {(triggerPipeline.artifactInputs ?? []).map(input => (
-              <RuntimeVarPicker
-                key={input.outputVar}
-                input={input}
-                value={triggerRuntimeVars[input.outputVar] ?? ''}
-                onChange={v => setTriggerRuntimeVars(prev => ({ ...prev, [input.outputVar]: v }))}
-              />
-            ))}
-          </div>
-        )}
-        {triggerPipeline && Object.entries(triggerPipeline.serverRoles ?? {}).map(([role, cfg]) => (
-          <div key={role} style={{ marginBottom: 12 }}>
-            <div style={{ marginBottom: 4, fontWeight: 500 }}>{role} <span style={{ fontWeight: 'normal', color: '#999' }}>（需要 {(cfg as any).count} 台）</span></div>
-            <Select
-              mode="multiple"
-              value={triggerServerMap[role] ?? []}
-              style={{ width: '100%' }}
-              placeholder={`选择 ${role} 服务器`}
-              onChange={(hosts: string[]) => setTriggerServerMap(prev => ({ ...prev, [role]: hosts }))}
-              options={triggerServers.filter(s => s.role === role || !s.role).map(s => ({ value: s.host, label: `${s.name} (${s.host})` }))}
-            />
-          </div>
-        ))}
-        {triggerPipeline && Object.keys(triggerPipeline.serverRoles ?? {}).length === 0 && (
-          <div style={{ color: '#999' }}>此流水线未配置服务器角色</div>
-        )}
-      </Modal>
       <Modal
         title="画布新建流水线"
         open={canvasModalOpen}
@@ -454,9 +313,6 @@ export default function TestPipelinesPage() {
         width={520}
       >
         <Form form={canvasForm} layout="vertical">
-          <Form.Item name="productLineId" label="所属产线" rules={[{ required: true }]}>
-            <Select options={productLines.map(p => ({ value: p.id, label: p.displayName }))} placeholder="选择产线" />
-          </Form.Item>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input placeholder="如: 回归测试" />
           </Form.Item>
@@ -467,7 +323,7 @@ export default function TestPipelinesPage() {
             <Switch />
           </Form.Item>
           <div style={{ color: '#999', fontSize: 12 }}>
-            阶段与服务器角色将在画布中配置；保存后在列表页可继续通过"编辑"补充变量与制品输入。
+            阶段将在画布中配置；保存后在列表页可继续通过"编辑"补充变量与制品输入。
           </div>
         </Form>
       </Modal>
@@ -579,59 +435,4 @@ function ArtifactPreviewButton({ form, fieldName }: { form: any; fieldName: numb
     }
   }
   return <Button size="small" loading={loading} onClick={handleClick}>预览匹配</Button>
-}
-
-function RuntimeVarPicker({ input, value, onChange }: {
-  input: ArtifactInput
-  value: string
-  onChange: (v: string) => void
-}) {
-  const [loading, setLoading] = useState(false)
-  async function openPicker() {
-    setLoading(true)
-    try {
-      const files = await listArtifacts(input.listUrl, input.glob)
-      if (files.length === 0) { message.info('没有匹配的文件'); return }
-      Modal.info({
-        title: `选择：${input.name}`,
-        width: 700,
-        content: (
-          <div style={{ maxHeight: 400, overflowY: 'auto' }}>
-            {files.slice(0, 20).map(f => {
-              const picked = input.valueFrom === 'name' ? f.name : input.valueFrom === 'path' ? f.path : f.downloadUrl
-              return (
-                <div key={f.path} style={{ display: 'flex', justifyContent: 'space-between', padding: 6, borderBottom: '1px solid #eee' }}>
-                  <div>
-                    <div style={{ fontFamily: 'monospace' }}>{f.name}</div>
-                    <div style={{ fontSize: 11, color: '#999' }}>{new Date(f.mtime).toISOString().slice(0, 16).replace('T', ' ')}</div>
-                  </div>
-                  <Button size="small" onClick={() => { onChange(picked); Modal.destroyAll() }}>选</Button>
-                </div>
-              )
-            })}
-          </div>
-        ),
-      })
-    } catch (e: any) {
-      message.error(e?.response?.data?.error ?? '仓库不可达')
-    } finally {
-      setLoading(false)
-    }
-  }
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ marginBottom: 4, fontSize: 12 }}>
-        <strong>{input.name}</strong> <span style={{ color: '#999' }}>→ vars.{input.outputVar}</span>
-      </div>
-      <Space.Compact style={{ width: '100%' }}>
-        <Input
-          placeholder={input.default ? `默认: ${input.default}` : '从仓库选或直接粘贴值'}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          style={{ flex: 1 }}
-        />
-        <Button loading={loading} onClick={openPicker}>从仓库选</Button>
-      </Space.Compact>
-    </div>
-  )
 }
