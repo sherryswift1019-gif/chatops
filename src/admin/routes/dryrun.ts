@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import { randomUUID, createHash } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { runDryRun, decideSideEffect } from '../../pipeline/dryrun-runner.js'
 import { listSnapshots, deleteSnapshot, deleteAllSnapshots } from '../../db/repositories/dryrun-snapshots.js'
 import { getTestPipelineById } from '../../db/repositories/test-pipelines.js'
@@ -66,19 +66,14 @@ export async function registerDryRunRoutes(app: FastifyInstance): Promise<void> 
   // 5. 启动 SSE 试运行
   app.post<{
     Params: { id: string; nodeId: string }
-    Body: { graphHash?: string; triggerParams: Record<string, unknown>; triggerType: string; triggeredBy: string }
+    Body: { triggerParams: Record<string, unknown>; triggerType: string; triggeredBy: string }
   }>('/test-pipelines/:id/dry-run/run-to/:nodeId', async (req, reply) => {
     const pid = Number(req.params.id)
     const pipeline = await getTestPipelineById(pid)
     if (!pipeline) return reply.status(404).send({ error: 'pipeline not found' })
 
-    // graph dirty check
-    if (req.body.graphHash) {
-      const dbHash = createHash('sha256').update(JSON.stringify(pipeline.graph ?? {})).digest('hex')
-      if (req.body.graphHash !== dbHash) {
-        return reply.status(400).send({ error: 'graph dirty: 请先保存再试运行' })
-      }
-    }
+    // dirty 检查改由前端 graph.dirty 闸门 + /snapshots 的 computeUpstreamHash 兜底，
+    // 这里不再做整图 hash 比对（前后端 hash 算法 / 数据形态不一致，无法对齐）。
 
     const sessionId = randomUUID()
     reply.raw.setHeader('Content-Type', 'text/event-stream')

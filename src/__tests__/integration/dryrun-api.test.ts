@@ -79,20 +79,4 @@ describe('dryrun API', () => {
     // 集成度高，骨架先放占位
     expect(true).toBe(true)
   })
-
-  it('graph dirty（前端传 graph hash 与 DB 不一致）→ 400', async () => {
-    const p = await getPool().query(
-      `INSERT INTO test_pipelines (name, graph) VALUES ('p','{"nodes":[],"edges":[]}'::jsonb) RETURNING id`)
-    const app = await buildApp()
-    const r = await app.inject({
-      method: 'POST',
-      url: `/test-pipelines/${p.rows[0].id}/dry-run/run-to/x`,
-      payload: {
-        graphHash: 'wrong-hash',
-        triggerParams: {}, triggerType: 'manual', triggeredBy: 't',
-      },
-    })
-    expect(r.statusCode).toBe(400)
-    await app.close()
-  })
 })

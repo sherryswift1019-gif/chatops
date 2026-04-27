@@ -30,7 +30,6 @@ export function useDryRunSSE() {
   const start = useCallback((opts: {
     pipelineId: number
     targetNodeId: string
-    graphHash: string
     triggerParams: Record<string, unknown>
     triggerType: string
     triggeredBy: string
@@ -42,7 +41,6 @@ export function useDryRunSSE() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        graphHash: opts.graphHash,
         triggerParams: opts.triggerParams,
         triggerType: opts.triggerType,
         triggeredBy: opts.triggeredBy,

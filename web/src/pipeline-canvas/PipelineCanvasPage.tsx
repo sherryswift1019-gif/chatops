@@ -52,15 +52,9 @@ function computeAncestors(
   return visited
 }
 
-/** Simple graph hash for dry-run stale detection */
-function computeGraphHash(nodes: ReadonlyArray<unknown>, edges: ReadonlyArray<unknown>): string {
-  const str = JSON.stringify({ nodes, edges })
-  let h = 0
-  for (let i = 0; i < str.length; i++) {
-    h = (Math.imul(31, h) + str.charCodeAt(i)) | 0
-  }
-  return (h >>> 0).toString(16)
-}
+// computeGraphHash 已移除：前后端 hash 算法 / 数据形态对不齐，
+// dry-run 的 dirty 检查改由前端 graph.dirty 闸门 + 后端 /snapshots
+// 的 computeUpstreamHash（按节点维度）兜底。
 
 const defaultStageFields = (type: StageType, id: string): StageFields => ({
   id,
@@ -266,7 +260,6 @@ export default function PipelineCanvasPage() {
     dryRunHook.start({
       pipelineId,
       targetNodeId,
-      graphHash: computeGraphHash(graph.nodes, graph.edges),
       triggerParams: payload.triggerParams,
       triggerType: payload.triggerType,
       triggeredBy: 'canvas-user',
