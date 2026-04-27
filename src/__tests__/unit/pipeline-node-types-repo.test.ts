@@ -6,10 +6,11 @@ import {
 } from '../../db/repositories/pipeline-node-types.js'
 
 // 注：迁移由 vitest globalSetup（src/__tests__/setup/pg-container.ts）顺序应用
-// 全部 schema*.sql 文件，含 v30 (5 phase-0 行) 与 v34 (7 phase-3 行,默认 disabled)。
+// 全部 schema*.sql 文件，含 v30 (5 phase-0 行)、v34 (7 phase-3 行)
+// 与 v44 (switch 行)。
 // 本测试仅验证 repository 行为。
 describe('pipeline-node-types repository', () => {
-  it('lists all 12 seeded node types (5 phase-0 + 7 phase-3)', async () => {
+  it('lists all 13 seeded node types (5 phase-0 + 7 phase-3 + switch)', async () => {
     const types = await listNodeTypes()
     const keys = types.map(t => t.key).sort()
     expect(keys).toEqual([
@@ -23,6 +24,7 @@ describe('pipeline-node-types repository', () => {
       'llm_agent',
       'script',
       'sql_query',
+      'switch',
       'template_render',
       'wait_webhook',
     ])
@@ -39,9 +41,9 @@ describe('pipeline-node-types repository', () => {
     expect(t!.category).toBe('general')
   })
 
-  it('listEnabledNodeTypeKeys returns enabled-only set (5 phase-0 + T9-T15 全部启用 = 12)', async () => {
+  it('listEnabledNodeTypeKeys returns enabled-only set (5 phase-0 + T9-T15 + switch = 13)', async () => {
     const keys = await listEnabledNodeTypeKeys()
-    // phase-0 5 + phase-3 7 (http/dm/db_update/sql_query/file_read/template_render/fan_out)
+    // phase-0 5 + phase-3 7 (http/dm/db_update/sql_query/file_read/template_render/fan_out) + switch
     expect(keys.has('script')).toBe(true)
     expect(keys.has('approval')).toBe(true)
     expect(keys.has('llm_agent')).toBe(true)
@@ -56,6 +58,7 @@ describe('pipeline-node-types repository', () => {
     expect(keys.has('template_render')).toBe(true)
     // T15 fan_out 现已启用
     expect(keys.has('fan_out')).toBe(true)
-    expect(keys.size).toBe(12)
+    expect(keys.has('switch')).toBe(true)
+    expect(keys.size).toBe(13)
   })
 })

@@ -181,6 +181,11 @@ const SCHEMA_FILES = [
   // 不产生 fixture 污染。需要映射的测试自行 bootstrap product_line + 重跑 v37
   // (见 internal-capability-pipelines-repo.test.ts)。
   'schema-v37.sql',
+  // v38/v39: 纯 FK 行为修正，无 seed 污染。保持 resetTestDb 与当前迁移链一致：
+  // - v38: im_triggers.pipeline_id ON DELETE SET NULL
+  // - v39: internal_capability_pipelines.pipeline_id ON DELETE CASCADE
+  'schema-v38.sql',
+  'schema-v39.sql',
   // v40 (phase 4 T3 — notify_bug pipeline 迁移): CREATE FUNCTION build_notify_message
   // (PL/pgSQL, 4 种 scenario 文案拼接) + 在 product_lines 非空时种入 'notify-internal'
   // pipeline (4 节点 DAG: sql_query → fan_out → db_update × 2) 并注册 'notify_bug'
@@ -193,6 +198,10 @@ const SCHEMA_FILES = [
   'schema-v41.sql',
   // v42: pipeline 解绑产线，新建 pipeline_bindings 关联表 + 老数据迁移 + 删 schedule。
   'schema-v42.sql',
+  // v43: im_triggers 增加 capability_key 目标 + pipeline/capability 互斥约束。
+  'schema-v43.sql',
+  // v44: switch 节点类型 + llm_agent outputFormat backfill + edge expression 语法归一化。
+  'schema-v44.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
