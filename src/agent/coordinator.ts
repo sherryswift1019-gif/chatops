@@ -201,7 +201,11 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
       }
     }
 
-    if (imTrigger.capabilityKey) {
+    // v43 会把入口 key 与 capability key 相同的 IM trigger 回填为 capability_key。
+    // 这种同名关联只表示“这个 IM 入口执行同名 capability”，不能在这里提前
+    // 直接跑 handler，否则会绕过下面的 PIPELINE_DAG_HANDLERS/internal pipeline
+    // 分流。只有异名映射才在 IM trigger 层改写到目标 capability。
+    if (imTrigger.capabilityKey && imTrigger.capabilityKey !== opts.capabilityKey) {
       const handler = handlers.get(imTrigger.capabilityKey)
       if (!handler) {
         const msg = `im trigger "${opts.capabilityKey}" 关联的 capability "${imTrigger.capabilityKey}" 未注册 handler`
@@ -222,13 +226,20 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
       }
     }
 
-    // IM 触发器存在但两者均为空：配置缺失，明确报错
-    const msg = `im trigger "${opts.capabilityKey}" 未配置执行目标（pipeline_id 或 capability_key 均为空）`
-    console.error(`[AgentCoordinator] ${msg}`)
-    return { success: false, error: msg }
+    if (imTrigger.capabilityKey === opts.capabilityKey) {
+      console.log(
+        `[AgentCoordinator] im trigger "${opts.capabilityKey}" maps to same capability; continue with normal capability routing`,
+      )
+    } else {
+      // IM 触发器存在但两者均为空：配置缺失，明确报错
+      const msg = `im trigger "${opts.capabilityKey}" 未配置执行目标（pipeline_id 或 capability_key 均为空）`
+      console.error(`[AgentCoordinator] ${msg}`)
+      return { success: false, error: msg }
+    }
   }
 
-  // im_trigger 不存在：内部 capability（fix_bug、analyze_bug 等），走原有路径。
+  // 无 IM trigger，或 IM trigger 同名映射到当前 capability：按内部 capability
+  // 继续路由（fix_bug/analyze_bug 等），先检查 DAG 灰度，再走 handler。
   // phase 4 双轨：PIPELINE_DAG_HANDLERS feature flag 命中且 internal_capability_pipelines
   // 有映射 → 走 pipeline 路径；缺映射时退化到 handler（不静默吞掉，打 warn 便于排查配置错误）。
   // T5 (2026-04-27) 起默认含 'request_handover,notify_bug,create_mr' —— 这 3 个 capability
