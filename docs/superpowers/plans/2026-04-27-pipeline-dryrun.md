@@ -1230,21 +1230,17 @@ export async function decideSideEffect(
 }
 
 function truncateGraphBefore(graph: PipelineGraph, targetNodeId: string): PipelineGraph {
-  // 计算 targetNodeId 的所有 ancestors（含），其它节点丢弃
-  // 复用 computeAncestors，再加 targetNodeId 自身
-  // 但 targetNodeId 自身不跑，所以 ancestors 不含它本身（只跑到入口→...→target 之前一层）
-  // 简化：保留 ancestors（包括 target），但 target 自身不会执行（因为它在 ancestors 中是 root，无后继需要跑）
-  // 实际：把 graph 截到 ancestors(target) 集合（不含 target 自身），让 graph runner 自然结束
-  // ↑ 严格说，"跑到 X 之前"= 跑完 X 的所有 ancestors，X 自己不跑
-  // ... 落地时按 graph-validation 的 computeAncestors（已 export）实现
-  // 这里给一个粗骨架：
-  // const ancestors = computeAncestors(graph, targetNodeId)
-  // const keepIds = ancestors  // 不含 target 自身
-  // return {
-  //   nodes: graph.nodes.filter(n => keepIds.has(n.id)),
-  //   edges: graph.edges.filter(e => keepIds.has(e.source) && keepIds.has(e.target)),
-  // }
-  return graph  // 占位 — 实施时替换为真实 truncate
+  // "跑到 X 之前" = 保留 X 的所有 ancestors（不含 X 自身），让 graph runner 自然结束
+  // computeAncestors 在 graph-validation.ts 已 export
+  const { computeAncestors } = require('./graph-validation.js') as typeof import('./graph-validation.js')
+  const keepIds = computeAncestors(graph, targetNodeId)  // 不含 target 自身
+  if (keepIds.size === 0) {
+    return { nodes: [], edges: [] }  // target 是入口，无上游可跑
+  }
+  return {
+    nodes: graph.nodes.filter(n => keepIds.has(n.id)),
+    edges: graph.edges.filter(e => keepIds.has(e.source) && keepIds.has(e.target)),
+  }
 }
 ```
 
