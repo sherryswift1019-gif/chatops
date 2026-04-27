@@ -145,6 +145,8 @@ const SCHEMA_FILES = [
   // 混用 seed 会打穿这个假设。v21+ 新建的表（prd_submit_events / arch_*）
   // 目前没有单元测试依赖；globalSetup 的 pg-container.ts 会扫全部文件
   // 支持首次 bootstrap，业务代码运行时 migrate.ts 也会跑全套。
+  // v45: 纯 DDL（pipeline_dryrun_snapshots + test_runs.trigger_params），无 seed 数据，安全加入。
+  'schema-v45.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
