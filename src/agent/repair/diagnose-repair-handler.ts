@@ -35,7 +35,7 @@ ${stderr || '（空）'}
 \`\`\`
 
 ## 执行要求
-1. 使用可用的 SSH 工具连入 ${serverHost} 诊断根因
+1. 使用 check_environment_status / get_logs 等 SSH 工具连入 ${serverHost} 诊断根因
 2. 施以修复（清残留文件 / 停冲突进程 / 修复依赖等）
 3. 重新执行上述命令，检查退出码
 4. 若仍失败则再次分析修复，最多重试 ${maxRetries} 次
@@ -56,7 +56,7 @@ async function handleDiagnoseAndRepair(opts: TriggerOptions): Promise<TriggerRes
     return { success: false, error: 'diagnose_and_repair: failedCommand 和 serverHost 必填' }
   }
 
-  const maxRetries = params.maxRetries ?? 4
+  const mcpServerPath = join(dirname(fileURLToPath(import.meta.url)), '..', 'mcp-server.ts')
 
   const porygon = createPorygon({
     defaultBackend: 'claude',
@@ -74,8 +74,21 @@ async function handleDiagnoseAndRepair(opts: TriggerOptions): Promise<TriggerRes
     // porygon timeoutMs 是 idle timeout（无输出则超时），非 wall-clock 总时长
     const result = await porygon.run({
       prompt: buildDiagnosePrompt(params),
-      timeoutMs: (maxRetries + 1) * 5 * 60_000,
-      disallowedTools: ['Edit', 'Write', 'Glob', 'Grep', 'Read'],
+      timeoutMs: ((params.maxRetries ?? 4) + 1) * 5 * 60_000,
+      mcpServers: {
+        'chatops-tools': {
+          command: 'node',
+          args: ['--import', 'tsx/esm', mcpServerPath],
+          env: {
+            ...(process.env as Record<string, string>),
+            CHATOPS_TASK_CONTEXT: JSON.stringify(opts.context),
+            CHATOPS_ALLOWED_TOOLS: 'check_environment_status,get_logs',
+            DATABASE_URL: process.env.DATABASE_URL ?? '',
+            ...(await buildClaudeEnv()),
+          },
+        },
+      },
+      disallowedTools: ['Bash', 'Edit', 'Write', 'Glob', 'Grep', 'Read', 'WebSearch', 'WebFetch'],
       envVars: await buildClaudeEnv(),
     })
     return { success: true, output: result.trim() }
