@@ -34,6 +34,7 @@ import {
 } from './graph-runner.js'
 import { linearizeStages } from './graph-migration.js'
 import type { StageContextBase } from './graph-builder.js'
+import { DockerExecutor } from './executors/docker.js'
 import type { StageDefinition, ServerInfo, ArtifactInput, PipelineGraph } from './types.js'
 import {
   type PipelineTrigger,
@@ -149,6 +150,15 @@ export async function runPipeline(
   const stages = pipeline.stages as StageDefinition[]
   const pipelineGraph: PipelineGraph = (pipeline.graph as PipelineGraph | null) ?? linearizeStages(stages)
 
+  // Docker executor: create and setup if pipeline has a default container image.
+  const pipelineContainerImage = (pipeline as { containerImage?: string | null }).containerImage?.trim()
+  const dockerExecutor = pipelineContainerImage
+    ? new DockerExecutor(pipelineContainerImage)
+    : undefined
+  if (dockerExecutor) {
+    await dockerExecutor.setup(`chatops-run-${run.id}`)
+  }
+
   const stageContext: StageContextBase = {
     runId: run.id,
     servers: serverMap,
@@ -162,6 +172,7 @@ export async function runPipeline(
     triggerPlatform: imContext?.platform,
     triggerGroupId: imContext?.groupId,
     triggerUserId: imContext?.userId,
+    dockerExecutor,
   }
 
   const hooks = buildDefaultHooks(logDir)
