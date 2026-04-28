@@ -158,7 +158,7 @@ export default function CapabilityInvocationsPage() {
   return (
     <>
       <Card
-        title="Capability 调用记录"
+        title="能力调用记录"
         extra={
           <Button icon={<ReloadOutlined />} onClick={load}>
             刷新
