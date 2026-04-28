@@ -55,6 +55,10 @@ export interface StageFields extends Record<string, unknown> {
   params?: Record<string, unknown>
   // llm_agent 节点输出格式（'json' 模式下运行时自动 JSON.parse 写入 stepOutputs）
   outputFormat?: 'string' | 'json'
+  // llm_agent custom 模式字段
+  agentMode?: 'capability' | 'custom'
+  customPrompt?: string
+  allowedTools?: string[]
 }
 
 export type ConditionSpec =

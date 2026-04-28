@@ -257,7 +257,10 @@ function DynamicParamsForm({
 
   useEffect(() => {
     if (node) {
-      form.setFieldsValue(node.data)
+      form.setFieldsValue({
+        agentMode: node.data.agentMode ?? 'capability',
+        ...node.data,
+      })
       if (node.data.stageType === 'im_input') {
         const s = node.data.imInputConfig?.paramSchema ?? DEFAULT_SCHEMA
         setParamSchemaText(JSON.stringify(s, null, 2))
@@ -273,6 +276,17 @@ function DynamicParamsForm({
     // 这里跳过以避免双写与 Cancel 路径漏回滚。
     if (all.stageType !== undefined && all.stageType !== node!.data.stageType) {
       return
+    }
+    // agentMode 切换时清理对侧字段，避免残留值被后端读取
+    if ('agentMode' in all) {
+      const newMode = all.agentMode as string
+      if (newMode === 'custom') {
+        form.setFieldsValue({ capabilityKey: undefined, capabilityParams: undefined })
+        all = { ...all, capabilityKey: undefined, capabilityParams: undefined }
+      } else {
+        form.setFieldsValue({ customPrompt: undefined, allowedTools: undefined })
+        all = { ...all, customPrompt: undefined, allowedTools: undefined }
+      }
     }
     // im_input 的 paramSchema 不在 Form 里，Form 触发变化时需要把本地 paramSchema
     // 合并回 imInputConfig，否则 updateNodeData 浅合并会丢掉 paramSchema。

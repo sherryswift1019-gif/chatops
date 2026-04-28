@@ -33,6 +33,9 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
     webhookTag: undefined,
     imInputConfig: undefined,
     params: undefined,
+    agentMode: undefined,
+    customPrompt: undefined,
+    allowedTools: undefined,
   }
   switch (newType) {
     case 'script':
@@ -40,7 +43,7 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
     case 'approval':
       return { ...base, ...cleared, approverIds: [], approvalDescription: '' }
     case 'llm_agent':
-      return { ...base, ...cleared, capabilityKey: '', capabilityParams: {} }
+      return { ...base, ...cleared, capabilityKey: '', capabilityParams: {}, agentMode: 'capability' }
     case 'wait_webhook':
       return { ...base, ...cleared, webhookTag: '' }
     case 'im_input':
@@ -76,7 +79,7 @@ export function obsoleteFieldsOnSwitch(prev: StageFields, newType: StageType): s
   const fieldsByType: Record<StageType, (keyof StageFields)[]> = {
     script: ['script'],
     approval: ['approverIds', 'approvalDescription'],
-    llm_agent: ['capabilityKey', 'capabilityParams'],
+    llm_agent: ['capabilityKey', 'capabilityParams', 'customPrompt', 'allowedTools'],
     wait_webhook: ['webhookTag'],
     im_input: ['imInputConfig'],
     http: ['params'],
