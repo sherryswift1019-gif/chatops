@@ -88,6 +88,7 @@ vi.mock('../../db/repositories/test-pipelines.js', () => ({
     variables: {},
     artifactInputs: [],
     graph: null,
+    containerImage: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   })),
@@ -260,6 +261,7 @@ async function mockPipelineStagesOnce(stages: StageDefinition[]) {
     variables: {},
     artifactInputs: [],
     graph: null,
+    containerImage: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   })

@@ -12,6 +12,7 @@ export interface TestPipeline {
   variables: Record<string, string>
   artifactInputs: unknown[]
   graph: unknown | null
+  containerImage: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -26,6 +27,7 @@ function mapRow(r: Record<string, unknown>): TestPipeline {
     variables: (r.variables ?? {}) as Record<string, string>,
     artifactInputs: (r.artifact_inputs ?? []) as unknown[],
     graph: (r.graph ?? null) as unknown,
+    containerImage: (r.container_image ?? null) as string | null,
     createdAt: r.created_at as Date, updatedAt: r.updated_at as Date,
   }
 }
@@ -59,16 +61,18 @@ export async function createTestPipeline(data: {
   variables?: Record<string, string>
   artifactInputs?: unknown[]
   graph?: unknown
+  containerImage?: string | null
 }): Promise<TestPipeline> {
   const pool = getPool()
   const { rows } = await pool.query(
-    `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, enabled, trigger_params, variables, artifact_inputs, graph)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    `INSERT INTO test_pipelines (product_line_id, name, description, stages, server_roles, enabled, trigger_params, variables, artifact_inputs, graph, container_image)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
     [data.productLineId ?? null, data.name, data.description ?? '', JSON.stringify(data.stages ?? []),
      JSON.stringify(data.serverRoles ?? {}), data.enabled ?? true,
      JSON.stringify(data.triggerParams ?? {}), JSON.stringify(data.variables ?? {}),
      JSON.stringify(data.artifactInputs ?? []),
-     data.graph !== undefined ? JSON.stringify(data.graph) : null]
+     data.graph !== undefined ? JSON.stringify(data.graph) : null,
+     data.containerImage ?? null]
   )
   return mapRow(rows[0])
 }
@@ -79,6 +83,7 @@ export async function updateTestPipeline(id: number, data: Partial<{
   triggerParams: Record<string, unknown>; variables: Record<string, string>
   artifactInputs: unknown[]
   graph: unknown | null
+  containerImage?: string | null
 }>): Promise<TestPipeline | null> {
   const pool = getPool()
   const { rows } = await pool.query(
@@ -90,6 +95,7 @@ export async function updateTestPipeline(id: number, data: Partial<{
        variables = COALESCE($8, variables),
        artifact_inputs = COALESCE($9, artifact_inputs),
        graph = COALESCE($10, graph),
+       container_image = COALESCE($11, container_image),
        updated_at = NOW()
      WHERE id = $1 RETURNING *`,
     [id, data.name ?? null, data.description ?? null,
@@ -99,7 +105,8 @@ export async function updateTestPipeline(id: number, data: Partial<{
      data.triggerParams ? JSON.stringify(data.triggerParams) : null,
      data.variables ? JSON.stringify(data.variables) : null,
      data.artifactInputs ? JSON.stringify(data.artifactInputs) : null,
-     data.graph !== undefined ? (data.graph === null ? null : JSON.stringify(data.graph)) : null]
+     data.graph !== undefined ? (data.graph === null ? null : JSON.stringify(data.graph)) : null,
+     data.containerImage ?? null]
   )
   return rows[0] ? mapRow(rows[0]) : null
 }
