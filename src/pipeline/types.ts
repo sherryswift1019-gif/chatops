@@ -41,6 +41,7 @@ export interface StageDefinition {
   onFailure: 'stop' | 'continue'
   // script stage
   script?: string
+  containerImage?: string
   // approval stage
   approverIds?: string[]
   approvalDescription?: string

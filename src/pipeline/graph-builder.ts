@@ -14,6 +14,7 @@ import type {
 import { resolveApprovers } from './approval-resolvers.js'
 import { getExecutor } from './node-types/registry.js'
 import type { ExecutionContext, NodeExecutionResult } from './node-types/types.js'
+import type { DockerExecutor } from './executors/docker.js'
 import { resolveVariables, type VariableContext } from './variables.js'
 import { evalExpression } from './expressions.js'
 
@@ -72,7 +73,9 @@ export interface StageHooks {
 }
 
 // StageContext minus stageIndex — the builder fills stageIndex per node.
-export type StageContextBase = Omit<StageContext, 'stageIndex'>
+export interface StageContextBase extends Omit<StageContext, 'stageIndex'> {
+  dockerExecutor?: DockerExecutor
+}
 
 export interface BuildGraphInput {
   stages: StageDefinition[]
