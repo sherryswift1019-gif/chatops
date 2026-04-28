@@ -66,6 +66,7 @@ export interface TestServer {
 
 export interface TestPipeline {
   id: number; productLineId?: number; name: string; description: string
+  graph?: unknown | null
   stages: StageDefinition[]; serverRoles?: Record<string, { count: number }>
   variables?: Record<string, string>
   artifactInputs?: ArtifactInput[]

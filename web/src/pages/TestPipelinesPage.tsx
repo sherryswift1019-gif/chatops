@@ -46,6 +46,7 @@ export default function TestPipelinesPage() {
       name: r.name,
       description: r.description,
       enabled: r.enabled,
+      graph: r.graph,
       stages: r.stages,
       variables: r.variables,
       triggerParams: r.triggerParams,
