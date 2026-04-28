@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Card, Table, Button, Modal, Form, Input, Tag, Space, message, theme } from 'antd'
+import { Card, Table, Button, Modal, Form, Input, Tag, Space, message, theme, Select } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import {
   getCapabilities,
@@ -10,10 +10,25 @@ import {
 } from '../api/capabilities'
 import type { Capability } from '../api/capabilities'
 
+const CATEGORY_OPTIONS = [
+  { value: 'feature_dev', label: '需求开发类', color: 'blue' },
+  { value: 'bug_fix',     label: 'Bug 修复类', color: 'red' },
+  { value: 'ops',         label: '运维操作类', color: 'green' },
+  { value: 'info_query',  label: '信息抓取类', color: 'orange' },
+]
+
+function CategoryTag({ category }: { category: string | null }) {
+  const opt = CATEGORY_OPTIONS.find(o => o.value === category)
+  return opt
+    ? <Tag color={opt.color}>{opt.label}</Tag>
+    : <Tag>未分类</Tag>
+}
+
 export default function CapabilitiesPage() {
   const { token } = theme.useToken()
   const [data, setData] = useState<Capability[]>([])
   const [loading, setLoading] = useState(false)
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Capability | null>(null)
   const [form] = Form.useForm()
@@ -28,6 +43,10 @@ export default function CapabilitiesPage() {
     setLoading(true)
     try { setData(await getCapabilities()) } finally { setLoading(false) }
   }
+
+  const filteredData = categoryFilter
+    ? data.filter(r => r.category === categoryFilter)
+    : data
 
   function openCreate() {
     setEditing(null)
@@ -85,6 +104,8 @@ export default function CapabilitiesPage() {
     { title: '标识', dataIndex: 'key' },
     { title: '能力名称', dataIndex: 'displayName' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
+    { title: '业务分类', dataIndex: 'category',
+      render: (v: string | null) => <CategoryTag category={v} /> },
     { title: '类型', dataIndex: 'isSystem',
       render: (v: boolean) => <Tag color={v ? 'default' : 'blue'}>{v ? '系统' : '自定义'}</Tag> },
     {
@@ -113,7 +134,19 @@ export default function CapabilitiesPage() {
 
   return (
     <Card title="能力管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增能力</Button>}>
-      <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
+      <div style={{ marginBottom: 12 }}>
+        <Select
+          allowClear
+          placeholder="按业务分类筛选"
+          style={{ width: 180 }}
+          value={categoryFilter ?? undefined}
+          onChange={v => setCategoryFilter(v ?? null)}
+          options={[
+            ...CATEGORY_OPTIONS.map(o => ({ value: o.value, label: <Tag color={o.color}>{o.label}</Tag> })),
+          ]}
+        />
+      </div>
+      <Table rowKey="id" columns={columns} dataSource={filteredData} loading={loading} pagination={false} />
 
       <Modal
         title={editing ? '编辑能力' : '新增能力'}
@@ -132,6 +165,16 @@ export default function CapabilitiesPage() {
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={3} placeholder="描述该能力的用途" />
+          </Form.Item>
+          <Form.Item name="category" label="业务分类">
+            <Select
+              allowClear
+              placeholder="请选择（可选）"
+              options={CATEGORY_OPTIONS.map(o => ({
+                value: o.value,
+                label: <Tag color={o.color}>{o.label}</Tag>,
+              }))}
+            />
           </Form.Item>
           <Form.Item name="toolNames" label="关联工具 (逗号分隔)" getValueFromEvent={(e) => e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean)} getValueProps={(v) => ({ value: Array.isArray(v) ? v.join(', ') : v })}>
             <Input placeholder="如: deploy_tool, rollback_tool" />
