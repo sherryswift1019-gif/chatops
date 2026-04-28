@@ -1,10 +1,11 @@
 ---
-stepsCompleted: [1, 2, 3, 4]
+stepsCompleted: [1, 2, 3, 4, 'tea-integration-2026-04-28']
 status: 'complete'
-completedAt: '2026-04-15'
+completedAt: '2026-04-28'
 inputDocuments:
   - _bmad-output/planning-artifacts/prd.md
   - _bmad-output/planning-artifacts/architecture.md
+  - _bmad-output/test-artifacts/test-design/chatops-ai-assistant-handoff.md
 workflowType: 'epics-and-stories'
 project_name: 'ChatOps 研发 AI 助手'
 user_name: 'Hanff'
@@ -293,11 +294,15 @@ date: '2026-04-15'
 
 **FRs covered:** FR1, FR2, FR3, FR4, FR5, FR7, FR8, FR9, FR10, FR11, FR12, FR20（钉钉+Issue 部分）, FR21, FR22, FR23, FR24, FR25, FR26, FR27, FR45, FR46, FR47, FR49
 
+**M0 质量门禁（PR Gate）：** 现有 30 个单元测试 100% 通过；新 capability 路由单元测试覆盖；`RB-INT-001`（RBAC 拒绝无权限角色）+ `RB-INT-002`（CLI --allowed-tools 硬限制）集成测试全绿
+
 ### Epic 2: 知识库历史经验秒回
 
 **Goal:** 交付工程师/售后 在钉钉问问题时，系统秒级（≤3s）命中知识库返回历史方案。研发/内容运营 可通过 Git 提交向知识库补充业务逻辑说明。
 
 **FRs covered:** FR14, FR15, FR16, FR19, FR55
+
+**M1 质量门禁（Nightly Gate，Epic 1+2 全部完成后验证）：** R-001/R-002/R-004/R-006 全部 MITIGATED；`AN-INT-001~006` P0/P1 全绿；脱敏套件 `AN-INT-003` 100%；分析 P95 ≤ 4 分钟
 
 ### Epic 3: L1 自动修复闭环
 
@@ -316,6 +321,8 @@ date: '2026-04-15'
 **Goal:** L3 业务逻辑 Bug 走人工方案审批流程。模块负责人收到钉钉 DM 卡片，审查 AI 方案后 approve，触发后续修复。
 
 **FRs covered:** FR31（L3 部分）, FR38, FR39, FR51（后端数据）
+
+**M2 质量门禁（Nightly Gate，Epic 3+4+5 全部完成后验证）：** R-003/R-005/R-007 全部 MITIGATED；`FX-INT-001~008` P0/P1 全绿；10 并发修复 Agent 内存增量 ≤ 100MB
 
 ### Epic 6: 管理后台与新产品线接入
 
@@ -404,6 +411,7 @@ So that Agent 可由 GitLab 事件驱动.
 **Then** 按 label 类型路由（needs-analysis → 触发分析、approved → 触发修复）
 **And** MR 创建事件派发到 mr-handler
 **And** 日志前缀 [GitLab]
+**And** [TEA-HO-INT-003] 同一 Issue 的并发 Webhook 幂等处理：重复 label 变化事件只触发一次 Agent（advisory lock + 幂等键）
 
 ### Story 1.5: WorktreeManager 代码沙箱
 
@@ -424,6 +432,8 @@ So that 多并发分析互不干扰.
 **Given** 凌晨 3 点定时任务
 **When** cleanup-scheduler 触发
 **Then** 清理所有超过 2 小时 TTL 的 worktree + 对应 session
+**And** [TEA-FX-INT-003] 每个 worktree 路径含唯一标识（`/tmp/<uuid>/`），并发任务目录互相独立、无文件系统共享
+**And** [TEA-FX-UNIT-001] `(bugId, agentType)` 唯一键约束：同一 Bug 同类型 Agent 的第二次 acquire 必须等待锁而非直接创建新目录
 
 ### Story 1.6: KnowledgeRepository 基础（Git 仓库读取）
 
@@ -455,6 +465,10 @@ So that Agent 由事件驱动而非硬编码调用.
 **And** 通过 ClaudeRunner 启动 MCP 子进程
 **And** 日志前缀 [AgentCoordinator]
 **And** 异常有 ERROR 级日志且不静默
+**And** [TEA-HO-INT-001] 分析 Agent 完成 → label 变化 → 修复 Agent 触发的成功路径集成测试全覆盖（`@p0 @integration @agent-handoff`）
+**And** [TEA-HO-INT-002] 分析/修复 Agent 状态超过阈值（20 分钟）时，孤儿扫描定时任务检测并 DM 告警 Bug owner（`@p0 @integration @agent-handoff`）
+**And** [TEA-RB-INT-001] 无 `analyze_bug` 权限的角色调用 triggerCapability 时返回 403，操作被拒（`@p0 @integration @security`）
+**And** [TEA-RB-INT-002] ClaudeRunner 启动 Agent 时 `--allowed-tools` 仅包含 MCP 工具集，尝试调用 Bash/Read/Write 被硬限制拦截（`@p0 @integration @security`）
 
 ### Story 1.8: 分析工具集 — read_code / download_image
 
@@ -507,6 +521,7 @@ So that 分析报告满足 FR21-25.
 **And** Issue label 从 needs-analysis → analyzing → graded
 **And** 附加 level-l1/l2/l3/l4 和 confidence-high/medium/low label
 **And** classification 为 config_issue / usage_issue 时不创建 Issue，直接回复钉钉
+**And** [TEA-AN-UNIT-001] Bug 自动分级单元测试覆盖 L1/L2/L3/L4 全部边界条件，含边界值与模糊分级情况（`@p0 @unit @bug-grading`）
 
 ### Story 1.11: 端到端首次可用分析验收
 
@@ -707,6 +722,8 @@ So that 配置类 Bug 全自动修复.
 **And** MR label 含 ai-generated + level-l1
 **And** Issue label 从 fixing → in-review
 **And** 钉钉 @模块负责人通知 MR 待 Review
+**And** [TEA-FX-INT-001] L1 全自动路径集成测试：Issue → Worktree → Patch → CI 绿 → MR 创建，全程无人工干预（`@p0 @integration`）
+**And** [TEA-FX-INT-002] MR 创建前必须校验 GitLab Pipeline 状态为 `success`，CI 未绿时不创建 MR（`@p0 @integration`）
 
 ### Story 3.6: GitLab Label 状态机驱动
 
@@ -723,6 +740,7 @@ So that 流程由事件驱动.
 **Given** Issue label 变为 in-review
 **When** MR 存在
 **Then** 触发 ai_review_mr（Epic 4）
+**And** [TEA-HO-UNIT-001] GitLab label 状态机 12 节点全路径转移单元测试覆盖，含非法转移拒绝和并发场景（`@p0 @unit @agent-handoff`）
 
 ### Story 3.7: L1 端到端验收
 
@@ -758,6 +776,7 @@ So that 密码/密钥/IP 不泄露.
 **Then** 替换为 [MASKED_PASSWORD] / [MASKED_KEY] / [MASKED_IP] 等
 **And** 脱敏后文本保持可读性
 **And** 所有 Agent 输出（分析报告、commit、钉钉回复）均经此过滤
+**And** [TEA-AN-INT-003] 脱敏函数参数化单元测试套件覆盖手机号/邮箱/内网 IP/Token 四类，零漏检（`@p0 @unit @security`）；脱敏为纯函数，可直接导入测试
 
 ### Story 4.2: Retry Handler（3 次自动重试）
 
@@ -1011,6 +1030,13 @@ So that 知道每个 Bug 处在什么阶段.
 **Then** 列表展示所有 Bug（Issue 编号、标题、当前 label 状态、级别、置信度）
 **And** 点击详情进入 12 节点进度图（needs-analysis → ... → done）
 **And** 每个节点显示时间戳和关联操作（分析报告链接 / MR 链接 / Review 结论）
+**And** [TEA-UI-E2E] 以下元素必须加 `data-testid` 属性以支持 E2E 自动化：
+  - Bug 列表行：`data-testid="bug-instance-row"`
+  - 状态标签：`data-testid="bug-status-badge"`
+  - AI 置信度标签：`data-testid="bug-confidence-badge"`
+  - 详情页分析报告区域：`data-testid="analysis-report"`
+  - 详情页 MR 链接：`data-testid="mr-link"`
+  - 详情页触发修复按钮：`data-testid="trigger-fix-btn"`
 
 ### Story 6.7: 审计日志导出
 
@@ -1113,6 +1139,7 @@ So that AI 自证价值.
 **When** 选择产品线和时间范围
 **Then** 展示折线图：分析任务数趋势、修复成功率（按 L1/L2/L3 分级）、知识库命中率、平均耗时
 **And** 展示汇总数据：总节省工时估算、自动修复 Bug 数、命中率
+**And** [TEA-UI-E2E] 修复率指标区域加 `data-testid="fix-rate-metric"` 以支持 E2E 自动化
 
 ---
 
