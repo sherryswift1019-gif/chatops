@@ -67,8 +67,17 @@ export async function runPipeline(
   onComplete?: (result: PipelineRunResult) => void,
 ): Promise<number> {
   const { type: triggerType, triggeredBy } = trigger
-  const triggerParams = trigger.params
   const imContext: ImTriggerContext | undefined = extractImContext(trigger)
+  const triggerParams: Record<string, unknown> = {
+    ...(trigger.params ?? {}),
+    ...(imContext
+      ? {
+          imPlatform: imContext.platform,
+          imGroupId: imContext.groupId,
+          imUserId: imContext.userId,
+        }
+      : {}),
+  }
 
   // Legacy fallback for rollback scenarios.
   if (process.env.PIPELINE_ENGINE === 'legacy') {
