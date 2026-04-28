@@ -60,6 +60,7 @@ registerNodeType({
         role: '',
       },
       vars: (ctx.vars ?? {}) as Record<string, string>,
+      triggerParams: ctx.triggerParams,
     }
     const command = resolveVariables(rawScript, varCtx)
 

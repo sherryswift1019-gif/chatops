@@ -27,6 +27,7 @@ export interface VariableContext {
   stage: { name: string; index: number }
   server: { host: string; port: number; username: string; name: string; role: string }
   vars: Record<string, string>
+  triggerParams?: Record<string, unknown>
 }
 
 export interface VariableDefinition {
