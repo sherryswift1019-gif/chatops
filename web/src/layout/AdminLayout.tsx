@@ -31,6 +31,7 @@ const PAGE_NAMES: Record<string, string> = {
   '/im-triggers': 'IM 触发器',
   '/test-pipelines': '流水线管理',
   '/test-runs': '执行记录',
+  '/capability-invocations': 'Capability 调用',
   '/tools': '工具管理',
   '/system-config': '系统配置',
   '/bug-runs': 'Bug 修复',
@@ -60,6 +61,7 @@ const menuItems = [
       { key: '/im-triggers', icon: <MessageOutlined />, label: 'IM 触发器' },
       { key: '/test-pipelines', icon: <PartitionOutlined />, label: '流水线管理' },
       { key: '/test-runs', icon: <HistoryOutlined />, label: '执行记录' },
+      { key: '/capability-invocations', icon: <HistoryOutlined />, label: 'Capability 调用' },
     ],
   },
   {

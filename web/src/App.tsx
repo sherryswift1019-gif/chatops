@@ -20,6 +20,7 @@ const ToolsPage              = lazy(() => import('./pages/ToolsPage'))
 const TestServersPage        = lazy(() => import('./pages/TestServersPage'))
 const TestPipelinesPage      = lazy(() => import('./pages/TestPipelinesPage'))
 const TestRunsPage           = lazy(() => import('./pages/TestRunsPage'))
+const CapabilityInvocationsPage = lazy(() => import('./pages/CapabilityInvocationsPage'))
 const PipelineCanvasPage     = lazy(() => import('./pipeline-canvas/PipelineCanvasPage'))
 // 研发 AI 助手页面
 const BugRunsPage            = lazy(() => import('./pages/BugRunsPage'))
@@ -212,6 +213,9 @@ export default function App() {
             } />
             <Route path="/test-runs" element={
               <Suspense fallback={null}><TestRunsPage /></Suspense>
+            } />
+            <Route path="/capability-invocations" element={
+              <Suspense fallback={null}><CapabilityInvocationsPage /></Suspense>
             } />
             {/* 研发 AI 助手 */}
             <Route path="/bug-runs" element={

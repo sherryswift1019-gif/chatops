@@ -9,6 +9,10 @@ import { findByReportCode } from '../db/repositories/bug-fix-events.js'
 import { getProjectByGitlabPath } from '../db/repositories/projects-repo.js'
 import { getInternalPipelineId } from '../db/repositories/internal-capability-pipelines.js'
 import { resolvePipelineForTrigger } from '../db/repositories/pipeline-bindings.js'
+import {
+  createInvocation,
+  finishInvocation,
+} from '../db/repositories/capability-invocations.js'
 import { runPipeline, apiTrigger } from '../pipeline/executor.js'
 import { PipelineApprovalManager } from '../pipeline/approval-manager.js'
 import type { IMAdapter } from '../adapters/im/types.js'
@@ -20,6 +24,12 @@ export interface TriggerOptions {
   context: TaskContext
   extraParams?: Record<string, unknown>
   signal?: AbortSignal
+  /**
+   * @internal pipeline 内 capability 节点（executor-hooks / executor-legacy）
+   * 调 triggerCapability 时设 true，跳过 capability_invocations 日志——外层
+   * test_runs 已涵盖该次执行，子调用再写一条只会重复噪音。
+   */
+  _suppressInvocationLog?: boolean
 }
 
 export interface TriggerResult {
@@ -261,8 +271,39 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     return { success: false, error: msg }
   }
 
+  // 顶层 handler 调用：写 capability_invocations 日志（pipeline 嵌套子调用通过
+  // _suppressInvocationLog 跳过；外层 test_runs 已覆盖该次执行）。
+  // 记录失败一律 catch 不抛——日志侧通道是观察工具，不阻塞业务。
+  const shouldLog = !opts._suppressInvocationLog
+  let invocationId: number | null = null
+  if (shouldLog) {
+    const inv = await createInvocation({
+      capabilityKey: opts.capabilityKey,
+      triggerType: inferTriggerType(opts.context.platform),
+      platform: opts.context.platform,
+      groupId: opts.context.groupId,
+      triggeredBy: opts.context.initiatorId,
+      taskId: opts.context.taskId,
+      params: opts.extraParams ?? {},
+    }).catch((err) => {
+      console.error('[AgentCoordinator] createInvocation failed:', err)
+      return null
+    })
+    invocationId = inv?.id ?? null
+  }
+
   try {
     const result = await handler(opts)
+    if (invocationId !== null) {
+      await finishInvocation(
+        invocationId,
+        result.success ? 'success' : 'failed',
+        result.output ?? '',
+        result.success ? '' : result.error ?? '',
+      ).catch((err) =>
+        console.error('[AgentCoordinator] finishInvocation failed:', err),
+      )
+    }
     console.log(`[AgentCoordinator] completed: ${opts.capabilityKey}`, {
       success: result.success,
       ...(result.success ? {} : { error: result.error, output: result.output }),
@@ -270,9 +311,26 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     return result
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    if (invocationId !== null) {
+      await finishInvocation(invocationId, 'failed', '', msg).catch((e) =>
+        console.error('[AgentCoordinator] finishInvocation (catch) failed:', e),
+      )
+    }
     console.error(`[AgentCoordinator] error in ${opts.capabilityKey}:`, msg)
     return { success: false, error: msg }
   }
+}
+
+/**
+ * 把 TaskContext.platform 映射到 capability_invocations.trigger_type。
+ * - dingtalk / feishu → 'im'（IM 群里用户消息触发）
+ * - test / e2e / api  → 'api'（外部接口 / 测试入口）
+ * - 其他              → 'manual'（兜底，覆盖 admin 后台等场景）
+ */
+function inferTriggerType(platform: string): string {
+  if (platform === 'dingtalk' || platform === 'feishu') return 'im'
+  if (platform === 'test' || platform === 'e2e' || platform === 'api') return 'api'
+  return 'manual'
 }
 
 /**

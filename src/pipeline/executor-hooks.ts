@@ -177,6 +177,8 @@ export function buildDefaultHooks(logDir: string): StageHooks {
             initiatorRole: 'admin',
           },
           extraParams: resolvedParams,
+          // pipeline 内嵌 capability 节点：外层 test_runs 已记录，跳过 capability_invocations
+          _suppressInvocationLog: true,
         })
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('capability 执行超时')), timeoutMs),

@@ -18,6 +18,7 @@ import { registerAiRoutes } from './routes/ai.js'
 import { registerTestServerRoutes } from './routes/test-servers.js'
 import { registerTestPipelineRoutes } from './routes/test-pipelines.js'
 import { registerTestRunRoutes } from './routes/test-runs.js'
+import { registerCapabilityInvocationRoutes } from './routes/capability-invocations.js'
 import { registerStageOperationRoutes } from './routes/stage-operations.js'
 import { registerPipelineVariableRoutes } from './routes/pipeline-variables.js'
 import { registerArtifactRoutes } from './routes/artifacts.js'
@@ -67,6 +68,7 @@ export async function adminPlugin(
   await registerTestServerRoutes(app)
   await registerTestPipelineRoutes(app)
   await registerTestRunRoutes(app)
+  await registerCapabilityInvocationRoutes(app)
   await registerStageOperationRoutes(app)
   await registerPipelineVariableRoutes(app)
   await registerArtifactRoutes(app)

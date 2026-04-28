@@ -206,6 +206,8 @@ const SCHEMA_FILES = [
   'schema-v44.sql',
   // v45: 纯 DDL（pipeline_dryrun_snapshots + test_runs.trigger_params），无 seed 数据，安全加入。
   'schema-v45.sql',
+  // v46: 纯 DDL（capability_invocations 新表），无 seed 数据，安全加入。
+  'schema-v46.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
