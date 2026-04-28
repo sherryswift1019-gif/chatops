@@ -403,7 +403,7 @@ function DynamicParamsForm({
                   <Switch />
                 </Form.Item>
 
-                <Form.Item shouldUpdate={(p, c) => p.stageType !== c.stageType || p.capabilityKey !== c.capabilityKey} noStyle>
+                <Form.Item shouldUpdate={(p, c) => p.stageType !== c.stageType || p.capabilityKey !== c.capabilityKey || p.agentMode !== c.agentMode} noStyle>
                   {({ getFieldValue }) => {
                     const t = getFieldValue('stageType')
                     if (t === 'script') {
@@ -448,52 +448,95 @@ function DynamicParamsForm({
                       </>
                     )
                     if (t === 'llm_agent') {
+                      const agentMode = (getFieldValue('agentMode') as string | undefined) ?? 'capability'
                       const selectedKey = getFieldValue('capabilityKey') as string | undefined
                       const selected = capabilities.find(c => c.key === selectedKey)
                       return (
                         <>
-                          <Form.Item
-                            name="capabilityKey"
-                            label="Capability"
-                            rules={[{ required: true, message: '请选择 Capability' }]}
-                          >
-                            <Select
-                              showSearch
-                              placeholder="选择一个 Agent Capability"
-                              options={capabilityOptions(capabilities, selectedKey)}
-                              filterOption={(input, opt) => {
-                                const tx = (opt as { searchText?: string } | undefined)?.searchText ?? ''
-                                return tx.toLowerCase().includes(input.toLowerCase())
-                              }}
-                              onChange={(newKey) => {
-                                // phase 2 cleanup: capability.paramSchema 已删，新选 capability 时不再按 schema 过滤参数。
-                                // 已填写的 capabilityParams 直接保留（JSON fallback 形式由用户自行编辑）。
-                                const currentParams = (getFieldValue('capabilityParams') as Record<string, unknown> | undefined) ?? {}
-                                onChange(node!.id, { capabilityKey: newKey, capabilityParams: currentParams })
-                              }}
-                            />
-                          </Form.Item>
-                          {selected && (
-                            <Form.Item shouldUpdate noStyle>
-                              {() => (
-                                <CapabilityParamsForm
-                                  paramSchema={undefined}
-                                  value={form.getFieldValue('capabilityParams') as Record<string, unknown> | undefined}
-                                  onChange={(next) => {
-                                    form.setFieldsValue({ capabilityParams: next })
-                                    onChange(node!.id, { capabilityParams: next })
-                                  }}
-                                />
-                              )}
-                            </Form.Item>
-                          )}
-                          <Form.Item name="outputFormat" label="输出格式" initialValue="json"
-                            extra="JSON 模式下 capability 输出必须是 JSON 对象，否则该节点失败">
+                          <Form.Item label="模式" name="agentMode" initialValue="capability">
                             <Radio.Group>
-                              <Radio value="json">JSON</Radio>
-                              <Radio value="string">字符串</Radio>
+                              <Radio.Button value="capability">已有能力</Radio.Button>
+                              <Radio.Button value="custom">自定义</Radio.Button>
                             </Radio.Group>
                           </Form.Item>
+
+                          {agentMode === 'custom' ? (
+                            <>
+                              <Form.Item
+                                label="系统提示词"
+                                name="customPrompt"
+                                rules={[{ required: true, message: '自定义模式必须填写提示词' }]}
+                              >
+                                <Input.TextArea
+                                  rows={6}
+                                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                                  placeholder="告诉 Claude 要做什么。支持 {{triggerParams.xxx}} 模板变量。"
+                                />
+                              </Form.Item>
+                              <Form.Item label="可用工具" name="allowedTools">
+                                <Select
+                                  mode="multiple"
+                                  placeholder="不选则禁用文件读写工具"
+                                  options={[
+                                    { value: 'WebFetch', label: 'WebFetch（HTTP 抓取）' },
+                                    { value: 'WebSearch', label: 'WebSearch（搜索）' },
+                                  ]}
+                                />
+                              </Form.Item>
+                              <Form.Item name="outputFormat" label="输出格式" initialValue="string"
+                                extra="JSON 模式下输出必须是 JSON 对象，否则该节点失败">
+                                <Radio.Group>
+                                  <Radio value="json">JSON</Radio>
+                                  <Radio value="string">字符串</Radio>
+                                </Radio.Group>
+                              </Form.Item>
+                            </>
+                          ) : (
+                            <>
+                              <Form.Item
+                                name="capabilityKey"
+                                label="Capability"
+                                rules={[{ required: true, message: '请选择 Capability' }]}
+                              >
+                                <Select
+                                  showSearch
+                                  placeholder="选择一个 Agent Capability"
+                                  options={capabilityOptions(capabilities, selectedKey)}
+                                  filterOption={(input, opt) => {
+                                    const tx = (opt as { searchText?: string } | undefined)?.searchText ?? ''
+                                    return tx.toLowerCase().includes(input.toLowerCase())
+                                  }}
+                                  onChange={(newKey) => {
+                                    // phase 2 cleanup: capability.paramSchema 已删，新选 capability 时不再按 schema 过滤参数。
+                                    // 已填写的 capabilityParams 直接保留（JSON fallback 形式由用户自行编辑）。
+                                    const currentParams = (getFieldValue('capabilityParams') as Record<string, unknown> | undefined) ?? {}
+                                    onChange(node!.id, { capabilityKey: newKey, capabilityParams: currentParams })
+                                  }}
+                                />
+                              </Form.Item>
+                              {selected && (
+                                <Form.Item shouldUpdate noStyle>
+                                  {() => (
+                                    <CapabilityParamsForm
+                                      paramSchema={undefined}
+                                      value={form.getFieldValue('capabilityParams') as Record<string, unknown> | undefined}
+                                      onChange={(next) => {
+                                        form.setFieldsValue({ capabilityParams: next })
+                                        onChange(node!.id, { capabilityParams: next })
+                                      }}
+                                    />
+                                  )}
+                                </Form.Item>
+                              )}
+                              <Form.Item name="outputFormat" label="输出格式" initialValue="json"
+                                extra="JSON 模式下 capability 输出必须是 JSON 对象，否则该节点失败">
+                                <Radio.Group>
+                                  <Radio value="json">JSON</Radio>
+                                  <Radio value="string">字符串</Radio>
+                                </Radio.Group>
+                              </Form.Item>
+                            </>
+                          )}
                         </>
                       )
                     }
