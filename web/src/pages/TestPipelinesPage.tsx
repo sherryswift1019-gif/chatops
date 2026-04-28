@@ -66,6 +66,65 @@ export default function TestPipelinesPage() {
     URL.revokeObjectURL(url)
   }
 
+  async function handleImportFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportBusy(true)
+    try {
+      const text = await file.text()
+      let data: any
+      try {
+        data = JSON.parse(text)
+      } catch (err) {
+        message.error(`导入失败：JSON 解析错误 - ${(err as Error).message}`)
+        return
+      }
+      if (!data.name) {
+        message.error('导入失败：JSON 中缺少 name 字段')
+        return
+      }
+      const payload: Partial<TestPipeline> = {
+        name: data.name,
+        description: data.description,
+        enabled: data.enabled,
+        graph: data.graph,
+        stages: data.stages,
+        variables: data.variables,
+        triggerParams: data.triggerParams,
+        containerImage: data.containerImage,
+        artifactInputs: data.artifactInputs,
+        serverRoles: data.serverRoles,
+      }
+      if (data.id) {
+        try {
+          await getTestPipeline(data.id)
+          await updateTestPipeline(data.id, payload)
+          message.success(`导入成功，已更新「${data.name}」`)
+        } catch (err: any) {
+          if (err?.response?.status === 404) {
+            await createTestPipeline(payload)
+            message.success(`导入成功，已创建「${data.name}」`)
+          } else {
+            message.error(`导入失败：${err?.response?.data?.error ?? err.message}`)
+            return
+          }
+        }
+      } else {
+        try {
+          await createTestPipeline(payload)
+          message.success(`导入成功，已创建「${data.name}」`)
+        } catch (err: any) {
+          message.error(`导入失败：${err?.response?.data?.error ?? err.message}`)
+          return
+        }
+      }
+      await load()
+    } finally {
+      setImportBusy(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
   function openCanvasCreate() {
     canvasForm.resetFields()
     canvasForm.setFieldsValue({ enabled: true })
@@ -124,7 +183,21 @@ export default function TestPipelinesPage() {
 
   return (
     <Card title="流水线管理" extra={
-      <Button type="primary" icon={<PartitionOutlined />} onClick={openCanvasCreate}>画布新建</Button>
+      <Space>
+        <Button
+          icon={<ImportOutlined />}
+          loading={importBusy}
+          onClick={() => {
+            if (fileInputRef.current) {
+              fileInputRef.current.value = ''
+              fileInputRef.current.click()
+            }
+          }}
+        >
+          导入 JSON
+        </Button>
+        <Button type="primary" icon={<PartitionOutlined />} onClick={openCanvasCreate}>画布新建</Button>
+      </Space>
     }>
       <Table rowKey="id" columns={columns} dataSource={data} loading={loading} pagination={false} />
       <Modal
@@ -151,6 +224,13 @@ export default function TestPipelinesPage() {
           </div>
         </Form>
       </Modal>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json"
+        style={{ display: 'none' }}
+        onChange={handleImportFile}
+      />
     </Card>
   )
 }
