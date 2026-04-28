@@ -43,6 +43,16 @@ export async function listPipelineWebhooks(pipelineId: number): Promise<Pipeline
   return rows.map(mapRow)
 }
 
+/** 通过 id 查单条（供管理路由做归属校验） */
+export async function getPipelineWebhookById(id: number): Promise<PipelineWebhook | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `SELECT * FROM pipeline_webhooks WHERE id = $1`,
+    [id],
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
 /** 通过 token 精确查找（公开端点鉴权用，返回完整行） */
 export async function getPipelineWebhookByToken(token: string): Promise<PipelineWebhook | null> {
   const pool = getPool()

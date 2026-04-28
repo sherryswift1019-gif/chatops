@@ -5,6 +5,7 @@ import {
   updatePipelineWebhook,
   deletePipelineWebhook,
   rotatePipelineWebhookToken,
+  getPipelineWebhookById,
 } from '../../db/repositories/pipeline-webhooks-repo.js'
 import { getTestPipelineById } from '../../db/repositories/test-pipelines.js'
 
@@ -50,13 +51,14 @@ export async function registerPipelineWebhookRoutes(app: FastifyInstance): Promi
   app.post<{ Params: { pipelineId: string; id: string } }>(
     '/pipelines/:pipelineId/webhooks/:id/rotate',
     async (req, reply) => {
+      const pipelineId = Number(req.params.pipelineId)
       const id = Number(req.params.id)
-      try {
-        const { newToken } = await rotatePipelineWebhookToken(id)
-        return reply.send({ token: newToken, url: `/webhook/pipeline/${newToken}` })
-      } catch {
+      const webhook = await getPipelineWebhookById(id)
+      if (!webhook || webhook.pipelineId !== pipelineId) {
         return reply.status(404).send({ error: 'webhook not found' })
       }
+      const { newToken } = await rotatePipelineWebhookToken(id)
+      return reply.send({ token: newToken, url: `/webhook/pipeline/${newToken}` })
     },
   )
 
@@ -67,7 +69,13 @@ export async function registerPipelineWebhookRoutes(app: FastifyInstance): Promi
   }>(
     '/pipelines/:pipelineId/webhooks/:id',
     async (req, reply) => {
-      const updated = await updatePipelineWebhook(Number(req.params.id), req.body)
+      const pipelineId = Number(req.params.pipelineId)
+      const id = Number(req.params.id)
+      const webhook = await getPipelineWebhookById(id)
+      if (!webhook || webhook.pipelineId !== pipelineId) {
+        return reply.status(404).send({ error: 'webhook not found' })
+      }
+      const updated = await updatePipelineWebhook(id, req.body)
       if (!updated) return reply.status(404).send({ error: 'webhook not found' })
       return reply.send(updated)
     },
@@ -77,8 +85,13 @@ export async function registerPipelineWebhookRoutes(app: FastifyInstance): Promi
   app.delete<{ Params: { pipelineId: string; id: string } }>(
     '/pipelines/:pipelineId/webhooks/:id',
     async (req, reply) => {
-      const deleted = await deletePipelineWebhook(Number(req.params.id))
-      if (!deleted) return reply.status(404).send({ error: 'webhook not found' })
+      const pipelineId = Number(req.params.pipelineId)
+      const id = Number(req.params.id)
+      const webhook = await getPipelineWebhookById(id)
+      if (!webhook || webhook.pipelineId !== pipelineId) {
+        return reply.status(404).send({ error: 'webhook not found' })
+      }
+      await deletePipelineWebhook(id)
       return reply.status(204).send()
     },
   )
