@@ -15,8 +15,6 @@ import { getEnvironments } from '../api/environments'
 import { getApprovalRules, createApprovalRule, updateApprovalRule, deleteApprovalRule } from '../api/approval-rules'
 import { getTestServers } from '../api/test-servers'
 import { getDingTalkUsers } from '../api/dingtalk-users'
-import { getCapabilities, getProductLineCapabilities, setProductLineCapabilities } from '../api/capabilities'
-import type { Capability, ProductLineCapability } from '../api/capabilities'
 import {
   listIMTriggers, listProductLineIMTriggers, setProductLineIMTriggers,
 } from '../api/imTriggers'
@@ -775,145 +773,6 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
   )
 }
 
-// ─── Capabilities Tab ─────────────────────────────────────────────────────────
-
-function CapabilitiesTab({ productLineId }: { productLineId: number }) {
-  const [capabilities, setCapabilities] = useState<Capability[]>([])
-  const [plCaps, setPlCaps] = useState<ProductLineCapability[]>([])
-  const [loading, setLoading] = useState(false)
-  const [savingKey, setSavingKey] = useState<string | null>(null)
-
-  useEffect(() => { loadData() }, [productLineId])
-
-  async function loadData() {
-    setLoading(true)
-    try {
-      const [caps, configs] = await Promise.all([
-        getCapabilities(), getProductLineCapabilities(productLineId),
-      ])
-      setCapabilities(caps); setPlCaps(configs)
-    } finally { setLoading(false) }
-  }
-
-  const systemCaps = capabilities.filter(c => !c.key.startsWith('pipeline_'))
-  const pipelineCaps = capabilities.filter(c => c.key.startsWith('pipeline_'))
-
-  const DEFAULT_ROLES = ['developer', 'tester', 'ops', 'admin']
-
-  // 取该 cap 在本产线的"产线级"状态:优先 env_name='*';无 '*' 时汇总残留 per-env(任一 enabled / 任一 IM 即视为开)
-  function getCapState(capKey: string): { enabled: boolean; allowIm: boolean } {
-    const configs = plCaps.filter(c => c.capabilityKey === capKey)
-    if (configs.length === 0) return { enabled: false, allowIm: false }
-    const star = configs.find(c => c.envName === '*')
-    if (star) return { enabled: star.enabled, allowIm: star.triggerSources.includes('im') }
-    return {
-      enabled: configs.some(c => c.enabled),
-      allowIm: configs.some(c => c.triggerSources.includes('im')),
-    }
-  }
-
-  // 写入该 cap 的产线级配置(单条 env_name='*'),覆盖该 cap 所有原有 per-env 残留;其他 cap 的现有记录原样保留
-  async function updateCap(capKey: string, patch: { enabled?: boolean; allowIm?: boolean }) {
-    setSavingKey(capKey)
-    try {
-      const current = getCapState(capKey)
-      const enabled = patch.enabled !== undefined ? patch.enabled : current.enabled
-      const allowIm = patch.allowIm !== undefined ? patch.allowIm : current.allowIm
-      const triggerSources = allowIm ? ['im', 'web'] : ['web']
-
-      const otherCaps = plCaps
-        .filter(c => c.capabilityKey !== capKey)
-        .map(c => ({
-          capabilityKey: c.capabilityKey,
-          envName: c.envName,
-          enabled: c.enabled,
-          allowedRoles: c.allowedRoles,
-          triggerSources: c.triggerSources,
-        }))
-
-      const thisCap = {
-        capabilityKey: capKey,
-        envName: '*',
-        enabled,
-        allowedRoles: DEFAULT_ROLES,
-        triggerSources,
-      }
-
-      await setProductLineCapabilities(productLineId, [...otherCaps, thisCap])
-      const verb = patch.enabled !== undefined
-        ? (enabled ? '已启用该能力' : '已停用该能力')
-        : (allowIm ? '已开启 IM 触发' : '已关闭 IM 触发')
-      message.success(verb)
-      await loadData()
-    } catch {
-      message.error('保存失败')
-    } finally {
-      setSavingKey(null)
-    }
-  }
-
-  const enabledCol = {
-    title: '启用', key: 'enabled', width: 80,
-    render: (_: unknown, record: Capability) => {
-      const s = getCapState(record.key)
-      return (
-        <Switch
-          size="small"
-          checked={s.enabled}
-          loading={savingKey === record.key}
-          onChange={(v) => updateCap(record.key, { enabled: v })}
-        />
-      )
-    },
-  }
-
-  const imCol = {
-    title: 'IM 触发', key: 'allowIm', width: 90,
-    render: (_: unknown, record: Capability) => {
-      const s = getCapState(record.key)
-      return (
-        <Tooltip title="关闭后该能力在本产线下不能通过钉钉/飞书群聊触发,仍可通过管理后台执行">
-          <Switch
-            size="small"
-            checked={s.allowIm}
-            loading={savingKey === record.key}
-            onChange={(v) => updateCap(record.key, { allowIm: v })}
-          />
-        </Tooltip>
-      )
-    },
-  }
-
-  const systemColumns = [
-    { title: '能力名称', dataIndex: 'displayName' },
-    { title: '标识', dataIndex: 'key' },
-    { title: '描述', dataIndex: 'description', ellipsis: true },
-    enabledCol,
-    imCol,
-  ]
-
-  const pipelineColumns = [
-    { title: '流水线名称', dataIndex: 'displayName' },
-    { title: '描述', dataIndex: 'description', ellipsis: true },
-    enabledCol,
-    imCol,
-  ]
-
-  return (
-    <>
-      <Title level={5} style={{ marginBottom: 12 }}>系统能力</Title>
-      <Table rowKey="id" columns={systemColumns} dataSource={systemCaps} loading={loading} pagination={false} size="middle" />
-
-      {pipelineCaps.length > 0 && (
-        <>
-          <Title level={5} style={{ marginTop: 24, marginBottom: 12 }}>流水线能力</Title>
-          <Table rowKey="id" columns={pipelineColumns} dataSource={pipelineCaps} loading={loading} pagination={false} size="middle" />
-        </>
-      )}
-    </>
-  )
-}
-
 // ─── IM Triggers Tab ──────────────────────────────────────────────────────────
 // 产线级 IM 触发器配置:enabled/角色/触发源
 // 数据源:product_line_im_triggers (env_name='*' 单条聚合)
@@ -1207,11 +1066,6 @@ export default function ProductLineDetailPage() {
       key: 'im-triggers',
       label: 'IM 触发器',
       children: <IMTriggersTab productLineId={productLineId} />,
-    },
-    {
-      key: 'capabilities',
-      label: '能力库 (LLM agent)',
-      children: <CapabilitiesTab productLineId={productLineId} />,
     },
     {
       key: 'bindings',
