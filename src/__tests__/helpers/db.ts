@@ -214,6 +214,8 @@ const SCHEMA_FILES = [
   'schema-v48.sql',
   // v49: capabilities 业务分类自动预填，纯 UPDATE，安全加入。
   'schema-v49.sql',
+  // v51: diagnose_and_repair capability，纯 INSERT catalog，安全加入测试库。
+  'schema-v51.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

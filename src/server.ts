@@ -68,6 +68,7 @@ import { registerBuiltinApprovalResolvers } from './agent/approval/resolvers.js'
 import { registerCreateMrHandler } from './agent/mr/mr-handler.js'
 import { registerNotifyHandler } from './agent/notify/notify-handler.js'
 import { registerRequestHandoverHandler } from './agent/handover/request-handover-handler.js'
+import './agent/repair/diagnose-repair-handler.js'
 import {
   registerPrdSubmitHandler,
   registerPrdCreateMrHandler,
