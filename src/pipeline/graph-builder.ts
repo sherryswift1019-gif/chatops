@@ -214,6 +214,33 @@ function shouldStopAfter(stage: StageDefinition, result: StageResult): boolean {
   return result.status === 'failed' && stage.onFailure === 'stop'
 }
 
+async function runScriptInDocker(
+  stage: StageDefinition,
+  ctxBase: StageContextBase,
+  stageIndex: number,
+  executor: DockerExecutor,
+): Promise<StageExecutionResult> {
+  const script = stage.script ?? ''
+  if (!script.trim()) return { status: 'success', output: 'No script to execute' }
+
+  const varCtx: VariableContext = {
+    productLine: ctxBase.productLine ?? { name: '', displayName: '' },
+    pipeline: ctxBase.pipeline ?? { id: ctxBase.runId, name: '' },
+    run: ctxBase.run ?? { id: ctxBase.runId, triggeredBy: '', triggerType: '' },
+    stage: { name: stage.name, index: stageIndex },
+    server: { host: '', port: 0, username: '', name: '', role: '' },
+    vars: (ctxBase.variables ?? {}) as Record<string, string>,
+  }
+  const resolvedScript = resolveVariables(script, varCtx)
+
+  const result = await executor.exec(resolvedScript)
+  const output = [result.stdout, result.stderr].filter(Boolean).join('\n')
+  if (result.exitCode !== 0) {
+    return { status: 'failed', output, error: `exit code ${result.exitCode}` }
+  }
+  return { status: 'success', output }
+}
+
 // Build the script node. Captures stage/index/hooks/ctx in a closure so the
 // returned async function matches the StateGraph NodeAction signature.
 //
@@ -230,25 +257,44 @@ function buildScriptNode(
 ) {
   return async () => {
     const targetServers = resolveTargetServers(stage, ctxBase.servers)
-    if (targetServers.length === 0) {
-      return {
-        currentStageIndex: index,
-        stageResults: skippedResult(stage, 'No servers for target roles'),
-      }
-    }
     const startedAt = nowIso()
     const startedMs = Date.now()
-    const ctx: StageContext = { ...ctxBase, stageIndex: index }
     let exec: StageExecutionResult
-    try {
-      exec = await hooks.runScript(stage, ctx, targetServers)
-    } catch (err) {
-      exec = {
-        status: 'failed',
-        output: `script hook error: ${String(err)}`,
-        error: String(err),
+
+    if (targetServers.length > 0) {
+      // SSH path — existing behaviour unchanged
+      const ctx: StageContext = { ...ctxBase, stageIndex: index }
+      try {
+        exec = await hooks.runScript(stage, ctx, targetServers)
+      } catch (err) {
+        exec = { status: 'failed', output: `script hook error: ${String(err)}`, error: String(err) }
+      }
+    } else {
+      // Docker path
+      const nodeImage = stage.containerImage?.trim()
+      if (nodeImage) {
+        // Per-node override: spin up a dedicated container just for this node
+        const { DockerExecutor } = await import('./executors/docker.js')
+        const containerName = `chatops-node-${ctxBase.runId}-${index}`
+        const nodeExecutor = new DockerExecutor(nodeImage)
+        await nodeExecutor.setup(containerName)
+        try {
+          exec = await runScriptInDocker(stage, ctxBase, index, nodeExecutor)
+        } finally {
+          await nodeExecutor.teardown()
+        }
+      } else if (ctxBase.dockerExecutor) {
+        // Pipeline-level shared executor
+        exec = await runScriptInDocker(stage, ctxBase, index, ctxBase.dockerExecutor)
+      } else {
+        exec = {
+          status: 'failed',
+          output: 'No executor configured: set a role or container image',
+          error: 'no_executor',
+        }
       }
     }
+
     return {
       currentStageIndex: index,
       stageResults: finishedResult(stage, startedAt, startedMs, exec),
