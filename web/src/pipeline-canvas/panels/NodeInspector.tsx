@@ -28,6 +28,7 @@ interface Props {
   pipelineId?: number
   ancestors?: Set<string>
   onRunUpstream?: (nodeId: string) => void
+  pipelineContainerImage?: string | null
 }
 
 const DEFAULT_SCHEMA: Record<string, unknown> = { type: 'object', properties: {}, required: [] }
@@ -231,7 +232,7 @@ function DynamicParamsForm({
       )}
     </>
   )
-}export function NodeInspector({ node, onClose, onChange, onDelete, availableRoles, dingtalkUsers, capabilities, pipelineId, ancestors, onRunUpstream }: Props) {
+}export function NodeInspector({ node, onClose, onChange, onDelete, availableRoles, dingtalkUsers, capabilities, pipelineId, ancestors, onRunUpstream, pipelineContainerImage }: Props) {
   const [form] = Form.useForm()
   // paramSchema 作为 JSON 字符串在 Inspector 本地维护，避免 antd Form 在每次按键
   // 时重新受控导致编辑中断；onBlur 时解析并提交。
@@ -405,16 +406,37 @@ function DynamicParamsForm({
                 <Form.Item shouldUpdate={(p, c) => p.stageType !== c.stageType || p.capabilityKey !== c.capabilityKey} noStyle>
                   {({ getFieldValue }) => {
                     const t = getFieldValue('stageType')
-                    if (t === 'script') return (
-                      <>
-                        <Form.Item name="targetRoles" label="目标角色">
-                          <Select mode="multiple" options={availableRoles.map(r => ({ value: r, label: r }))} />
-                        </Form.Item>
-                        <Form.Item name="script" label="脚本">
-                          <Input.TextArea rows={8} style={{ fontFamily: 'monospace', fontSize: 12 }} />
-                        </Form.Item>
-                      </>
-                    )
+                    if (t === 'script') {
+                      const roles: string[] = getFieldValue('targetRoles') ?? []
+                      const hasRoles = roles.length > 0
+                      return (
+                        <>
+                          <Form.Item name="targetRoles" label="目标角色">
+                            <Select mode="multiple" options={availableRoles.map(r => ({ value: r, label: r }))} />
+                          </Form.Item>
+                          <Form.Item
+                            name="containerImage"
+                            label="容器镜像（覆盖 pipeline 默认）"
+                            extra={
+                              hasRoles
+                                ? '已配置 role，此节点走 SSH 执行，镜像设置无效'
+                                : pipelineContainerImage
+                                  ? `继承自 pipeline：${pipelineContainerImage}`
+                                  : '无 pipeline 默认镜像，需填写或配置 role'
+                            }
+                          >
+                            <Input
+                              placeholder="留空则继承 pipeline 默认"
+                              disabled={hasRoles}
+                              allowClear
+                            />
+                          </Form.Item>
+                          <Form.Item name="script" label="脚本">
+                            <Input.TextArea rows={8} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+                          </Form.Item>
+                        </>
+                      )
+                    }
                     if (t === 'approval') return (
                       <>
                         <Form.Item name="approverIds" label="审批人">
