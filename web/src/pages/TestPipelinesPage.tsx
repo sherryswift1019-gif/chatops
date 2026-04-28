@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Modal, Form, Input, Switch, Popconfirm, Space, Tag, message } from 'antd'
-import { DeleteOutlined, EditOutlined, PartitionOutlined, PlayCircleOutlined } from '@ant-design/icons'
-import { getTestPipelines, createTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
+import { DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, PartitionOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { getTestPipelines, getTestPipeline, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
 import { triggerTestRun } from '../api/test-runs'
 import type { TestPipeline } from '../types'
 
@@ -11,6 +12,8 @@ export default function TestPipelinesPage() {
   const [data, setData] = useState<TestPipeline[]>([])
   const [loading, setLoading] = useState(false)
   const [triggeringId, setTriggeringId] = useState<number | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [canvasModalOpen, setCanvasModalOpen] = useState(false)
   const [canvasForm] = Form.useForm()
 
@@ -35,6 +38,31 @@ export default function TestPipelinesPage() {
     } finally {
       setTriggeringId(null)
     }
+  }
+
+  function handleExport(r: TestPipeline) {
+    const exportFields = {
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      enabled: r.enabled,
+      stages: r.stages,
+      variables: r.variables,
+      triggerParams: r.triggerParams,
+      containerImage: r.containerImage,
+      artifactInputs: r.artifactInputs,
+      serverRoles: r.serverRoles,
+      _exportedAt: new Date().toISOString(),
+    }
+    const json = JSON.stringify(exportFields, null, 2)
+    const blob = new Blob([json], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const safeName = r.name.replace(/[^a-zA-Z0-9一-龥_]/g, '-')
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pipeline-${r.id}-${safeName}.json`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   function openCanvasCreate() {
@@ -77,6 +105,9 @@ export default function TestPipelinesPage() {
               <PlayCircleOutlined /> 运行
             </a>
           </Popconfirm>
+          <a onClick={() => handleExport(r)}>
+            <ExportOutlined /> 导出
+          </a>
           <a onClick={() => nav(`/test-pipelines/${r.id}/canvas`)}>
             <EditOutlined /> 编辑
           </a>
