@@ -17,6 +17,7 @@ interface Props {
   onAddNode: (type: StageType) => void
   onRunAll: () => void
   onWebhooks?: () => void
+  onSettings?: () => void
 }
 
 const addMenuItems: MenuProps['items'] = [
@@ -54,6 +55,9 @@ export function CanvasToolbar(p: Props) {
           <Button icon={<PlayCircleOutlined />} onClick={p.onRunAll}>试运行整图</Button>
         </Tooltip>
         <Button type="primary" icon={<SaveOutlined />} onClick={p.onSave} disabled={!p.dirty}>保存</Button>
+        {p.onSettings && (
+          <Button onClick={p.onSettings}>Pipeline 设置</Button>
+        )}
         {p.onWebhooks && (
           <Button onClick={p.onWebhooks}>Webhook 触发器</Button>
         )}

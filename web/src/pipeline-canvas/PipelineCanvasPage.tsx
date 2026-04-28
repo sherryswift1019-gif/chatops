@@ -1,9 +1,10 @@
-import { useEffect, useState, useMemo, useCallback } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ReactFlowProvider } from '@xyflow/react'
 import { Spin, message, Modal, Drawer } from 'antd'
 import { ulid } from 'ulidx'
 import { getTestPipeline } from '../api/test-pipelines'
+import { triggerTestRun } from '../api/test-runs'
 import { getPipelineVariables } from '../api/pipeline-variables'
 import { getDingTalkUsers } from '../api/dingtalk-users'
 import { getTestServers } from '../api/test-servers'
@@ -21,6 +22,7 @@ import { DryRunStartModal } from './dryrun/DryRunStartModal'
 import { SideEffectDecisionModal } from './dryrun/SideEffectDecisionModal'
 import { WaitingExternalBanner } from './dryrun/WaitingExternalBanner'
 import WebhooksPanel from './panels/WebhooksPanel'
+import PipelineSettingsPanel from './panels/PipelineSettingsPanel'
 import type { TestPipeline } from '../types'
 import type { StageType, StageFields } from './types'
 
@@ -134,7 +136,9 @@ function firstGraphIssue(nodes: ReadonlyArray<{ id: string; data: StageFields }>
 export default function PipelineCanvasPage() {
   const { id } = useParams<{ id: string }>()
   const nav = useNavigate()
+  const [searchParams] = useSearchParams()
   const pipelineId = Number(id)
+  const autoRunRef = useRef(searchParams.get('run') === '1')
 
   const [pipeline, setPipeline] = useState<TestPipeline | null>(null)
   const [variableCatalog, setVariableCatalog] = useState<{ key: string; description: string; category: string }[]>([])
@@ -150,6 +154,7 @@ export default function PipelineCanvasPage() {
   const [startModalOpen, setStartModalOpen] = useState(false)
   const [targetNodeId, setTargetNodeId] = useState<string>('*')
   const [webhooksOpen, setWebhooksOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
 
   const graph = usePipelineGraph({ nodes: [], edges: [] })
   const autoLayout = useAutoLayout()
@@ -191,6 +196,17 @@ export default function PipelineCanvasPage() {
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pipelineId])
+
+  // Auto-trigger when navigated with ?run=1
+  useEffect(() => {
+    if (!loading && pipeline && autoRunRef.current) {
+      autoRunRef.current = false
+      triggerTestRun({ pipelineId, servers: {}, triggerType: 'manual' })
+        .then(({ runId }) => message.success(`已触发，执行记录 #${runId}`))
+        .catch((e: any) => message.error(e?.response?.data?.error ?? '触发失败'))
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, pipeline])
 
   const selectedNode = useMemo(
     () => graph.nodes.find(n => n.id === selectedId) ?? null,
@@ -239,13 +255,17 @@ export default function PipelineCanvasPage() {
     }
   }
 
-  function handleTrigger() {
+  async function handleTrigger() {
     if (graph.dirty) {
       message.warning('请先保存再触发')
       return
     }
-    nav('/test-pipelines')
-    message.info('回到列表页触发执行')
+    try {
+      const { runId } = await triggerTestRun({ pipelineId, servers: {}, triggerType: 'manual' })
+      message.success(`已触发，执行记录 #${runId}`)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error ?? '触发失败')
+    }
   }
 
   function handleNodeRunHere(nodeId: string) {
@@ -328,6 +348,7 @@ export default function PipelineCanvasPage() {
           onAddNode={handleAddNode}
           onRunAll={() => handleNodeRunHere('*')}
           onWebhooks={() => setWebhooksOpen(true)}
+          onSettings={() => setSettingsOpen(true)}
         />
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <div style={{ flex: 1 }}>
@@ -395,6 +416,23 @@ export default function PipelineCanvasPage() {
           destroyOnClose
         >
           {pipelineId && <WebhooksPanel pipelineId={pipelineId} />}
+        </Drawer>
+        <Drawer
+          title="Pipeline 设置"
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          width={480}
+          destroyOnClose
+        >
+          {pipeline && (
+            <PipelineSettingsPanel
+              pipeline={pipeline}
+              onSaved={(updated) => {
+                setPipeline(updated)
+                setSettingsOpen(false)
+              }}
+            />
+          )}
         </Drawer>
       </div>
     </ReactFlowProvider>
