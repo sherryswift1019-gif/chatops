@@ -25,6 +25,7 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
   // 所有独占字段先显式置 undefined，让浅合并能覆盖旧值；再按新 stageType 注入默认值
   const cleared: Partial<StageFields> = {
     script: undefined,
+    containerImage: undefined,
     approverIds: undefined,
     approvalDescription: undefined,
     capabilityKey: undefined,
@@ -35,7 +36,7 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
   }
   switch (newType) {
     case 'script':
-      return { ...base, ...cleared, script: '' }
+      return { ...base, ...cleared, script: '', containerImage: prev.stageType === 'script' ? prev.containerImage : undefined }
     case 'approval':
       return { ...base, ...cleared, approverIds: [], approvalDescription: '' }
     case 'llm_agent':

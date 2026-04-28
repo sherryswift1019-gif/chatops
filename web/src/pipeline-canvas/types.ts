@@ -44,6 +44,7 @@ export interface StageFields extends Record<string, unknown> {
   retryDelayMs?: number
   // bespoke 节点独占字段
   script?: string
+  containerImage?: string
   approverIds?: string[]
   approvalDescription?: string
   capabilityKey?: string

@@ -69,6 +69,7 @@ export interface TestPipeline {
   stages: StageDefinition[]; serverRoles?: Record<string, { count: number }>
   variables?: Record<string, string>
   artifactInputs?: ArtifactInput[]
+  containerImage?: string | null
   schedule?: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
 }
 
