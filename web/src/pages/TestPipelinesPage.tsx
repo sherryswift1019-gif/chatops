@@ -3,7 +3,7 @@ import type { ChangeEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Modal, Form, Input, Switch, Popconfirm, Space, Tag, message } from 'antd'
 import { DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, PartitionOutlined, PlayCircleOutlined } from '@ant-design/icons'
-import { getTestPipelines, getTestPipeline, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
+import { getTestPipelines, createTestPipeline, updateTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
 import { triggerTestRun } from '../api/test-runs'
 import type { TestPipeline } from '../types'
 
@@ -72,38 +72,37 @@ export default function TestPipelinesPage() {
     setImportBusy(true)
     try {
       const text = await file.text()
-      let data: any
+      let parsed: any
       try {
-        data = JSON.parse(text)
+        parsed = JSON.parse(text)
       } catch (err) {
         message.error(`导入失败：JSON 解析错误 - ${(err as Error).message}`)
         return
       }
-      if (!data.name) {
+      if (!parsed.name) {
         message.error('导入失败：JSON 中缺少 name 字段')
         return
       }
       const payload: Partial<TestPipeline> = {
-        name: data.name,
-        description: data.description,
-        enabled: data.enabled,
-        graph: data.graph,
-        stages: data.stages,
-        variables: data.variables,
-        triggerParams: data.triggerParams,
-        containerImage: data.containerImage,
-        artifactInputs: data.artifactInputs,
-        serverRoles: data.serverRoles,
+        name: parsed.name,
+        description: parsed.description,
+        enabled: parsed.enabled,
+        graph: parsed.graph,
+        stages: parsed.stages,
+        variables: parsed.variables,
+        triggerParams: parsed.triggerParams,
+        containerImage: parsed.containerImage,
+        artifactInputs: parsed.artifactInputs,
+        serverRoles: parsed.serverRoles,
       }
-      if (data.id) {
+      if (parsed.id) {
         try {
-          await getTestPipeline(data.id)
-          await updateTestPipeline(data.id, payload)
-          message.success(`导入成功，已更新「${data.name}」`)
+          await updateTestPipeline(parsed.id, payload)
+          message.success(`导入成功，已更新「${parsed.name}」`)
         } catch (err: any) {
           if (err?.response?.status === 404) {
             await createTestPipeline(payload)
-            message.success(`导入成功，已创建「${data.name}」`)
+            message.success(`导入成功，已创建「${parsed.name}」`)
           } else {
             message.error(`导入失败：${err?.response?.data?.error ?? err.message}`)
             return
@@ -112,7 +111,7 @@ export default function TestPipelinesPage() {
       } else {
         try {
           await createTestPipeline(payload)
-          message.success(`导入成功，已创建「${data.name}」`)
+          message.success(`导入成功，已创建「${parsed.name}」`)
         } catch (err: any) {
           message.error(`导入失败：${err?.response?.data?.error ?? err.message}`)
           return
