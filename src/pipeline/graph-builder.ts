@@ -68,6 +68,12 @@ export interface StageHooks {
     triggerParams?: Record<string, unknown>,
     runtimeVars?: Record<string, unknown>,
   ): Promise<StageExecutionResult>
+  runCustomAgent?(
+    stage: StageDefinition,
+    ctx: StageContext,
+    triggerParams?: Record<string, unknown>,
+    runtimeVars?: Record<string, unknown>,
+  ): Promise<StageExecutionResult>
   /** DryRunFlavor — injected only during dry runs. When absent, zero overhead. */
   dryRunFlavor?: DryRunFlavor
 }
@@ -316,10 +322,19 @@ function buildCapabilityNode(
     const runtimeVars = { ...(ctxBase.variables ?? {}), ...(state.runtimeVars ?? {}) }
     let exec: StageExecutionResult
     try {
-      if (!hooks.runCapability) {
-        exec = { status: 'failed', output: 'capability hook not configured', error: 'no_hook' }
+      const agentMode = stage.agentMode ?? 'capability'
+      if (agentMode === 'custom') {
+        if (!hooks.runCustomAgent) {
+          exec = { status: 'failed', output: 'custom agent hook not configured', error: 'no_hook' }
+        } else {
+          exec = await hooks.runCustomAgent(stage, ctx, triggerParams, runtimeVars)
+        }
       } else {
-        exec = await hooks.runCapability(stage, ctx, triggerParams, runtimeVars)
+        if (!hooks.runCapability) {
+          exec = { status: 'failed', output: 'capability hook not configured', error: 'no_hook' }
+        } else {
+          exec = await hooks.runCapability(stage, ctx, triggerParams, runtimeVars)
+        }
       }
     } catch (err) {
       exec = {

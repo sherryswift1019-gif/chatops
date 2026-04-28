@@ -13,6 +13,9 @@ export function computeUpstreamHash(graph: PipelineGraph, targetNodeId: string):
       stageType: n.stageType,
       params: (n as { params?: unknown }).params,
       capabilityKey: (n as { capabilityKey?: string }).capabilityKey,
+      agentMode: (n as { agentMode?: string }).agentMode,
+      customPrompt: (n as { customPrompt?: string }).customPrompt,
+      allowedTools: (n as { allowedTools?: string[] }).allowedTools,
       outputFormat: (n as { outputFormat?: string }).outputFormat,
       script: (n as { script?: string }).script,
     }

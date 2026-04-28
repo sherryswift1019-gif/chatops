@@ -9,6 +9,9 @@
 
 import { mkdir, writeFile } from 'fs/promises'
 import { dirname, join } from 'path'
+import { fileURLToPath } from 'url'
+import { createPorygon } from '@snack-kit/porygon'
+import { buildClaudeEnv } from '../agent/claude-config.js'
 import { sshExec } from './ssh.js'
 import { resolveVariables, type VariableContext } from './variables.js'
 import { triggerCapability } from '../agent/coordinator.js'
@@ -19,6 +22,8 @@ import type {
   StageExecutionResult,
   ServerInfo,
 } from './types.js'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 /**
  * Resolve capability param templates to real values.
@@ -195,6 +200,61 @@ export function buildDefaultHooks(logDir: string): StageHooks {
           output: `capability 执行失败: ${String(err)}`,
           error: String(err),
         }
+      }
+    },
+
+    async runCustomAgent(
+      stage: StageDefinition,
+      ctx: StageContext,
+      triggerParams: Record<string, unknown> = {},
+      runtimeVars: Record<string, unknown> = {},
+    ): Promise<StageExecutionResult> {
+      const rawPrompt = stage.customPrompt ?? ''
+      if (!rawPrompt.trim()) {
+        return { status: 'failed', output: '', error: 'customPrompt is empty' }
+      }
+
+      // 用 resolveVariables 展开嵌入式模板（如 {{triggerParams.branch}}）
+      const varCtx: VariableContext = {
+        productLine: ctx.productLine ?? { name: '', displayName: '' },
+        pipeline: ctx.pipeline ?? { id: 0, name: '' },
+        run: ctx.run ?? { id: ctx.runId, triggeredBy: '', triggerType: '' },
+        stage: { name: stage.name, index: ctx.stageIndex },
+        server: { host: '', port: 0, username: '', name: '', role: '' },
+        vars: { ...(ctx.variables ?? {}), ...runtimeVars as Record<string, string> },
+        triggerParams,
+      }
+      const prompt = resolveVariables(rawPrompt, varCtx)
+
+      const allowedTools = Array.isArray(stage.allowedTools) && stage.allowedTools.length > 0
+        ? stage.allowedTools
+        : undefined
+
+      const timeoutMs = (stage.timeoutSeconds ?? 120) * 1000
+
+      const porygon = createPorygon({
+        defaultBackend: 'claude',
+        backends: {
+          claude: {
+            model: 'sonnet',
+            interactive: false,
+            cliPath: join(__dirname, '..', '..', 'node_modules', '.bin', 'claude'),
+          },
+        },
+        defaults: { timeoutMs, maxTurns: 10 },
+      })
+
+      try {
+        const result = await porygon.run({
+          prompt,
+          ...(allowedTools
+            ? { onlyTools: allowedTools }
+            : { disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'] }),
+          envVars: await buildClaudeEnv(),
+        })
+        return { status: 'success', output: result.trim() }
+      } catch (err) {
+        return { status: 'failed', output: '', error: String(err) }
       }
     },
   }
