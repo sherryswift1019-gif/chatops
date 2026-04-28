@@ -463,6 +463,12 @@ async function finalize(
   ctx: RunContext,
   opts: { fatalError?: string } = {},
 ): Promise<void> {
+  // Tear down Docker container if used. Must run before any async DB ops so
+  // cleanup happens even if downstream throws. Ignore teardown failures.
+  await ctx.stageContext.dockerExecutor?.teardown().catch((err: unknown) =>
+    console.warn('[graph-runner] docker teardown failed:', err),
+  )
+
   const meta = runRegistry.get(ctx.runId)
 
   let stageResults: StageResult[] = []
