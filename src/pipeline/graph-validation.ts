@@ -3,6 +3,8 @@ import { parseExpression } from './expressions.js'
 
 export interface ValidationResult {
   ok: boolean
+  /** Alias for ok; used by canvas / tests */
+  valid: boolean
   errors: string[]
 }
 
@@ -193,7 +195,7 @@ export function validatePipelineGraph(graph: PipelineGraph): ValidationResult {
     }
   }
 
-  return { ok: errors.length === 0, errors }
+  return { ok: errors.length === 0, valid: errors.length === 0, errors }
 }
 
 /**
@@ -226,11 +228,21 @@ export function computeAncestors(graph: PipelineGraph, nodeId: string): Set<stri
 function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
   const prefix = `node ${n.id} (stageType=${n.stageType})`
   switch (n.stageType) {
-    case 'llm_agent':
-      if (!n.capabilityKey || !n.capabilityKey.trim()) {
-        return `${prefix}: capabilityKey is required`
+    case 'llm_agent': {
+      const mode = n.agentMode ?? 'capability'
+      if (mode === 'capability') {
+        if (!n.capabilityKey || !n.capabilityKey.trim()) {
+          return `${prefix}: capabilityKey is required for agentMode='capability'`
+        }
+      } else if (mode === 'custom') {
+        if (!n.customPrompt?.trim()) {
+          return `${prefix}: customPrompt is required for agentMode='custom'`
+        }
+      } else {
+        return `${prefix}: agentMode must be 'capability' or 'custom'`
       }
       return null
+    }
     case 'wait_webhook':
       if (!n.webhookTag || !n.webhookTag.trim()) {
         return `${prefix}: webhookTag is required`

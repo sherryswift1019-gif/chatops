@@ -60,6 +60,10 @@ export interface StageDefinition {
   capabilityParams?: Record<string, unknown>
   /** 仅对 llm_agent 节点有意义。运行时默认 'json'（stage 级默认）；旧 graph 经 v44 migration 显式补 'string' 保现状 */
   outputFormat?: 'string' | 'json'
+  // llm_agent custom 模式
+  agentMode?: 'capability' | 'custom'
+  customPrompt?: string
+  allowedTools?: string[]
   // wait_webhook stage（等待外部 Webhook 恢复）
   webhookTag?: string
   // im_input stage（IM 对话式参数采集）
