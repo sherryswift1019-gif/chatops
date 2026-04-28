@@ -332,7 +332,7 @@ describe('buildGraphFromStages — checkpoint resume does not replay completed s
 })
 
 describe('buildGraphFromStages — script with no target servers', () => {
-  it('targetRoles empty + serverMap empty → status=skipped', async () => {
+  it('targetRoles empty + serverMap empty + no dockerExecutor → status=failed', async () => {
     const stages: StageDefinition[] = [
       makeStage({ name: 'orphan', stageType: 'script' }),
     ]
@@ -351,7 +351,7 @@ describe('buildGraphFromStages — script with no target servers', () => {
     const config = { configurable: { thread_id: randomUUID() } }
     await drain(await graph.stream({ runId: 42 }, config))
     const snap = await graph.getState(config)
-    expect(snap.values.stageResults[0].status).toBe('skipped')
+    expect(snap.values.stageResults[0].status).toBe('failed')
     expect(called).toBe(false)
   })
 })
