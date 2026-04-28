@@ -106,8 +106,6 @@ export default function CapabilitiesPage() {
     { title: '描述', dataIndex: 'description', ellipsis: true },
     { title: '业务分类', dataIndex: 'category',
       render: (v: string | null) => <CategoryTag category={v} /> },
-    { title: '类型', dataIndex: 'isSystem',
-      render: (v: boolean) => <Tag color={v ? 'default' : 'blue'}>{v ? '系统' : '自定义'}</Tag> },
     {
       title: '关联工具', dataIndex: 'toolNames',
       render: (names: string[]) => (

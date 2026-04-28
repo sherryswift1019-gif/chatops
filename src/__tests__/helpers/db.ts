@@ -212,6 +212,8 @@ const SCHEMA_FILES = [
   'schema-v47.sql',
   // v48: capabilities 新增业务分类字段，纯 ALTER，无 seed 数据，安全加入。
   'schema-v48.sql',
+  // v49: capabilities 业务分类自动预填，纯 UPDATE，安全加入。
+  'schema-v49.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
