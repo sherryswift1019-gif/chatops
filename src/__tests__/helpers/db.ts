@@ -208,6 +208,8 @@ const SCHEMA_FILES = [
   'schema-v45.sql',
   // v46: 纯 DDL（capability_invocations 新表），无 seed 数据，安全加入。
   'schema-v46.sql',
+  // v47: pipeline_webhooks 表，纯 DDL，无 seed 数据，安全加入。
+  'schema-v47.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
