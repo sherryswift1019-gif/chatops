@@ -266,6 +266,5 @@ export interface PipelineWebhook {
   lastUsedAt: string | null
   lastRunId: number | null
   triggerCount: number
-  /** create/rotate 响应额外携带，列表无此字段 */
-  url?: string
+  // url? 已移除：url 只在 create/rotate 时由 API 函数返回类型单独声明
 }
