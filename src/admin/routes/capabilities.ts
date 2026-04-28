@@ -12,14 +12,15 @@ export async function registerCapabilityRoutes(app: FastifyInstance): Promise<vo
     return reply.send(await listCapabilities())
   })
 
-  app.post<{ Body: { key: string; displayName: string; description?: string; toolNames?: string[] } }>(
+  app.post<{ Body: { key: string; displayName: string; description?: string; toolNames?: string[]; category?: string } }>(
     '/capabilities', async (req, reply) => {
-      const { key, displayName, description, toolNames } = req.body
+      const { key, displayName, description, toolNames, category } = req.body
       if (!key || !displayName) return reply.status(400).send({ error: 'key and displayName required' })
       const item = await createCapability({
         key, displayName,
         description: description ?? '',
         toolNames: toolNames ?? [],
+        category: category ?? null,
       })
       return reply.status(201).send(item)
     }
