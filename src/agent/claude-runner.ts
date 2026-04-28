@@ -375,6 +375,9 @@ export class ClaudeRunner {
         return
       }
 
+      // capability 在此处必定非空：!capability 的两条出口（step 4 错误返回、step 4d pipeline 返回）均已 return。
+      if (!capability) throw new Error(`[Runner] unreachable: capability null for ${intent.capability}`)
+
       // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent 走 handler。
       // 这里集合的是"agent key"——用来决定该 agent 走 handler-path（直接代码 handler）
       // 而不是 IM 通用对话路径。phase 3 T17 重命名为 HANDLER_AGENT_KEYS,

@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ─── hoisted mock refs ────────────────────────────────────────────────────────
-const mockPorygonRun = vi.hoisted(() => vi.fn<[], Promise<string>>())
+const mockPorygonRun = vi.hoisted(() => vi.fn<() => Promise<string>>())
 const mockListIMTriggers = vi.hoisted(() => vi.fn())
 
 // ─── mocks ────────────────────────────────────────────────────────────────────
