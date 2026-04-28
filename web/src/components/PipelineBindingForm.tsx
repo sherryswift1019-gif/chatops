@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Form, Input, Select, Button, Modal, message, Space, Tag } from 'antd'
+import { Form, Input, Select, Button, Modal, message, Space, Tag, AutoComplete } from 'antd'
 import { getTestPipelines } from '../api/test-pipelines'
 import { getTestServers } from '../api/test-servers'
 import { upsertPipelineBinding, type PipelineBinding } from '../api/pipeline-bindings'
@@ -72,16 +72,16 @@ export const PipelineBindingForm: React.FC<Props> = ({ productLineId, initialVal
   return (
     <Modal title={initialValue ? '编辑绑定' : '新增绑定'} open={open} onCancel={onCancel} footer={null} width={600}>
       <Form form={form} layout="vertical" onFinish={handleSubmit}>
-        <Form.Item name="refKey" label="ref_key（引用标识）" rules={[{ required: true }]}>
-          <Select
+        <Form.Item name="refKey" label="ref_key（引用标识）" rules={[{ required: true, pattern: /^[a-z0-9_]+$/, message: '只允许小写字母、数字、下划线' }]}>
+          <AutoComplete
             disabled={!!initialValue}
-            showSearch
-            placeholder="选择约定 key 或自定义"
-          >
-            {RESERVED_REF_KEYS.map(k => (
-              <Select.Option key={k} value={k}><Tag color="blue">约定</Tag> {k}</Select.Option>
-            ))}
-          </Select>
+            placeholder="输入任意标识，或从约定 key 中选择"
+            options={RESERVED_REF_KEYS.map(k => ({
+              value: k,
+              label: <><Tag color="blue">约定</Tag> {k}</>,
+            }))}
+            filterOption={(input, option) => String(option?.value ?? '').includes(input)}
+          />
         </Form.Item>
 
         <Form.Item name="pipelineId" label="引用 Pipeline" rules={[{ required: true }]}>
