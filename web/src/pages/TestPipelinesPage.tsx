@@ -1,14 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Card, Table, Button, Modal, Form, Input, Switch, Popconfirm, Space, Tag, message } from 'antd'
-import { DeleteOutlined, PartitionOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EditOutlined, PartitionOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { getTestPipelines, createTestPipeline, deleteTestPipeline } from '../api/test-pipelines'
+import { triggerTestRun } from '../api/test-runs'
 import type { TestPipeline } from '../types'
 
 export default function TestPipelinesPage() {
   const nav = useNavigate()
   const [data, setData] = useState<TestPipeline[]>([])
   const [loading, setLoading] = useState(false)
+  const [triggeringId, setTriggeringId] = useState<number | null>(null)
   const [canvasModalOpen, setCanvasModalOpen] = useState(false)
   const [canvasForm] = Form.useForm()
 
@@ -21,6 +23,18 @@ export default function TestPipelinesPage() {
 
   async function handleDelete(id: number) {
     await deleteTestPipeline(id); message.success('删除成功'); await load()
+  }
+
+  async function handleTriggerRun(id: number) {
+    setTriggeringId(id)
+    try {
+      const { runId } = await triggerTestRun({ pipelineId: id, servers: {}, triggerType: 'manual' })
+      message.success(`已触发，执行记录 #${runId}`)
+    } catch (e: any) {
+      message.error(e?.response?.data?.error ?? '触发失败')
+    } finally {
+      setTriggeringId(null)
+    }
   }
 
   function openCanvasCreate() {
@@ -58,7 +72,14 @@ export default function TestPipelinesPage() {
       title: '操作',
       render: (_: unknown, r: TestPipeline) => (
         <Space>
-          <a onClick={() => nav(`/test-pipelines/${r.id}/canvas`)}>画布编辑</a>
+          <Popconfirm title="确认运行？" onConfirm={() => handleTriggerRun(r.id)}>
+            <a style={{ opacity: triggeringId === r.id ? 0.5 : 1 }}>
+              <PlayCircleOutlined /> 运行
+            </a>
+          </Popconfirm>
+          <a onClick={() => nav(`/test-pipelines/${r.id}/canvas`)}>
+            <EditOutlined /> 编辑
+          </a>
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(r.id)}>
             <a style={{ color: 'red' }}>
               <DeleteOutlined /> 删除

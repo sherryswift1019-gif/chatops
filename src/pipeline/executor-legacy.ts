@@ -245,7 +245,7 @@ export async function runPipeline(
 
   // Resolve server info from DB (skip for serverless pipelines)
   const hasServers = Object.keys(serverAssignment).length > 0
-  const allServers = hasServers ? await listTestServers(pipeline.productLineId) : []
+  const allServers = hasServers ? await listTestServers() : []
   const serverMap: Record<string, ServerInfo[]> = {}
   const serverIds: number[] = []
 

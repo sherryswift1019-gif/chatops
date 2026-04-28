@@ -5,6 +5,7 @@ import { getDingTalkUserById, getDingTalkUsersByIds } from '../../db/repositorie
 import { runPipeline, manualTrigger, apiTrigger } from '../../pipeline/executor.js'
 import { getPendingInterrupt, resumeRun } from '../../pipeline/graph-runner.js'
 import { APPROVAL_INTERRUPT, WEBHOOK_INTERRUPT } from '../../pipeline/graph-builder.js'
+import { listTestServers } from '../../db/repositories/test-servers.js'
 import { readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { createReadStream } from 'fs'
@@ -68,17 +69,29 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     }
     const effectiveType: 'manual' | 'api' = triggerType === 'manual' ? 'manual' : 'api'
     const sessionUser = req.session.get('username')
-    // Manual triggers must be attributed to the logged-in user — never trust body.triggeredBy.
-    // API triggers may override triggeredBy (e.g. CI systems identifying themselves);
-    // fall back to session, then a generic 'api' marker.
     const effectiveUser = effectiveType === 'manual'
       ? (sessionUser ?? 'admin')
       : (triggeredBy ?? sessionUser ?? 'api')
+
+    // Auto-resolve servers by role when none explicitly provided
+    let effectiveServers = servers
+    if (Object.keys(servers).length === 0) {
+      const allServers = await listTestServers()
+      const byRole: Record<string, string[]> = {}
+      for (const s of allServers) {
+        if (s.role) {
+          if (!byRole[s.role]) byRole[s.role] = []
+          byRole[s.role].push(String(s.id))
+        }
+      }
+      if (Object.keys(byRole).length > 0) effectiveServers = byRole
+    }
+
     try {
       const trigger = effectiveType === 'manual'
         ? manualTrigger({ triggeredBy: effectiveUser })
         : apiTrigger({ triggeredBy: effectiveUser })
-      const runId = await runPipeline(pipelineId, servers, trigger, runtimeVars ?? {})
+      const runId = await runPipeline(pipelineId, effectiveServers, trigger, runtimeVars ?? {})
       return reply.status(201).send({ runId, message: 'Pipeline started' })
     } catch (e) {
       return reply.status(400).send({ error: (e as Error).message })

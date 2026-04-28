@@ -621,7 +621,7 @@ async function reloadContext(runId: number): Promise<RunContext | null> {
   const productLine = await getProductLineById(pipeline.productLineId)
 
   const hasServers = Object.keys(run.servers ?? {}).length > 0
-  const allServers = hasServers ? await listTestServers(pipeline.productLineId) : []
+  const allServers = hasServers ? await listTestServers() : []
   const serverMap: Record<string, ServerInfo[]> = {}
   for (const [role, hosts] of Object.entries(run.servers ?? {})) {
     serverMap[role] = (hosts as string[]).map((host) => {

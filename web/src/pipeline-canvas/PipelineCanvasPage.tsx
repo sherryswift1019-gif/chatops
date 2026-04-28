@@ -172,7 +172,7 @@ export default function PipelineCanvasPage() {
         ])
         if (cancelled) return
         const users = usersRes.users.map(u => ({ userId: u.userId, name: u.name }))
-        const servers = await getTestServers(p.productLineId)
+        const servers = await getTestServers()
         if (cancelled) return
         setPipeline(p)
         setVariableCatalog(cat)
