@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ReactFlowProvider } from '@xyflow/react'
-import { Spin, message, Modal } from 'antd'
+import { Spin, message, Modal, Drawer } from 'antd'
 import { ulid } from 'ulidx'
 import { getTestPipeline } from '../api/test-pipelines'
 import { getPipelineVariables } from '../api/pipeline-variables'
@@ -20,6 +20,7 @@ import { useDryRunSSE } from './dryrun/useDryRunSSE'
 import { DryRunStartModal } from './dryrun/DryRunStartModal'
 import { SideEffectDecisionModal } from './dryrun/SideEffectDecisionModal'
 import { WaitingExternalBanner } from './dryrun/WaitingExternalBanner'
+import WebhooksPanel from './panels/WebhooksPanel'
 import type { TestPipeline } from '../types'
 import type { StageType, StageFields } from './types'
 
@@ -148,6 +149,7 @@ export default function PipelineCanvasPage() {
   const dryRunHook = useDryRunSSE()
   const [startModalOpen, setStartModalOpen] = useState(false)
   const [targetNodeId, setTargetNodeId] = useState<string>('*')
+  const [webhooksOpen, setWebhooksOpen] = useState(false)
 
   const graph = usePipelineGraph({ nodes: [], edges: [] })
   const autoLayout = useAutoLayout()
@@ -325,6 +327,7 @@ export default function PipelineCanvasPage() {
           onBackToList={handleBackToList}
           onAddNode={handleAddNode}
           onRunAll={() => handleNodeRunHere('*')}
+          onWebhooks={() => setWebhooksOpen(true)}
         />
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
           <div style={{ flex: 1 }}>
@@ -384,6 +387,15 @@ export default function PipelineCanvasPage() {
             onCancel={() => dryRunHook.reset()}
           />
         )}
+        <Drawer
+          title="Webhook 触发器"
+          open={webhooksOpen}
+          onClose={() => setWebhooksOpen(false)}
+          width={800}
+          destroyOnClose
+        >
+          {pipelineId && <WebhooksPanel pipelineId={pipelineId} />}
+        </Drawer>
       </div>
     </ReactFlowProvider>
   )
