@@ -15,7 +15,11 @@ export async function registerCapabilityRoutes(app: FastifyInstance): Promise<vo
   app.post<{ Body: { key: string; displayName: string; description?: string; toolNames?: string[]; category?: string } }>(
     '/capabilities', async (req, reply) => {
       const { key, displayName, description, toolNames, category } = req.body
+      const VALID_CATEGORIES = ['feature_dev', 'bug_fix', 'ops', 'info_query']
       if (!key || !displayName) return reply.status(400).send({ error: 'key and displayName required' })
+      if (category != null && !VALID_CATEGORIES.includes(category)) {
+        return reply.status(400).send({ error: 'invalid category' })
+      }
       const item = await createCapability({
         key, displayName,
         description: description ?? '',

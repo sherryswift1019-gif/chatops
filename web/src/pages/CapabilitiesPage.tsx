@@ -68,7 +68,7 @@ export default function CapabilitiesPage() {
     const values = await form.validateFields()
     try {
       if (editing) {
-        await updateCapability(editing.id, values)
+        await updateCapability(editing.id, { ...values, category: values.category ?? null })
         if (promptModified) {
           await updateCapabilitySystemPrompt(editing.id, promptValue)
         }

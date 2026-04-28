@@ -69,17 +69,19 @@ export async function updateCapability(
   data: Partial<Pick<Capability, 'displayName' | 'description' | 'toolNames' | 'category'>>
 ): Promise<Capability | null> {
   const pool = getPool()
+  const categoryProvided = 'category' in data
   const { rows } = await pool.query(
     `UPDATE capabilities SET
        display_name = COALESCE($2, display_name),
        description = COALESCE($3, description),
        tool_names = COALESCE($4, tool_names),
-       category = COALESCE($5, category),
+       category = CASE WHEN $6::boolean THEN $5 ELSE category END,
        updated_at = NOW()
      WHERE id = $1 RETURNING *`,
     [id, data.displayName ?? null, data.description ?? null,
      data.toolNames ? JSON.stringify(data.toolNames) : null,
-     data.category ?? null]
+     data.category ?? null,
+     categoryProvided]
   )
   return rows[0] ? mapRow(rows[0]) : null
 }
