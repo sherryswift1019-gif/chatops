@@ -379,6 +379,7 @@ export default function PipelineCanvasPage() {
           pipelineId={pipelineId}
           ancestors={selectedAncestors}
           onRunUpstream={(nodeId) => handleNodeRunHere(nodeId)}
+          pipelineContainerImage={pipeline?.containerImage}
         />
         <EdgeConditionPopover
           open={!!editingEdge}
