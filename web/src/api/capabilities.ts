@@ -6,6 +6,7 @@ export interface Capability {
   displayName: string
   description: string
   toolNames: string[]
+  category: string | null
   systemPrompt: string | null
   defaultSystemPrompt: string | null
   isSystem: boolean
