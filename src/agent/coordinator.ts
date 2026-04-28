@@ -222,8 +222,35 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
         console.error(`[AgentCoordinator] ${msg}`)
         return { success: false, error: msg }
       }
+      const shouldLog = !opts._suppressInvocationLog
+      let invocationId: number | null = null
+      if (shouldLog) {
+        const inv = await createInvocation({
+          capabilityKey: opts.capabilityKey,
+          triggerType: inferTriggerType(opts.context.platform),
+          platform: opts.context.platform,
+          groupId: opts.context.groupId,
+          triggeredBy: opts.context.initiatorId,
+          taskId: opts.context.taskId,
+          params: opts.extraParams ?? {},
+        }).catch((err) => {
+          console.error('[AgentCoordinator] createInvocation failed:', err)
+          return null
+        })
+        invocationId = inv?.id ?? null
+      }
       try {
         const result = await handler({ ...opts, capabilityKey: imTrigger.capabilityKey })
+        if (invocationId !== null) {
+          await finishInvocation(
+            invocationId,
+            result.success ? 'success' : 'failed',
+            result.output ?? '',
+            result.success ? '' : result.error ?? '',
+          ).catch((err) =>
+            console.error('[AgentCoordinator] finishInvocation failed:', err),
+          )
+        }
         console.log(`[AgentCoordinator] completed: ${opts.capabilityKey} (via im_trigger.capabilityKey=${imTrigger.capabilityKey})`, {
           success: result.success,
           ...(result.success ? {} : { error: result.error }),
@@ -231,6 +258,11 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
         return result
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        if (invocationId !== null) {
+          await finishInvocation(invocationId, 'failed', '', msg).catch((e) =>
+            console.error('[AgentCoordinator] finishInvocation (catch) failed:', e),
+          )
+        }
         console.error(`[AgentCoordinator] error in ${opts.capabilityKey} (via im_trigger):`, msg)
         return { success: false, error: msg }
       }

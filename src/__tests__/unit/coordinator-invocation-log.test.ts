@@ -212,4 +212,43 @@ describe('AgentCoordinator - capability_invocations 日志', () => {
     // createInvocation 失败 → invocationId 为 null → 不会调 finishInvocation
     expect(finishInvocation).not.toHaveBeenCalled()
   })
+
+  it('im_trigger.capabilityKey 异名路由 → 仍写 capability_invocations', async () => {
+    const { createInvocation, finishInvocation } = await import(
+      '../../db/repositories/capability-invocations.js'
+    )
+    const imTriggersMod = await import('../../db/repositories/im-triggers.js')
+    ;(imTriggersMod.getIMTrigger as any).mockResolvedValueOnce({
+      id: 10,
+      key: 'cap_routed',
+      capabilityKey: 'cap_routed_target',
+      pipelineId: null,
+      displayName: 'Routed',
+      description: '',
+      examples: [],
+      enabled: true,
+      isSystem: false,
+    })
+
+    registerCapabilityHandler('cap_routed_target', async () => ({
+      success: true,
+      output: 'routed ok',
+    }))
+
+    const result = await triggerCapability({
+      capabilityKey: 'cap_routed',
+      context: ctx,
+    })
+
+    expect(result.success).toBe(true)
+    expect(createInvocation).toHaveBeenCalledOnce()
+    expect(createInvocation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capabilityKey: 'cap_routed',
+        triggerType: 'im',
+        platform: 'dingtalk',
+      }),
+    )
+    expect(finishInvocation).toHaveBeenCalledWith(999, 'success', 'routed ok', '')
+  })
 })

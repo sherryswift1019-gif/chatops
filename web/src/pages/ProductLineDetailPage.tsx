@@ -22,9 +22,11 @@ import type { IMTrigger, ProductLineIMTrigger } from '../types/imTrigger'
 import { listPipelineBindings, deletePipelineBinding } from '../api/pipeline-bindings'
 import type { PipelineBinding } from '../api/pipeline-bindings'
 import { getTestPipelines } from '../api/test-pipelines'
+import { getCapabilities } from '../api/capabilities'
+import type { Capability } from '../api/capabilities'
 import { PipelineBindingForm } from '../components/PipelineBindingForm'
 import DingTalkUserSelect from '../components/DingTalkUserSelect'
-import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule, TestServer } from '../types'
+import type { ProductLine, ProductLineMember, Project, Environment, ProductLineEnv, ApprovalRule, TestServer, TestPipeline } from '../types'
 
 const { Title } = Typography
 
@@ -780,6 +782,8 @@ function ApprovalRulesTab({ productLineId }: { productLineId: number }) {
 function IMTriggersTab({ productLineId }: { productLineId: number }) {
   const [triggers, setTriggers] = useState<IMTrigger[]>([])
   const [plTriggers, setPlTriggers] = useState<ProductLineIMTrigger[]>([])
+  const [pipelines, setPipelines] = useState<TestPipeline[]>([])
+  const [capabilities, setCapabilities] = useState<Capability[]>([])
   const [loading, setLoading] = useState(false)
   const [savingKey, setSavingKey] = useState<string | null>(null)
 
@@ -788,12 +792,16 @@ function IMTriggersTab({ productLineId }: { productLineId: number }) {
   async function loadData() {
     setLoading(true)
     try {
-      const [trigs, configs] = await Promise.all([
+      const [trigs, configs, pls, caps] = await Promise.all([
         listIMTriggers(),
         listProductLineIMTriggers(productLineId),
+        getTestPipelines(),
+        getCapabilities(),
       ])
       setTriggers(trigs)
       setPlTriggers(configs)
+      setPipelines(pls)
+      setCapabilities(caps)
     } finally {
       setLoading(false)
     }
@@ -871,15 +879,29 @@ function IMTriggersTab({ productLineId }: { productLineId: number }) {
     }
   }
 
+  const pipelineMap = new Map(pipelines.map(p => [p.id, p.name]))
+  const capabilityMap = new Map(capabilities.map(c => [c.key, c.displayName ?? c.key]))
+
+  function renderTarget(record: IMTrigger): React.ReactNode {
+    if (record.pipelineId != null) {
+      const name = pipelineMap.get(record.pipelineId) ?? `#${record.pipelineId}`
+      return <span>{name}<Tag style={{ marginLeft: 4 }}>流水线</Tag></span>
+    }
+    if (record.capabilityKey != null) {
+      const name = capabilityMap.get(record.capabilityKey) ?? record.capabilityKey
+      return <span>{name}<Tag style={{ marginLeft: 4 }}>能力</Tag></span>
+    }
+    return <Tag color="default">未配置</Tag>
+  }
+
   const columns = [
     { title: '触发器名称', dataIndex: 'displayName' },
     { title: '标识', dataIndex: 'key' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     {
-      title: '关联流水线', dataIndex: 'pipelineId',
-      render: (v: number | null) => v == null
-        ? <Tag color="default">未绑定</Tag>
-        : <Tag color="blue">#{v}</Tag>,
+      title: '关联对象',
+      key: 'target',
+      render: (_: unknown, record: IMTrigger) => renderTarget(record),
     },
     {
       title: '启用', key: 'enabled', width: 80,
