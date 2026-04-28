@@ -252,3 +252,20 @@ export interface PrdChatMessage {
   metadata: PrdChatMessageMetadata
   createdAt: string
 }
+
+export interface PipelineWebhook {
+  id: number
+  pipelineId: number
+  name: string
+  /** 列表里是 masked（前8字符+省略号），create/rotate 响应里是完整 token */
+  token: string
+  enabled: boolean
+  defaultServers: Record<string, string[]> | null
+  createdAt: string
+  createdBy: string
+  lastUsedAt: string | null
+  lastRunId: number | null
+  triggerCount: number
+  /** create/rotate 响应额外携带，列表无此字段 */
+  url?: string
+}
