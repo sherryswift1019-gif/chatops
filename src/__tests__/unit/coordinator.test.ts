@@ -136,6 +136,33 @@ describe('AgentCoordinator - triggerCapability', () => {
     expect(result.success).toBe(false)
     expect(result.error).toContain('未配置执行目标')
   })
+
+  it('triggers pipeline when im_trigger has pipelineId but no capability record', async () => {
+    // 这个用例覆盖的是 bug 场景：
+    // 管理员在后台创建了 im_trigger（关联 pipeline），但没有对应的 capability 记录。
+    // 修复前：getCapabilityByKey 返回 null → "capability not found" → success:false
+    // 修复后：pipeline-only im_trigger 在 capability 检查之前先路由，正常启动 pipeline
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'pipeline_only_trigger',
+      pipelineId: 42,
+      capabilityKey: null,
+      displayName: 'Pipeline Only',
+      enabled: true,
+    })
+
+    const { runPipeline } = await import('../../pipeline/executor.js')
+    ;(runPipeline as any).mockResolvedValueOnce(42)
+
+    const result = await triggerCapability({
+      capabilityKey: 'pipeline_only_trigger',   // 在 capabilities 表里不存在
+      context: { taskId: 't7', groupId: 'g1', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    expect(result.success).toBe(true)
+    expect(result.output).toContain('Pipeline run')
+    expect(runPipeline).toHaveBeenCalledWith(42, {}, expect.anything(), {}, undefined)
+  })
 })
 
 describe('AgentCoordinator - handleAnalysisComplete', () => {

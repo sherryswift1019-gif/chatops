@@ -296,9 +296,11 @@ export class ClaudeRunner {
         return
       }
 
-      // Step 4: 有具体 capability → 查找 + 权限检查
+      // Step 4: 查 capability + im_trigger，确认入口合法
+      // pipeline-only im_trigger（有 pipelineId 但无对应 capability 记录）是合法入口。
       const capability = await getCapabilityByKey(intent.capability)
-      if (!capability) {
+      const imTrigger = await getIMTrigger(intent.capability)
+      if (!capability && !imTrigger?.pipelineId) {
         await adapter.sendMessage(
           { type: 'group', id: opts.groupId },
           { text: `抱歉，「${intent.capability}」不是我支持的能力。` }
@@ -314,11 +316,10 @@ export class ClaudeRunner {
       // 不在 im_triggers 的内部 key（fix_bug_l*、notify_bug、request_handover 等）
       // 由 pipeline 内部触发，无产线用户在 IM 里直触发就拒绝。
       if (!productLineId) {
-        const imTrigger = await getIMTrigger(intent.capability)
         if (!imTrigger) {
           await adapter.sendMessage(
             { type: 'group', id: opts.groupId },
-            { text: `⛔ 你还未加入任何产线，无法执行「${capability.displayName}」。请联系管理员将你添加到产线成员中。` }
+            { text: `⛔ 你还未加入任何产线，无法执行「${capability?.displayName ?? intent.capability}」。请联系管理员将你添加到产线成员中。` }
           )
           return
         }
@@ -331,8 +332,7 @@ export class ClaudeRunner {
         const envName = intent.env ?? '*'
         const access = await checkIMTriggerAccess(productLineId, intent.capability, envName, userRole, 'im')
         if (!access.allowed) {
-          const imTrigger = await getIMTrigger(intent.capability)
-          const triggerName = imTrigger?.displayName ?? capability.displayName
+          const triggerName = imTrigger?.displayName ?? capability?.displayName ?? intent.capability
           const text = access.reason === 'source-blocked'
             ? `⛔ 能力「${triggerName}」在当前产线已禁止通过 IM 触发，请到管理后台执行。`
             : `⛔ 无法执行「${triggerName}」：${access.reason}`
@@ -345,11 +345,8 @@ export class ClaudeRunner {
       }
 
       // 4c: 检查用户 role 是否有权使用该能力的核心工具
-      // 跳过条件：capability.toolNames=[] —— 说明走 handler-path（如 prd_submit），
-      // 该 capability 完全不依赖任何 tool，权限控制由 handler 内部处理（PRD §3.1
-      // 的兜底：不合法指令/跨 repo/邮箱未同步/路径不符规范都在 handler 里拒绝）。
-      // 若 toolNames 非空，按原逻辑检查角色是否有匹配的 tool。
-      if (productLineId && capability.toolNames.length > 0) {
+      // 跳过条件：capability 为空（pipeline-only trigger）或 toolNames=[]。
+      if (productLineId && capability && capability.toolNames.length > 0) {
         const permitted = await getPermittedTools(userRole as Role, productLineId)
         const permittedNames = new Set(permitted.map(t => t.name))
         const hasAnyCapTool = capability.toolNames.some(name => permittedNames.has(name))
@@ -360,6 +357,22 @@ export class ClaudeRunner {
           )
           return
         }
+      }
+
+      // Step 4d: pipeline-only im_trigger（无 capability 记录）→ 直接交 coordinator 启动 pipeline
+      if (!capability && imTrigger?.pipelineId) {
+        console.log(`[Runner] pipeline-only im_trigger: ${intent.capability}, routing to coordinator`)
+        await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: '收到，处理中...', atDingtalkIds: atIds } as any)
+        const result = await triggerCapability({
+          capabilityKey: intent.capability,
+          context: { ...context, productLineId },
+          extraParams: { message: prompt, productLineId },
+        })
+        const replyText = result.success
+          ? (result.output ?? '处理完成')
+          : await buildFailureReply(intent.capability, result.error)
+        await adapter.sendMessage({ type: 'group', id: opts.groupId }, { text: replyText, atDingtalkIds: atIds } as any)
+        return
       }
 
       // Step 5: analyze_bug 走通用对话路径（已验证能跑通），其他 Agent 走 handler。
@@ -585,7 +598,11 @@ ${intentRules}
       const cleaned = result.replace(/```json?\n?/g, '').replace(/```\n?/g, '').trim()
       if (cleaned === 'null' || cleaned === '') return null
       const parsed = JSON.parse(cleaned) as DetectedIntent
-      return parsed.capability === 'unknown' ? null : parsed
+      if (parsed.capability === 'unknown') return null
+      // 防止 LLM 幻觉出列表外的 key：凡不在 triggers 且非 greet，视为 unknown
+      const validKeys = new Set(triggers.filter(t => t.enabled).map(t => t.key))
+      if (parsed.capability !== 'greet' && !validKeys.has(parsed.capability)) return null
+      return parsed
     } catch (err) {
       console.error('[Runner] detectIntent error:', err)
       return null

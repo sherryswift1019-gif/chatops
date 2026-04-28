@@ -167,15 +167,9 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
     groupId: opts.context.groupId,
   })
 
-  const capability = await getCapabilityByKey(opts.capabilityKey)
-  if (!capability) {
-    const msg = `capability not found: ${opts.capabilityKey}`
-    console.error(`[AgentCoordinator] ${msg}`)
-    return { success: false, error: msg }
-  }
-
   // IM 触发器路由：优先查 im_triggers 表。
-  // 有 im_trigger → 必须显式配置 pipeline_id 或 capability_key；两者均空时报错（不静默降级）。
+  // pipelineId 路径不需要 capability 记录（pipeline-only trigger 由管理员在后台配置）。
+  // 有 im_trigger 且无 pipelineId → 必须显式配置 capability_key；两者均空时报错（不静默降级）。
   // 无 im_trigger → 走下面的 PIPELINE_DAG_HANDLERS 和 handler 路径（内部 capability）。
   const imTrigger = await getIMTrigger(opts.capabilityKey)
   if (imTrigger) {
@@ -278,6 +272,15 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
       console.error(`[AgentCoordinator] ${msg}`)
       return { success: false, error: msg }
     }
+  }
+
+  // capability 记录在此处才是必须的：pipeline-only im_trigger 已在上面 return，
+  // 到达这里说明需要走 handler 或 DAG，两者都依赖 capability 元数据。
+  const capability = await getCapabilityByKey(opts.capabilityKey)
+  if (!capability) {
+    const msg = `capability not found: ${opts.capabilityKey}`
+    console.error(`[AgentCoordinator] ${msg}`)
+    return { success: false, error: msg }
   }
 
   // 无 IM trigger，或 IM trigger 同名映射到当前 capability：按内部 capability
