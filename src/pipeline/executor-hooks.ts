@@ -215,13 +215,17 @@ export function buildDefaultHooks(logDir: string): StageHooks {
       }
 
       // 用 resolveVariables 展开嵌入式模板（如 {{triggerParams.branch}}）
+      const coercedVars: Record<string, string> = {}
+      for (const [k, v] of Object.entries(runtimeVars)) {
+        coercedVars[k] = typeof v === 'string' ? v : JSON.stringify(v)
+      }
       const varCtx: VariableContext = {
         productLine: ctx.productLine ?? { name: '', displayName: '' },
         pipeline: ctx.pipeline ?? { id: 0, name: '' },
         run: ctx.run ?? { id: ctx.runId, triggeredBy: '', triggerType: '' },
         stage: { name: stage.name, index: ctx.stageIndex },
         server: { host: '', port: 0, username: '', name: '', role: '' },
-        vars: { ...(ctx.variables ?? {}), ...runtimeVars as Record<string, string> },
+        vars: { ...(ctx.variables ?? {}), ...coercedVars },
         triggerParams,
       }
       const prompt = resolveVariables(rawPrompt, varCtx)
@@ -241,12 +245,14 @@ export function buildDefaultHooks(logDir: string): StageHooks {
             cliPath: join(__dirname, '..', '..', 'node_modules', '.bin', 'claude'),
           },
         },
-        defaults: { timeoutMs, maxTurns: 10 },
+        defaults: { maxTurns: 10 },
       })
 
       try {
+        // porygon timeoutMs 是 idle timeout（无输出则超时），非 wall-clock 总时长
         const result = await porygon.run({
           prompt,
+          timeoutMs,
           ...(allowedTools
             ? { onlyTools: allowedTools }
             : { disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'] }),
@@ -254,7 +260,11 @@ export function buildDefaultHooks(logDir: string): StageHooks {
         })
         return { status: 'success', output: result.trim() }
       } catch (err) {
-        return { status: 'failed', output: '', error: String(err) }
+        return {
+          status: 'failed',
+          output: `custom agent 执行失败 [${stage.name}]: ${String(err)}`,
+          error: String(err),
+        }
       }
     },
   }
