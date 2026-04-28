@@ -23,6 +23,7 @@ import { registerImSender, registerImDmSender } from './pipeline/im-notifier.js'
 import { assertRegistryConsistent } from './pipeline/node-types/registry.js'
 import { listEnabledNodeTypeKeys } from './db/repositories/pipeline-node-types.js'
 import './pipeline/node-types/index.js'  // 触发 5 种 node type 自注册
+import { registerWebhookRoute } from './pipeline/webhook-router.js'
 
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
@@ -359,6 +360,8 @@ async function main(): Promise<void> {
     await gitlabReceiver.handle(req.body, req.headers as Record<string, string>)
     return reply.send({ ok: true })
   })
+
+  await registerWebhookRoute(app)
 
   app.get('/health', async () => ({ status: 'ok' }))
 
