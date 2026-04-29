@@ -7,7 +7,8 @@ import { PlusOutlined, ExclamationCircleTwoTone } from '@ant-design/icons'
 import {
   listIMTriggers, createIMTrigger, updateIMTrigger, deleteIMTrigger,
 } from '../api/imTriggers'
-import type { IMTrigger } from '../types/imTrigger'
+import type { IMTrigger, IMTriggerCategory } from '../types/imTrigger'
+import { IM_TRIGGER_CATEGORY_LABELS } from '../types/imTrigger'
 import { getTestPipelines } from '../api/test-pipelines'
 import type { TestPipeline } from '../types'
 import { getCapabilities } from '../api/capabilities'
@@ -33,6 +34,7 @@ export default function IMTriggersPage() {
   const [form] = Form.useForm()
   const [failureMessagesText, setFailureMessagesText] = useState<string>('{}')
   const [failureMessagesError, setFailureMessagesError] = useState<string>('')
+  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null)
   const targetType = Form.useWatch<TargetType>('targetType', form)
 
   useEffect(() => {
@@ -87,6 +89,7 @@ export default function IMTriggersPage() {
       key: record.key,
       displayName: record.displayName,
       description: record.description,
+      category: record.category ?? 'ops',
       targetType: inferTargetType(record),
       pipelineId: record.pipelineId,
       capabilityKey: record.capabilityKey,
@@ -182,11 +185,54 @@ export default function IMTriggersPage() {
     return <Tag color="red">未配置</Tag>
   }
 
+  const CATEGORY_COLOR: Record<IMTriggerCategory, string> = {
+    info: 'cyan', ops: 'blue', bug: 'red', feature: 'purple',
+  }
+  const CATEGORY_OPTIONS = Object.entries(IM_TRIGGER_CATEGORY_LABELS).map(([value, label]) => ({
+    value: value as IMTriggerCategory, label,
+  }))
+
   const columns = [
     { title: 'ID', dataIndex: 'id', width: 60 },
     { title: '标识', dataIndex: 'key' },
     { title: '显示名', dataIndex: 'displayName' },
     { title: '描述', dataIndex: 'description', ellipsis: true },
+    {
+      title: '类型', dataIndex: 'category', width: 120,
+      render: (v: IMTriggerCategory, record: IMTrigger) => {
+        if (editingCategoryId === record.id) {
+          return (
+            <Select
+              size="small"
+              autoFocus
+              defaultOpen
+              value={v}
+              options={CATEGORY_OPTIONS}
+              style={{ width: 110 }}
+              onChange={async (next) => {
+                setEditingCategoryId(null)
+                try {
+                  await updateIMTrigger(record.id, { category: next })
+                  await load()
+                } catch {
+                  message.error('操作失败')
+                }
+              }}
+              onBlur={() => setEditingCategoryId(null)}
+            />
+          )
+        }
+        return (
+          <Tag
+            color={CATEGORY_COLOR[v] ?? 'default'}
+            style={{ cursor: 'pointer' }}
+            onClick={() => setEditingCategoryId(record.id)}
+          >
+            {IM_TRIGGER_CATEGORY_LABELS[v] ?? v}
+          </Tag>
+        )
+      },
+    },
     {
       title: '执行目标',
       key: 'target',
@@ -195,11 +241,6 @@ export default function IMTriggersPage() {
     {
       title: '示例数', dataIndex: 'examples',
       render: (v: string[]) => <Text type="secondary">{(v ?? []).length}</Text>,
-      width: 80,
-    },
-    {
-      title: '类型', dataIndex: 'isSystem',
-      render: (v: boolean) => <Tag color={v ? 'default' : 'blue'}>{v ? '系统' : '自定义'}</Tag>,
       width: 80,
     },
     {
@@ -284,6 +325,20 @@ export default function IMTriggersPage() {
           </Form.Item>
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={2} placeholder="描述该触发器的用途" />
+          </Form.Item>
+          <Form.Item
+            name="category"
+            label="类型"
+            initialValue="ops"
+            rules={[{ required: true, message: '请选择类型' }]}
+            extra="用于打招呼时的能力分组展示"
+          >
+            <Select
+              options={Object.entries(IM_TRIGGER_CATEGORY_LABELS).map(([value, label]) => ({
+                value: value as IMTriggerCategory,
+                label,
+              }))}
+            />
           </Form.Item>
 
           <Form.Item

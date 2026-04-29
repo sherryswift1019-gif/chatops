@@ -225,6 +225,8 @@ const SCHEMA_FILES = [
   // v56: PAM Proxy 部署流水线移除 im_input 节点，填充 param_schema/im_prompt。
   // DO $$ 块幂等，无 product_lines 时自动跳过，安全加入。
   'schema-v56.sql',
+  // v57: im_triggers 新增 category 列，纯 ALTER，无 seed 数据，安全加入。
+  'schema-v57.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

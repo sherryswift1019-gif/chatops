@@ -565,16 +565,35 @@ export class ClaudeRunner {
       )
       return
     }
-    const capsList = triggers.map(t => {
-      const ex = t.examples?.[0]
-      return ex
-        ? `- **${t.displayName}** — ${t.description}\n  > 💬 \`${ex}\``
-        : `- **${t.displayName}** — ${t.description}`
-    }).join('\n')
+    const CATEGORY_ORDER = ['info', 'ops', 'bug', 'feature'] as const
+    const CATEGORY_LABEL: Record<string, string> = {
+      info: '信息抓取',
+      ops: '运维操作',
+      bug: 'Bug 修复',
+      feature: '需求开发',
+    }
+    const groups = new Map<string, typeof triggers>()
+    for (const cat of CATEGORY_ORDER) groups.set(cat, [])
+    for (const t of triggers) {
+      const cat = t.category ?? 'ops'
+      if (!groups.has(cat)) groups.set(cat, [])
+      groups.get(cat)!.push(t)
+    }
+    const sections: string[] = []
+    for (const cat of CATEGORY_ORDER) {
+      const list = groups.get(cat)
+      if (!list?.length) continue
+      const items = list.map(t => {
+        const ex = t.examples?.[0]
+        return ex
+          ? `- **${t.displayName}** — ${t.description}\n  > 💬 \`${ex}\``
+          : `- **${t.displayName}** — ${t.description}`
+      }).join('\n')
+      sections.push(`**${CATEGORY_LABEL[cat]}**\n${items}`)
+    }
     const text = [
       '## 你好！我是 ChatOps 助手',
-      '**我目前支持以下能力：**',
-      capsList,
+      sections.join('\n\n'),
       '直接用自然语言告诉我你想做什么即可。',
     ].join('\n\n')
     await adapter.sendMessage({ type: 'group', id: groupId }, { text, atDingtalkIds } as any)
