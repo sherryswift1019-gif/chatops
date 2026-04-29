@@ -15,6 +15,7 @@ import { buildClaudeEnv } from '../agent/claude-config.js'
 import { sshExec } from './ssh.js'
 import { resolveVariables, type VariableContext } from './variables.js'
 import { triggerCapability } from '../agent/coordinator.js'
+import { DockerExecutor } from './executors/docker.js'
 import type { StageHooks } from './graph-builder.js'
 import type {
   StageDefinition,
@@ -171,6 +172,22 @@ export function buildDefaultHooks(logDir: string): StageHooks {
         triggerParams,
         runtimeVars,
       )
+
+      const ctxBase = ctx as StageContext & { pipelineContainerImage?: string }
+      const effectiveImage =
+        stage.containerImage?.trim() || ctxBase.pipelineContainerImage?.trim()
+      let dockerExecutor: DockerExecutor | undefined
+      let dockerContainerName: string | undefined
+      if (effectiveImage) {
+        dockerContainerName = `chatops-cap-${ctx.runId}-${ctx.stageIndex}`
+        dockerExecutor = new DockerExecutor(effectiveImage)
+        const hostDataDir = process.env.HOST_TEST_DATA_DIR
+        await dockerExecutor.setup(
+          dockerContainerName,
+          hostDataDir ? { dataDirMount: { hostPath: hostDataDir } } : {},
+        )
+      }
+
       try {
         const capabilityPromise = triggerCapability({
           capabilityKey,
@@ -180,6 +197,7 @@ export function buildDefaultHooks(logDir: string): StageHooks {
             platform: 'pipeline',
             initiatorId: 'pipeline-executor',
             initiatorRole: 'admin',
+            ...(dockerContainerName ? { dockerContainerName } : {}),
           },
           extraParams: resolvedParams,
           // pipeline 内嵌 capability 节点：外层 test_runs 已记录，跳过 capability_invocations
@@ -199,6 +217,12 @@ export function buildDefaultHooks(logDir: string): StageHooks {
           status: 'failed',
           output: `capability 执行失败: ${String(err)}`,
           error: String(err),
+        }
+      } finally {
+        if (dockerExecutor) {
+          await dockerExecutor.teardown().catch((e) =>
+            console.warn('[executor-hooks] runCapability container teardown failed:', e),
+          )
         }
       }
     },
