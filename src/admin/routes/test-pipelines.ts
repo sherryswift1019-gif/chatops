@@ -135,8 +135,11 @@ export async function registerTestPipelineRoutes(app: FastifyInstance): Promise<
     Body: { paramSchema?: Record<string, unknown> | null; imPrompt?: string | null }
   }>('/test-pipelines/:id/settings', async (req, reply) => {
     const id = Number(req.params.id)
-    const { paramSchema, imPrompt } = req.body
-    const updated = await updateTestPipeline(id, { paramSchema, imPrompt })
+    const body = req.body
+    const data: { paramSchema?: Record<string, unknown> | null; imPrompt?: string | null } = {}
+    if ('paramSchema' in body) data.paramSchema = body.paramSchema
+    if ('imPrompt' in body) data.imPrompt = body.imPrompt
+    const updated = await updateTestPipeline(id, data)
     if (!updated) return reply.status(404).send({ error: 'not found' })
     return reply.send(updated)
   })
