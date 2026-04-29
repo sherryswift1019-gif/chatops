@@ -172,19 +172,15 @@ export class DingTalkAdapter implements IMAdapter {
 
   async sendMessage(target: MessageTarget, content: TextContent & { atDingtalkIds?: string[] }): Promise<void> {
     const webhook = this.getWebhook(target)
-    if (content.atDingtalkIds && content.atDingtalkIds.length > 0) {
-      // sessionWebhook + text + at.atDingtalkIds = 蓝色 @ 效果
-      await axios.post(webhook, {
-        msgtype: 'text',
-        text: { content: content.text },
-        at: { atDingtalkIds: content.atDingtalkIds, isAtAll: false },
-      })
-    } else {
-      await axios.post(webhook, {
-        msgtype: 'markdown',
-        markdown: { title: 'ChatOps', text: content.text },
-      })
+    // 始终用 markdown 渲染，有 @mention 时附 at 字段触发通知（markdown 消息同样支持 at）
+    const payload: Record<string, unknown> = {
+      msgtype: 'markdown',
+      markdown: { title: 'ChatOps', text: content.text },
     }
+    if (content.atDingtalkIds && content.atDingtalkIds.length > 0) {
+      payload.at = { atDingtalkIds: content.atDingtalkIds, isAtAll: false }
+    }
+    await axios.post(webhook, payload)
   }
 
   async sendCard(target: MessageTarget, card: InteractiveCard): Promise<void> {

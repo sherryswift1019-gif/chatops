@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+vi.mock('axios', () => ({
+  default: { post: vi.fn() },
+}))
+
 // Mock MUST be declared before importing the adapter
 vi.mock('dingtalk-stream-sdk-nodejs', () => {
   const listeners = new Map<string, Function>()
@@ -41,6 +45,7 @@ vi.mock('dingtalk-stream-sdk-nodejs', () => {
 })
 
 // Import AFTER mock is set up
+import axios from 'axios'
 import { DingTalkAdapter } from '../../adapters/im/dingtalk.js'
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — __mockClient is a test-only export added by the mock factory
@@ -472,6 +477,60 @@ describe('DingTalkAdapter (Stream mode)', () => {
       const s = adapter.getConnectionStatus()
       expect(s.startError).toBeNull()
       expect(s.started).toBe(true)
+    })
+  })
+
+  // ── sendMessage() ──────────────────────────────────────────────────────────
+  // 验证发送路径的 msgtype 行为
+  // 注：fix 已在 src/adapters/im/dingtalk.ts 中提前完成；
+  // 本测试作为回归保护，不走 TDD fail-first 流程（fix 先行）。
+
+  describe('sendMessage()', () => {
+    const WEBHOOK = 'https://oapi.dingtalk.com/robot/sendBySession/test-hook'
+
+    beforeEach(async () => {
+      // 触发一条 incoming 消息以缓存 sessionWebhook
+      mockClient._trigger(TOPIC_ROBOT, makeRobotDownStream({
+        conversationId: 'cid-send',
+        sessionWebhook: WEBHOOK,
+        messageId: 'seed-msg',
+      }))
+      await Promise.resolve()
+      vi.mocked(axios.post).mockResolvedValue({ data: {} })
+    })
+
+    it('无 atDingtalkIds 时发 msgtype=markdown，不含 at 字段', async () => {
+      await adapter.sendMessage({ type: 'group', id: 'cid-send' }, { text: '## hello' })
+
+      expect(axios.post).toHaveBeenCalledOnce()
+      const [url, body] = vi.mocked(axios.post).mock.calls[0]
+      expect(url).toBe(WEBHOOK)
+      expect(body).toMatchObject({ msgtype: 'markdown', markdown: { text: '## hello' } })
+      expect((body as Record<string, unknown>).at).toBeUndefined()
+    })
+
+    it('有 atDingtalkIds 时发 msgtype=markdown（不降为 text），并附 at 字段 — 修复 #markdown-at-mention bug', async () => {
+      await adapter.sendMessage(
+        { type: 'group', id: 'cid-send' },
+        { text: '## 你好！我是 ChatOps 助手\n\n**信息抓取**', atDingtalkIds: ['user-123'] } as any,
+      )
+
+      expect(axios.post).toHaveBeenCalledOnce()
+      const [, body] = vi.mocked(axios.post).mock.calls[0]
+      expect((body as Record<string, unknown>).msgtype).toBe('markdown')
+      expect((body as Record<string, unknown>).markdown).toMatchObject({ text: expect.stringContaining('## 你好') })
+      expect((body as Record<string, unknown>).at).toEqual({ atDingtalkIds: ['user-123'], isAtAll: false })
+    })
+
+    it('atDingtalkIds 为空数组时不附 at 字段', async () => {
+      await adapter.sendMessage(
+        { type: 'group', id: 'cid-send' },
+        { text: 'hi', atDingtalkIds: [] } as any,
+      )
+
+      const [, body] = vi.mocked(axios.post).mock.calls[0]
+      expect((body as Record<string, unknown>).msgtype).toBe('markdown')
+      expect((body as Record<string, unknown>).at).toBeUndefined()
     })
   })
 })
