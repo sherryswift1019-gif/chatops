@@ -42,8 +42,9 @@ import {
   type ImTriggerContext,
   extractImContext,
 } from './trigger.js'
+import { resolveDataDir } from './data-dir.js'
 
-const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
+const DATA_DIR = resolveDataDir()
 
 export type { PipelineRunResult } from './graph-runner.js'
 export type { PipelineTrigger, ImTriggerContext } from './trigger.js'

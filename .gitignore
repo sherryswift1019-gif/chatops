@@ -21,3 +21,4 @@ src/db/system-config.local.sql
 .DS_Store
 logs/
 .agents/
+var/

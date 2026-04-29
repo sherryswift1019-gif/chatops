@@ -9,8 +9,9 @@ import { listTestServers } from '../../db/repositories/test-servers.js'
 import { readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { createReadStream } from 'fs'
+import { resolveDataDir } from '../../pipeline/data-dir.js'
 
-const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
+const DATA_DIR = resolveDataDir()
 
 interface ResumeBody {
   approval?: 'approved' | 'rejected' | 'timeout'

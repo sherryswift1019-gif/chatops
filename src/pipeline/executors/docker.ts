@@ -1,4 +1,5 @@
 import { spawn } from 'child_process'
+import { resolveDataDir } from '../data-dir.js'
 
 interface ExecResult {
   exitCode: number
@@ -40,7 +41,7 @@ export class DockerExecutor {
 
     const args: string[] = ['run', '-d', '--name', this.containerName, '-w', '/workspace']
     if (opts.dataDirMount) {
-      const containerDataDir = process.env.TEST_DATA_DIR ?? '/data/chatops/test-runs'
+      const containerDataDir = resolveDataDir()
       args.push('-v', `${opts.dataDirMount.hostPath}:${containerDataDir}`)
     }
     args.push(this.image, 'sleep', 'infinity')

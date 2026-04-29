@@ -47,6 +47,7 @@ import { analyzeFailure } from './failure-analyzer.js'
 import { PipelineApprovalManager } from './approval-manager.js'
 import { WebhookWaiter } from './webhook-waiter.js'
 import { buildDefaultHooks } from './executor-hooks.js'
+import { resolveDataDir } from './data-dir.js'
 
 // --- Public types -----------------------------------------------------------
 
@@ -102,7 +103,7 @@ function clearInterruptTimer(key: string): void {
   }
 }
 
-const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
+const DATA_DIR = resolveDataDir()
 
 // --- Public entry points ----------------------------------------------------
 

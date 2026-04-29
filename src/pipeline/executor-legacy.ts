@@ -17,8 +17,9 @@ import { sshExec } from './ssh.js'
 import { writeFile } from 'fs/promises'
 import { getDingTalkUserById } from '../db/repositories/dingtalk-users.js'
 import type { StageResult } from '../db/repositories/test-runs.js'
+import { resolveDataDir } from './data-dir.js'
 
-const DATA_DIR = process.env.TEST_DATA_DIR || '/data/chatops/test-runs'
+const DATA_DIR = resolveDataDir()
 
 async function executeApprovalStage(stage: StageDefinition): Promise<StageExecutionResult> {
   const approverIds = stage.approverIds ?? []
