@@ -55,3 +55,40 @@ export function isGroupBusy(platform: string, groupId: string): boolean {
 export function listWaiters(): ImWaiter[] {
   return Array.from(byRun.values())
 }
+
+// ---------------------------------------------------------------------------
+// ParamCollectWaiter — 轻量级 promise-based waiter，供 im-param-collector 使用。
+// 与 ImWaiter 不同，它不依赖 runId/stageIndex，只按 (platform, groupId) 注册。
+// ---------------------------------------------------------------------------
+
+export interface ParamCollectWaiter {
+  platform: string
+  groupId: string
+  resolve: (message: string) => void
+  reject: (err: Error) => void
+}
+
+const paramWaiters = new Map<string, ParamCollectWaiter>()
+
+const paramGroupKey = (platform: string, groupId: string): string =>
+  `param:${platform}:${groupId}`
+
+export function registerParamCollectWaiter(w: ParamCollectWaiter): void {
+  const key = paramGroupKey(w.platform, w.groupId)
+  const existing = paramWaiters.get(key)
+  if (existing) {
+    existing.reject(new Error('orphan cleanup: new waiter registered'))
+  }
+  paramWaiters.set(key, w)
+}
+
+export function unregisterParamCollectWaiter(platform: string, groupId: string): void {
+  paramWaiters.delete(paramGroupKey(platform, groupId))
+}
+
+export function findParamCollectWaiter(
+  platform: string,
+  groupId: string,
+): ParamCollectWaiter | null {
+  return paramWaiters.get(paramGroupKey(platform, groupId)) ?? null
+}
