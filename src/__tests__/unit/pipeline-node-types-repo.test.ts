@@ -10,7 +10,7 @@ import {
 // 与 v44 (switch 行)。
 // 本测试仅验证 repository 行为。
 describe('pipeline-node-types repository', () => {
-  it('lists all 13 seeded node types (5 phase-0 + 7 phase-3 + switch)', async () => {
+  it('lists all 12 seeded node types (5 phase-0 + 6 phase-3 + switch)', async () => {
     const types = await listNodeTypes()
     const keys = types.map(t => t.key).sort()
     expect(keys).toEqual([
@@ -20,7 +20,6 @@ describe('pipeline-node-types repository', () => {
       'fan_out',
       'file_read',
       'http',
-      'im_input',
       'llm_agent',
       'script',
       'sql_query',
@@ -41,14 +40,13 @@ describe('pipeline-node-types repository', () => {
     expect(t!.category).toBe('general')
   })
 
-  it('listEnabledNodeTypeKeys returns enabled-only set (5 phase-0 + T9-T15 + switch = 13)', async () => {
+  it('listEnabledNodeTypeKeys returns enabled-only set (5 phase-0 + T9-T14 + switch = 12)', async () => {
     const keys = await listEnabledNodeTypeKeys()
-    // phase-0 5 + phase-3 7 (http/dm/db_update/sql_query/file_read/template_render/fan_out) + switch
+    // phase-0 5 + phase-3 6 (http/dm/db_update/sql_query/file_read/template_render/fan_out) + switch
     expect(keys.has('script')).toBe(true)
     expect(keys.has('approval')).toBe(true)
     expect(keys.has('llm_agent')).toBe(true)
     expect(keys.has('wait_webhook')).toBe(true)
-    expect(keys.has('im_input')).toBe(true)
     // phase-3 T9-T14
     expect(keys.has('http')).toBe(true)
     expect(keys.has('dm')).toBe(true)
@@ -59,6 +57,6 @@ describe('pipeline-node-types repository', () => {
     // T15 fan_out 现已启用
     expect(keys.has('fan_out')).toBe(true)
     expect(keys.has('switch')).toBe(true)
-    expect(keys.size).toBe(13)
+    expect(keys.size).toBe(12)
   })
 })
