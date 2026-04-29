@@ -16,6 +16,7 @@ import type { ExecutionContext, NodeExecutionResult } from './node-types/types.j
 import type { DockerExecutor } from './executors/docker.js'
 import { resolveVariables, type VariableContext } from './variables.js'
 import { evalExpression } from './expressions.js'
+import { extractJsonObject, NotJsonObjectError } from './json-extract.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -323,15 +324,17 @@ function buildCapabilityNode(
 
     if (outputFormat === 'json' && exec.status === 'success') {
       try {
-        const parsed = JSON.parse(exec.output)
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        // LLM 输出常包 ```json``` markdown fence 或附带前后散文，
+        // extractJsonObject 按严格性递减尝试剥离 fence / 找 `{...}` 子串。
+        const parsed = extractJsonObject(exec.output)
+        stepOutput = { status: 'success', output: parsed }
+      } catch (e) {
+        if (e instanceof NotJsonObjectError) {
           exec = { status: 'failed', output: exec.output, error: 'outputFormat=json: 输出必须是 JSON 对象' }
         } else {
-          stepOutput = { status: 'success', output: parsed as Record<string, unknown> }
+          const msg = e instanceof Error ? e.message : String(e)
+          exec = { status: 'failed', output: exec.output, error: `outputFormat=json: parse 失败: ${msg}` }
         }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        exec = { status: 'failed', output: exec.output, error: `outputFormat=json: parse 失败: ${msg}` }
       }
     }
 

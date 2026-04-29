@@ -89,6 +89,33 @@ describe('buildCapabilityNode outputFormat', () => {
     expect(snap.values.stageResults[0].error).toMatch(/parse 失败/)
   })
 
+  it("outputFormat='json' + ```json fenced 输出 → 正确剥围栏 parse 成对象", async () => {
+    // 真实 LLM（Claude/各家）即便提示"只返回 JSON"也常包 markdown fence，
+    // 这是 PAM Proxy pipeline 触发 webhook 后 stage 失败的根因复现
+    const fenced =
+      '```json\n{"filename": "proxy-deploy-amd64-20260429-main.tar.gz", "downloadUrl": "http://10.10.2.234:8000/x.tar.gz"}\n```'
+    const hook = vi.fn().mockResolvedValue({ status: 'success', output: fenced })
+    const graph: PipelineGraph = {
+      nodes: [makeLlmNode('q1', 'q', 'json')],
+      edges: [],
+    }
+    const hooks: StageHooks = {
+      runScript: async () => ({ status: 'success', output: '' }),
+      runCapability: hook,
+    }
+    const builder = buildGraphFromPipeline({ graph, stageContext: baseCtx(), hooks })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (builder as any).compile({ checkpointer: new MemorySaver() })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await app.stream({ runId: 42 }, config))
+    const snap = await app.getState(config)
+    expect(snap.values.stageResults[0].status).toBe('success')
+    expect(snap.values.stepOutputs?.q1?.output).toEqual({
+      filename: 'proxy-deploy-amd64-20260429-main.tar.gz',
+      downloadUrl: 'http://10.10.2.234:8000/x.tar.gz',
+    })
+  })
+
   it("outputFormat='string'：保持现状，不写 stepOutputs", async () => {
     const hook = vi.fn().mockResolvedValue({ status: 'success', output: 'plain text' })
     const graph: PipelineGraph = {
