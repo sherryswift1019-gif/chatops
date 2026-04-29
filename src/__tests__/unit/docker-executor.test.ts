@@ -70,4 +70,21 @@ describe('DockerExecutor', () => {
     const executor = new DockerExecutor('node:18')
     await expect(executor.exec('ls')).rejects.toThrow('setup() has not been called')
   })
+
+  it('setup: with dataDirMount adds -v hostPath:containerPath to docker run args', async () => {
+    process.env.TEST_DATA_DIR = '/data/chatops/test-runs'
+    const executor = new DockerExecutor('alpine:3.19')
+    await executor.setup('chatops-run-99', { dataDirMount: { hostPath: '/srv/chatops/test-runs' } })
+    const runArgs = callArgs.find(a => a[0] === 'run')!
+    const vIdx = runArgs.indexOf('-v')
+    expect(vIdx).toBeGreaterThan(-1)
+    expect(runArgs[vIdx + 1]).toBe('/srv/chatops/test-runs:/data/chatops/test-runs')
+  })
+
+  it('setup: without dataDirMount does NOT add -v', async () => {
+    const executor = new DockerExecutor('alpine:3.19')
+    await executor.setup('chatops-run-100')
+    const runArgs = callArgs.find(a => a[0] === 'run')!
+    expect(runArgs).not.toContain('-v')
+  })
 })

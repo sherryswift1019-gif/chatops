@@ -18,6 +18,11 @@ function spawnAsync(cmd: string, args: string[]): Promise<ExecResult> {
   })
 }
 
+export interface SetupOptions {
+  /** 把宿主机目录挂到容器内 TEST_DATA_DIR 路径，供跨节点文件共享 */
+  dataDirMount?: { hostPath: string }
+}
+
 export class DockerExecutor {
   private containerName = ''
   private ready = false
@@ -25,7 +30,7 @@ export class DockerExecutor {
   constructor(private readonly image: string) {}
 
   /** Pull image and start a detached container that stays alive via `sleep infinity`. */
-  async setup(containerName: string): Promise<void> {
+  async setup(containerName: string, opts: SetupOptions = {}): Promise<void> {
     this.containerName = containerName
 
     const pull = await spawnAsync('docker', ['pull', this.image])
@@ -33,13 +38,14 @@ export class DockerExecutor {
       throw new Error(`Failed to pull image ${this.image}: ${pull.stderr.trim()}`)
     }
 
-    const run = await spawnAsync('docker', [
-      'run', '-d',
-      '--name', this.containerName,
-      '-w', '/workspace',
-      this.image,
-      'sleep', 'infinity',
-    ])
+    const args: string[] = ['run', '-d', '--name', this.containerName, '-w', '/workspace']
+    if (opts.dataDirMount) {
+      const containerDataDir = process.env.TEST_DATA_DIR ?? '/data/chatops/test-runs'
+      args.push('-v', `${opts.dataDirMount.hostPath}:${containerDataDir}`)
+    }
+    args.push(this.image, 'sleep', 'infinity')
+
+    const run = await spawnAsync('docker', args)
     if (run.exitCode !== 0) {
       throw new Error(`Failed to start container ${this.containerName}: ${run.stderr.trim()}`)
     }
