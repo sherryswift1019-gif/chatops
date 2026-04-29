@@ -35,6 +35,7 @@ import { pipelineBindingsRoutes } from './routes/pipeline-bindings.js'
 import { registerDryRunRoutes } from './routes/dryrun.js'
 import { registerPipelineWebhookRoutes } from './routes/pipeline-webhooks.js'
 import { registerPipelineScheduleRoutes } from './routes/pipeline-schedules.js'
+import { registerToolsRoutes } from './routes/tools.js'
 
 export async function adminPlugin(
   app: FastifyInstance,
@@ -90,4 +91,5 @@ export async function adminPlugin(
   await registerDryRunRoutes(app)
   await registerPipelineWebhookRoutes(app)
   await registerPipelineScheduleRoutes(app)
+  await registerToolsRoutes(app)
 }
