@@ -254,11 +254,41 @@ export function buildDefaultHooks(logDir: string): StageHooks {
       }
       const prompt = resolveVariables(rawPrompt, varCtx)
 
-      const allowedTools = Array.isArray(stage.allowedTools) && stage.allowedTools.length > 0
-        ? stage.allowedTools
-        : undefined
+      // 容器生命周期
+      const ctxBase = ctx as StageContext & { pipelineContainerImage?: string }
+      const effectiveImage =
+        stage.containerImage?.trim() || ctxBase.pipelineContainerImage?.trim()
+      let dockerExecutor: DockerExecutor | undefined
+      let dockerContainerName: string | undefined
+      if (effectiveImage) {
+        dockerContainerName = `chatops-cust-${ctx.runId}-${ctx.stageIndex}`
+        dockerExecutor = new DockerExecutor(effectiveImage)
+        const hostDataDir = process.env.HOST_TEST_DATA_DIR
+        await dockerExecutor.setup(
+          dockerContainerName,
+          hostDataDir ? { dataDirMount: { hostPath: hostDataDir } } : {},
+        )
+      }
 
+      // custom 模式：onlyTools 即使为空数组也比裸 disallowedTools 更严格——空白名单 = 禁所有工具
+      // 包括 Bash/Read/Edit；这是 spec §2.3 的语义。
+      const allowedTools =
+        Array.isArray(stage.allowedTools) && stage.allowedTools.length > 0
+          ? stage.allowedTools
+          : []
       const timeoutMs = (stage.timeoutSeconds ?? 120) * 1000
+
+      // 始终接入 chatops MCP server
+      const mcpServerPath = join(__dirname, '..', 'agent', 'mcp-server.ts')
+      const taskContext = {
+        taskId: `pipeline-cust-${ctx.runId}-${ctx.stageIndex}`,
+        groupId: 'pipeline',
+        platform: 'pipeline',
+        initiatorId: 'pipeline-executor',
+        initiatorRole: 'admin' as const,
+        cwd: ctx.logDir,
+        ...(dockerContainerName ? { dockerContainerName } : {}),
+      }
 
       const porygon = createPorygon({
         defaultBackend: 'claude',
@@ -272,22 +302,42 @@ export function buildDefaultHooks(logDir: string): StageHooks {
         defaults: { maxTurns: 10 },
       })
 
+      const claudeEnv = await buildClaudeEnv()
       try {
         // porygon timeoutMs 是 idle timeout（无输出则超时），非 wall-clock 总时长
         const result = await porygon.run({
           prompt,
           timeoutMs,
-          ...(allowedTools
-            ? { onlyTools: allowedTools }
-            : { disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep'] }),
-          envVars: await buildClaudeEnv(),
+          onlyTools: allowedTools,
+          mcpServers: {
+            chatops: {
+              command: 'node',
+              args: ['--import', 'tsx/esm', mcpServerPath],
+              env: {
+                ...(process.env as Record<string, string>),
+                CHATOPS_TASK_CONTEXT: JSON.stringify(taskContext),
+                DATABASE_URL: process.env.DATABASE_URL ?? '',
+                ...claudeEnv,
+              },
+            },
+          },
+          envVars: {
+            ...claudeEnv,
+            CHATOPS_TASK_CONTEXT: JSON.stringify(taskContext),
+          },
         })
-        return { status: 'success', output: result.trim() }
+        return { status: 'success', output: String(result).trim() }
       } catch (err) {
         return {
           status: 'failed',
           output: `custom agent 执行失败 [${stage.name}]: ${String(err)}`,
           error: String(err),
+        }
+      } finally {
+        if (dockerExecutor) {
+          await dockerExecutor.teardown().catch((e) =>
+            console.warn('[executor-hooks] runCustomAgent container teardown failed:', e),
+          )
         }
       }
     },

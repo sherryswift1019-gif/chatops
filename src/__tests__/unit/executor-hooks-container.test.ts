@@ -1,10 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { StageDefinition, StageContext } from '../../pipeline/types.js'
 
-const { setupSpy, teardownSpy, triggerSpy } = vi.hoisted(() => ({
+const { setupSpy, teardownSpy, triggerSpy, porygonRunSpy } = vi.hoisted(() => ({
   setupSpy: vi.fn(),
   teardownSpy: vi.fn(),
   triggerSpy: vi.fn(),
+  porygonRunSpy: vi.fn(),
 }))
 
 vi.mock('../../pipeline/executors/docker.js', () => ({
@@ -18,6 +19,14 @@ vi.mock('../../pipeline/executors/docker.js', () => ({
 
 vi.mock('../../agent/coordinator.js', () => ({
   triggerCapability: triggerSpy,
+}))
+
+vi.mock('@snack-kit/porygon', () => ({
+  createPorygon: () => ({ run: porygonRunSpy, query: vi.fn() }),
+}))
+
+vi.mock('../../agent/claude-config.js', () => ({
+  buildClaudeEnv: async () => ({ CLAUDE_CODE_OAUTH_TOKEN: 'fake' }),
 }))
 
 import { buildDefaultHooks } from '../../pipeline/executor-hooks.js'
@@ -86,6 +95,63 @@ describe('runCapability container lifecycle', () => {
     triggerSpy.mockRejectedValue(new Error('boom'))
     const hooks = buildDefaultHooks('/tmp/log')
     const r = await hooks.runCapability!(stage, ctxBase)
+    expect(teardownSpy).toHaveBeenCalled()
+    expect(r.status).toBe('failed')
+  })
+})
+
+describe('runCustomAgent container + MCP', () => {
+  const customStage: StageDefinition = {
+    name: 'cust',
+    stageType: 'llm_agent',
+    customPrompt: 'do X',
+    containerImage: 'python:3.11',
+    allowedTools: ['mcp__chatops__run_command'],
+    timeoutSeconds: 60,
+    retryCount: 0,
+    onFailure: 'stop',
+  } as StageDefinition
+
+  beforeEach(() => {
+    setupSpy.mockReset()
+    teardownSpy.mockReset()
+    porygonRunSpy.mockReset()
+    setupSpy.mockResolvedValue(undefined)
+    teardownSpy.mockResolvedValue(undefined)
+  })
+
+  it('always injects chatops mcpServer + dockerContainerName in CHATOPS_TASK_CONTEXT env', async () => {
+    porygonRunSpy.mockResolvedValue('done')
+    const hooks = buildDefaultHooks('/tmp/log')
+    const r = await hooks.runCustomAgent!(customStage, ctxBase)
+    expect(setupSpy).toHaveBeenCalled()
+    const [runOpts] = porygonRunSpy.mock.calls[0]
+    expect(runOpts.mcpServers).toHaveProperty('chatops')
+    expect(runOpts.onlyTools).toEqual(['mcp__chatops__run_command'])
+    const tc = JSON.parse(runOpts.envVars.CHATOPS_TASK_CONTEXT)
+    expect(tc.dockerContainerName).toBe(`chatops-cust-${ctxBase.runId}-${ctxBase.stageIndex}`)
+    expect(teardownSpy).toHaveBeenCalled()
+    expect(r.status).toBe('success')
+  })
+
+  it('without containerImage: still injects chatops mcpServer; no dockerContainerName', async () => {
+    porygonRunSpy.mockResolvedValue('ok')
+    const hooks = buildDefaultHooks('/tmp/log')
+    await hooks.runCustomAgent!(
+      { ...customStage, containerImage: undefined },
+      { ...ctxBase, pipelineContainerImage: undefined } as StageContext,
+    )
+    const [runOpts] = porygonRunSpy.mock.calls[0]
+    expect(runOpts.mcpServers).toHaveProperty('chatops')
+    const tc = JSON.parse(runOpts.envVars.CHATOPS_TASK_CONTEXT)
+    expect(tc.dockerContainerName).toBeUndefined()
+    expect(setupSpy).not.toHaveBeenCalled()
+  })
+
+  it('teardown called even if porygon throws', async () => {
+    porygonRunSpy.mockRejectedValue(new Error('claude crashed'))
+    const hooks = buildDefaultHooks('/tmp/log')
+    const r = await hooks.runCustomAgent!(customStage, ctxBase)
     expect(teardownSpy).toHaveBeenCalled()
     expect(r.status).toBe('failed')
   })
