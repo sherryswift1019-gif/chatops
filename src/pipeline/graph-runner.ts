@@ -36,6 +36,7 @@ import {
   updateTestRunStage,
   finishTestRun,
 } from '../db/repositories/test-runs.js'
+import { mergeAndPersistStageResults } from './stage-status.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import {
   listTestServers,
@@ -277,7 +278,11 @@ async function persistValues(
   try {
     const stageResults = (values.stageResults ?? []) as StageResult[]
     const currentStage = (values.currentStageIndex ?? 0) as number
-    await updateTestRunStage(ctx.runId, currentStage, stageResults)
+    // Merge instead of overwrite so DB-only running entries (written by
+    // markStageRunning at node start, before langgraph state has any record)
+    // survive each chunk. Finalized langgraph entries still overwrite running
+    // DB entries by name — that's the desired stage-finish transition.
+    await mergeAndPersistStageResults(ctx.runId, currentStage, stageResults)
   } catch (err) {
     console.warn(`[graph-runner] persistValues failed for run ${ctx.runId}:`, err)
   }

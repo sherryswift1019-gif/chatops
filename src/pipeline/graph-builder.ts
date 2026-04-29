@@ -18,6 +18,7 @@ import { resolveVariables, type VariableContext } from './variables.js'
 import { resolveCapabilityParams } from './executor-hooks.js'
 import { evalExpression } from './expressions.js'
 import { extractJsonObject, NotJsonObjectError } from './json-extract.js'
+import { markStageRunning } from './stage-status.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -260,6 +261,10 @@ function buildScriptNode(
     const targetServers = resolveTargetServers(stage, ctxBase.servers)
     const startedAt = nowIso()
     const startedMs = Date.now()
+    // Publish a `running` entry to test_runs.stage_results so the admin Drawer
+    // Timeline reflects the in-progress stage. finishedResult below merges
+    // over this by name when the node completes.
+    await markStageRunning(ctxBase.runId, stage, startedAt)
     const stepOutputs = state.stepOutputs ?? {}
     const tp = triggerParams ?? {}
     let exec: StageExecutionResult
@@ -366,6 +371,10 @@ function buildCapabilityNode(
   return async (state: typeof PipelineStateAnnotation.State) => {
     const startedAt = nowIso()
     const startedMs = Date.now()
+    // Stream a `running` entry into stage_results so admin Drawer Timeline
+    // can render in-progress capability runs (e.g. PAM Proxy 诊断修复 LLM
+    // turns) without waiting for the node to finalize.
+    await markStageRunning(ctxBase.runId, stage, startedAt)
     const ctx: StageContext = { ...ctxBase, stageIndex: index }
     const runtimeVars = { ...(ctxBase.variables ?? {}), ...(state.runtimeVars ?? {}) }
 
@@ -462,11 +471,15 @@ function buildCapabilityNode(
 function buildApprovalNode(
   stage: StageDefinition,
   index: number,
+  ctxBase: StageContextBase,
   triggerParams?: Record<string, unknown>,
 ) {
   return async () => {
     const startedAt = nowIso()
     const startedMs = Date.now()
+    // Approval nodes can sit waiting for hours — stream a `running` entry up
+    // front so the Drawer Timeline shows the awaiting-approval row.
+    await markStageRunning(ctxBase.runId, stage, startedAt)
 
     // 审批人两种来源（二选一）：
     //   1. stage.approverIdsResolver 指定 resolver 名 → 运行时动态查（主路径，业务默认）
@@ -555,10 +568,17 @@ function resolveTemplateString(
   })
 }
 
-function buildWaitWebhookNode(stage: StageDefinition, index: number) {
+function buildWaitWebhookNode(
+  stage: StageDefinition,
+  index: number,
+  ctxBase: StageContextBase,
+) {
   return async () => {
     const startedAt = nowIso()
     const startedMs = Date.now()
+    // Webhook waits can sit on `interrupt()` for hours — publish running so
+    // the Drawer Timeline reflects the awaiting-webhook row.
+    await markStageRunning(ctxBase.runId, stage, startedAt)
     const payload: WebhookInterruptValue = {
       type: WEBHOOK_INTERRUPT,
       stageIndex: index,
@@ -765,6 +785,15 @@ function buildExecutorNode(
     const startedAt = nowIso()
     const startedMs = Date.now()
     const stageName = nodeStageResultName(node)
+    // Stream `running` so executor-backed nodes (sql_query / http / dm /
+    // db_update / file_read / template_render / fan_out / switch) appear in
+    // the Drawer Timeline while in flight. Use stageName (resolves id when
+    // node has no name) to keep merge-by-name consistent with finishedResult.
+    await markStageRunning(
+      ctxBase.runId,
+      { name: stageName, stageType: node.stageType },
+      startedAt,
+    )
 
     const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
     const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
@@ -1089,7 +1118,7 @@ export function buildGraphFromPipeline(
         if (node.stageType === 'script') {
           realFn = buildScriptNode(node, i, stageContext, hooks, triggerParams) as typeof realFn
         } else if (node.stageType === 'approval') {
-          realFn = buildApprovalNode(node, i, triggerParams) as typeof realFn
+          realFn = buildApprovalNode(node, i, stageContext, triggerParams) as typeof realFn
         } else {
           // dm / db_update / http — generic NodeExecutor dispatch
           realFn = buildExecutorNode(node, i, stageContext, triggerParams ?? {}) as typeof realFn
@@ -1108,7 +1137,7 @@ export function buildGraphFromPipeline(
 
       case 'wait_webhook':
         // Not wrapped: wait_webhook uses its own interrupt loop + external trigger.
-        builder = builder.addNode(name, buildWaitWebhookNode(node, i))
+        builder = builder.addNode(name, buildWaitWebhookNode(node, i, stageContext))
         break
 
       // Non-side-effect NodeExecutor-backed types — wrap with snapshot recorder when dryRunFlavor present.

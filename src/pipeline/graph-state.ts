@@ -11,7 +11,7 @@ export type { StageResult }
 // The reducer accepts either a single StageResult or a StageResult[].
 export type StageResultsUpdate = StageResult | StageResult[]
 
-function mergeStageResults(
+export function mergeStageResults(
   current: StageResult[],
   update: StageResultsUpdate | undefined,
 ): StageResult[] {
