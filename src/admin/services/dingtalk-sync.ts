@@ -1,7 +1,12 @@
 import axios from 'axios'
 import pLimit from 'p-limit'
 import { getConfig } from '../../db/repositories/system-config.js'
-import { upsertDingTalkUser } from '../../db/repositories/dingtalk-users.js'
+import {
+  upsertDingTalkUser,
+  getActiveUserIds,
+  getResignedUserIds,
+  markUsersAsResigned,
+} from '../../db/repositories/dingtalk-users.js'
 
 interface DingTalkUserInfo {
   userid: string
@@ -137,7 +142,12 @@ async function getUserEmail(token: string, userid: string): Promise<string | nul
   }
 }
 
-export async function syncDingTalkUsers(): Promise<{ synced: number; emails: number }> {
+export async function syncDingTalkUsers(): Promise<{
+  synced: number
+  emails: number
+  resigned: number
+  rejoined: number
+}> {
   const token = await getAccessToken()
   const deptTree = await loadDepartmentTree(token)
 
@@ -149,6 +159,12 @@ export async function syncDingTalkUsers(): Promise<{ synced: number; emails: num
       if (!seen.has(user.userid)) seen.set(user.userid, user)
     }
   }
+
+  const syncedSet = new Set(seen.keys())
+
+  // 在 upsert 之前统计重新入职数（upsert 会清空 resigned_at，事后查不到）
+  const resignedIdsBefore = await getResignedUserIds()
+  const rejoinedCount = resignedIdsBefore.filter(id => syncedSet.has(id)).length
 
   // 第二轮：逐人 user/get 拿 email，并发 5（钉钉 user/get QPS 上限 200，5 并发安全）
   // 单点失败不阻塞 sync——COALESCE 保留 DB 已有值
@@ -171,5 +187,12 @@ export async function syncDingTalkUsers(): Promise<{ synced: number; emails: num
   )
   await Promise.all(upserts)
 
-  return { synced: seen.size, emails }
+  // 离职检测：在职用户不在本次 sync 结果里 → 标记离职
+  const activeIds = await getActiveUserIds()
+  const departed = activeIds.filter(id => !syncedSet.has(id))
+  if (departed.length > 0) {
+    await markUsersAsResigned(departed)
+  }
+
+  return { synced: seen.size, emails, resigned: departed.length, rejoined: rejoinedCount }
 }
