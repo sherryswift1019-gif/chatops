@@ -1,10 +1,13 @@
 import { getPool } from '../client.js'
 
+export type IMTriggerCategory = 'info' | 'ops' | 'bug' | 'feature'
+
 export interface IMTrigger {
   id: number
   key: string
   displayName: string
   description: string
+  category: IMTriggerCategory
   pipelineId: number | null
   capabilityKey: string | null
   intentHints: string
@@ -23,6 +26,7 @@ function mapRow(r: Record<string, unknown>): IMTrigger {
     key: r.key as string,
     displayName: r.display_name as string,
     description: (r.description ?? '') as string,
+    category: ((r.category as string) || 'ops') as IMTriggerCategory,
     pipelineId: (r.pipeline_id ?? null) as number | null,
     capabilityKey: (r.capability_key ?? null) as string | null,
     intentHints: (r.intent_hints ?? '') as string,
@@ -50,6 +54,7 @@ export interface CreateIMTriggerInput {
   key: string
   displayName: string
   description?: string
+  category?: IMTriggerCategory
   pipelineId?: number | null
   capabilityKey?: string | null
   intentHints?: string
@@ -63,12 +68,13 @@ export interface CreateIMTriggerInput {
 export async function createIMTrigger(input: CreateIMTriggerInput): Promise<IMTrigger> {
   const { rows } = await getPool().query(
     `INSERT INTO im_triggers
-       (key, display_name, description, pipeline_id, capability_key, intent_hints, examples,
+       (key, display_name, description, category, pipeline_id, capability_key, intent_hints, examples,
         failure_messages, default_approval_rule_id, is_system, enabled)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11, $12)
      RETURNING *`,
     [
       input.key, input.displayName, input.description ?? '',
+      input.category ?? 'ops',
       input.pipelineId ?? null, input.capabilityKey ?? null,
       input.intentHints ?? '',
       JSON.stringify(input.examples ?? []),
@@ -86,6 +92,7 @@ export async function updateIMTrigger(id: number, patch: Partial<CreateIMTrigger
   let idx = 1
   if (patch.displayName !== undefined) { fields.push(`display_name = $${idx++}`); values.push(patch.displayName) }
   if (patch.description !== undefined) { fields.push(`description = $${idx++}`); values.push(patch.description) }
+  if (patch.category !== undefined) { fields.push(`category = $${idx++}`); values.push(patch.category) }
   if (patch.pipelineId !== undefined) { fields.push(`pipeline_id = $${idx++}`); values.push(patch.pipelineId) }
   if (patch.capabilityKey !== undefined) { fields.push(`capability_key = $${idx++}`); values.push(patch.capabilityKey) }
   if (patch.intentHints !== undefined) { fields.push(`intent_hints = $${idx++}`); values.push(patch.intentHints) }
