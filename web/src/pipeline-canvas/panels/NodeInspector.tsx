@@ -1,7 +1,7 @@
 import { Drawer, Form, Input, InputNumber, Select, Switch, Alert, Tooltip, Modal, Collapse, Typography, message, Radio, Tabs, Button, Popconfirm } from 'antd'
 import { ExclamationCircleTwoTone, DeleteOutlined } from '@ant-design/icons'
 import { useEffect, useMemo, useState } from 'react'
-import type { StageNode, StageFields, ImInputConfig, StageType } from '../types'
+import type { StageNode, StageFields, StageType } from '../types'
 import { BESPOKE_STAGE_TYPES } from '../types'
 import type { CapabilityOption } from '../PipelineCanvasPage'
 import { pruneStageFields, obsoleteFieldsOnSwitch } from './pruneStageFields'
@@ -10,8 +10,7 @@ import { listPipelineNodeTypes } from '../../api/pipelineNodeTypes'
 import type { PipelineNodeType } from '../../types/pipelineNodeType'
 import { UpstreamFieldsTab } from './UpstreamFieldsTab'
 
-const CATEGORY_LABELS: Record<string, string> = {
-  general: '通用',
+const CATEGORY_LABELS: Record<string, string> = {  general: '通用',
   flow: '流程',
   llm: 'LLM',
   specialized: '业务',
@@ -30,8 +29,6 @@ interface Props {
   onRunUpstream?: (nodeId: string) => void
   pipelineContainerImage?: string | null
 }
-
-const DEFAULT_SCHEMA: Record<string, unknown> = { type: 'object', properties: {}, required: [] }
 
 function capabilityOptions(list: CapabilityOption[], currentKey?: string) {
   const known = new Set(list.map(c => c.key))
@@ -62,20 +59,6 @@ function capabilityOptions(list: CapabilityOption[], currentKey?: string) {
     })
   }
   return opts
-}
-
-function filterParamsBySchema(
-  params: Record<string, unknown>,
-  schema: Record<string, unknown>,
-): Record<string, unknown> {
-  const props = (schema as { properties?: unknown }).properties
-  if (typeof props !== 'object' || props === null) return {}
-  const keys = new Set(Object.keys(props as Record<string, unknown>))
-  const out: Record<string, unknown> = {}
-  for (const [k, v] of Object.entries(params)) {
-    if (keys.has(k)) out[k] = v
-  }
-  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -234,10 +217,6 @@ function DynamicParamsForm({
   )
 }export function NodeInspector({ node, onClose, onChange, onDelete, availableRoles, dingtalkUsers, capabilities, pipelineId, ancestors, onRunUpstream, pipelineContainerImage }: Props) {
   const [form] = Form.useForm()
-  // paramSchema 作为 JSON 字符串在 Inspector 本地维护，避免 antd Form 在每次按键
-  // 时重新受控导致编辑中断；onBlur 时解析并提交。
-  const [paramSchemaText, setParamSchemaText] = useState('')
-  const [paramSchemaErr, setParamSchemaErr] = useState<string | null>(null)
   const [nodeTypes, setNodeTypes] = useState<PipelineNodeType[]>([])
 
   const nodeTypeByKey = useMemo(() => {
@@ -261,11 +240,6 @@ function DynamicParamsForm({
         agentMode: node.data.agentMode ?? 'capability',
         ...node.data,
       })
-      if (node.data.stageType === 'im_input') {
-        const s = node.data.imInputConfig?.paramSchema ?? DEFAULT_SCHEMA
-        setParamSchemaText(JSON.stringify(s, null, 2))
-        setParamSchemaErr(null)
-      }
     }
   }, [node, form])
 
@@ -288,40 +262,7 @@ function DynamicParamsForm({
         all = { ...all, customPrompt: undefined, allowedTools: undefined }
       }
     }
-    // im_input 的 paramSchema 不在 Form 里，Form 触发变化时需要把本地 paramSchema
-    // 合并回 imInputConfig，否则 updateNodeData 浅合并会丢掉 paramSchema。
-    if (node!.data.stageType === 'im_input' && all.imInputConfig) {
-      let schema = node!.data.imInputConfig?.paramSchema ?? DEFAULT_SCHEMA
-      try {
-        schema = JSON.parse(paramSchemaText)
-      } catch {
-        // 保留上一次已知良好的 schema
-      }
-      all = {
-        ...all,
-        imInputConfig: {
-          ...(all.imInputConfig as Partial<ImInputConfig>),
-          paramSchema: schema,
-        } as ImInputConfig,
-      }
-    }
     onChange(node!.id, all)
-  }
-
-  function handleParamSchemaBlur() {
-    try {
-      const parsed = JSON.parse(paramSchemaText)
-      setParamSchemaErr(null)
-      const current = form.getFieldValue('imInputConfig') as Partial<ImInputConfig> | undefined
-      onChange(node!.id, {
-        imInputConfig: {
-          ...(current ?? node!.data.imInputConfig ?? {}),
-          paramSchema: parsed,
-        } as ImInputConfig,
-      })
-    } catch (e) {
-      setParamSchemaErr((e as Error).message)
-    }
   }
 
   function handleStageTypeChange(newType: StageFields['stageType']) {
@@ -574,45 +515,6 @@ function DynamicParamsForm({
                       <Form.Item name="webhookTag" label="Webhook Tag" rules={[{ required: true, message: 'Webhook Tag 必填' }]}>
                         <Input placeholder="例如 mr-merge:PAM/java-code/pas-6.0:123，支持 {{vars.xxx}} 模板" />
                       </Form.Item>
-                    )
-                    if (t === 'im_input') return (
-                      <>
-                        <Form.Item
-                          name={['imInputConfig', 'prompt']}
-                          label="引导语"
-                          rules={[{ required: true, message: '引导语必填' }]}
-                          extra="支持 {{vars.xxx}} / {{triggerParams.xxx}} 模板"
-                        >
-                          <Input.TextArea rows={3} placeholder="请提供以下参数：..." />
-                        </Form.Item>
-                        <Form.Item label="参数 Schema (JSON Schema)" required>
-                          <Input.TextArea
-                            rows={10}
-                            value={paramSchemaText}
-                            onChange={(e) => setParamSchemaText(e.target.value)}
-                            onBlur={handleParamSchemaBlur}
-                            style={{ fontFamily: 'monospace', fontSize: 12 }}
-                          />
-                          {paramSchemaErr && (
-                            <Alert type="error" showIcon style={{ marginTop: 8 }} message={`JSON 解析失败：${paramSchemaErr}`} />
-                          )}
-                        </Form.Item>
-                        <Form.Item name={['imInputConfig', 'capabilityKey']} label="关联 Capability（可选）">
-                          <Select
-                            allowClear
-                            showSearch
-                            placeholder="留空即可；用于增强 IM 参数判定的上下文"
-                            options={capabilityOptions(capabilities, node!.data.imInputConfig?.capabilityKey)}
-                            filterOption={(input, opt) => {
-                              const t = (opt as { searchText?: string } | undefined)?.searchText ?? ''
-                              return t.toLowerCase().includes(input.toLowerCase())
-                            }}
-                          />
-                        </Form.Item>
-                        <Form.Item name={['imInputConfig', 'timeoutSeconds']} label="采集超时 (秒)">
-                          <InputNumber min={30} />
-                        </Form.Item>
-                      </>
                     )
                     // phase 3 7 新节点（http / dm / db_update / sql_query / file_read /
                     // template_render / fan_out）走 paramSchema 驱动的动态表单。读取

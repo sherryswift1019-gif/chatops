@@ -13,6 +13,8 @@ export interface TestPipeline {
   artifactInputs: unknown[]
   graph: unknown | null
   containerImage: string | null
+  paramSchema: Record<string, unknown> | null
+  imPrompt: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -28,6 +30,8 @@ function mapRow(r: Record<string, unknown>): TestPipeline {
     artifactInputs: (r.artifact_inputs ?? []) as unknown[],
     graph: (r.graph ?? null) as unknown,
     containerImage: (r.container_image ?? null) as string | null,
+    paramSchema: (r.param_schema ?? null) as Record<string, unknown> | null,
+    imPrompt: (r.im_prompt ?? null) as string | null,
     createdAt: r.created_at as Date, updatedAt: r.updated_at as Date,
   }
 }
@@ -84,6 +88,8 @@ export async function updateTestPipeline(id: number, data: Partial<{
   artifactInputs: unknown[]
   graph: unknown | null
   containerImage?: string | null
+  paramSchema?: Record<string, unknown> | null
+  imPrompt?: string | null
 }>): Promise<TestPipeline | null> {
   const pool = getPool()
   const { rows } = await pool.query(
@@ -96,6 +102,8 @@ export async function updateTestPipeline(id: number, data: Partial<{
        artifact_inputs = COALESCE($9, artifact_inputs),
        graph = COALESCE($10, graph),
        container_image = COALESCE($11, container_image),
+       param_schema = CASE WHEN $12::boolean THEN $13::jsonb ELSE param_schema END,
+       im_prompt    = CASE WHEN $14::boolean THEN $15       ELSE im_prompt    END,
        updated_at = NOW()
      WHERE id = $1 RETURNING *`,
     [id, data.name ?? null, data.description ?? null,
@@ -106,7 +114,11 @@ export async function updateTestPipeline(id: number, data: Partial<{
      data.variables ? JSON.stringify(data.variables) : null,
      data.artifactInputs ? JSON.stringify(data.artifactInputs) : null,
      data.graph !== undefined ? (data.graph === null ? null : JSON.stringify(data.graph)) : null,
-     data.containerImage ?? null]
+     data.containerImage ?? null,
+     'paramSchema' in data,
+     'paramSchema' in data ? (data.paramSchema === null ? null : JSON.stringify(data.paramSchema)) : null,
+     'imPrompt' in data,
+     data.imPrompt ?? null]
   )
   return rows[0] ? mapRow(rows[0]) : null
 }

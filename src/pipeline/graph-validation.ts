@@ -248,20 +248,6 @@ function checkRequiredFields(n: PipelineGraph['nodes'][number]): string | null {
         return `${prefix}: webhookTag is required`
       }
       return null
-    case 'im_input': {
-      const cfg = n.imInputConfig
-      if (!cfg || !cfg.prompt || !cfg.prompt.trim()) {
-        return `${prefix}: imInputConfig.prompt is required`
-      }
-      if (
-        typeof cfg.paramSchema !== 'object' ||
-        cfg.paramSchema === null ||
-        Array.isArray(cfg.paramSchema)
-      ) {
-        return `${prefix}: imInputConfig.paramSchema must be an object`
-      }
-      return null
-    }
     case 'approval':
       if (!Array.isArray(n.approverIds) || n.approverIds.length === 0) {
         return `${prefix}: approverIds is required (non-empty array)`

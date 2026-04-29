@@ -24,6 +24,7 @@ import { createTestRun, finishTestRun } from '../db/repositories/test-runs.js'
 import { listTestServersByIds, bulkSetServerStatus, type TestServer } from '../db/repositories/test-servers.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import { resolveArtifact } from './artifact-resolver.js'
+import { validateTriggerParams } from './validate-trigger-params.js'
 import { buildDefaultHooks } from './executor-hooks.js'
 import {
   startRun,
@@ -94,6 +95,14 @@ export async function runPipeline(
   const pipelineStartMs = Date.now()
   const pipeline = await getTestPipelineById(pipelineId)
   if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)
+
+  // Non-IM triggers: validate triggerParams against paramSchema
+  if (triggerType !== 'im' && pipeline.paramSchema) {
+    const check = validateTriggerParams(pipeline.paramSchema, triggerParams)
+    if (!check.valid) {
+      throw new Error(`缺少必填触发参数：${check.missingFields.join(', ')}`)
+    }
+  }
 
   const productLine = await getProductLineById(pipeline.productLineId)
 

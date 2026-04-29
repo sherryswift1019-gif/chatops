@@ -25,7 +25,6 @@ const addMenuItems: MenuProps['items'] = [
   { key: 'approval', label: '人员审批' },
   { key: 'llm_agent', label: 'LLM Agent' },
   { key: 'wait_webhook', label: '等待 Webhook' },
-  { key: 'im_input', label: 'IM 参数采集' },
   { type: 'divider' },
   { key: 'http', label: 'HTTP 调用' },
   { key: 'dm', label: 'IM 私聊' },
