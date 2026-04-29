@@ -87,7 +87,7 @@ export async function collectImParams(
 5. 调用 `consultImInputAgent`（复用现有逻辑）解析参数
 6. 参数不全 → 追问 → 继续等待
 7. 参数齐全 → resolve 返回 `collectedParams`
-8. 超时（同 `imInputConfig.timeoutSeconds`）→ reject
+8. 超时（固定 300s）→ reject
 
 ### `src/pipeline/im-router.ts` 扩展
 
@@ -205,7 +205,7 @@ Dry-run 流程中，`im_input` 节点消失后不再需要 `buildImInputDryRunNo
 |------|------|
 | Webhook payload 缺少必填参数 | 400 + 列出缺少的字段名 |
 | Schedule preset_params 不满足 schema | 保存时 400 拒绝；调度时跳过并记录 error 日志 |
-| IM 采集超时（默认 600s）| 回复超时提示到群，pipeline 不启动 |
+| IM 采集超时（300s）| 回复超时提示到群，pipeline 不启动 |
 | IM 采集用户取消 | 回复取消确认到群，pipeline 不启动 |
 | Manual 前端校验失败 | 表单 inline 报错，不提交 |
 
