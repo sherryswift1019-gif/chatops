@@ -13,6 +13,7 @@ export interface TestPipeline {
   artifactInputs: unknown[]
   graph: unknown | null
   containerImage: string | null
+  paramSchema: Record<string, unknown> | null
   createdAt: Date
   updatedAt: Date
 }
@@ -28,6 +29,7 @@ function mapRow(r: Record<string, unknown>): TestPipeline {
     artifactInputs: (r.artifact_inputs ?? []) as unknown[],
     graph: (r.graph ?? null) as unknown,
     containerImage: (r.container_image ?? null) as string | null,
+    paramSchema: (r.param_schema ?? null) as Record<string, unknown> | null,
     createdAt: r.created_at as Date, updatedAt: r.updated_at as Date,
   }
 }

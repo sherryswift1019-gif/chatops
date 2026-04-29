@@ -262,6 +262,7 @@ async function mockPipelineStagesOnce(stages: StageDefinition[]) {
     artifactInputs: [],
     graph: null,
     containerImage: null,
+    paramSchema: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   })
