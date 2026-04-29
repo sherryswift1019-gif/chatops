@@ -56,14 +56,16 @@ export function listWaiters(): ImWaiter[] {
   return Array.from(byRun.values())
 }
 
-// ---------------------------------------------------------------------------
-// ParamCollectWaiter — 用于 im_input 参数采集的 Promise-based waiter
-// ---------------------------------------------------------------------------
+// ─── ParamCollectWaiter ──────────────────────────────────────────────────────
+// 用于 im-param-collector 在 runPipeline 前采集参数时注册等待点。
+// 与 ImWaiter（graph interrupt）平行，各自用独立的 Map。
+// session-manager 优先检查此 waiter，命中则直接 resolve，不进入 Agent 流程。
 
 export interface ParamCollectWaiter {
   platform: string
   groupId: string
-  reject: (reason: Error) => void
+  resolve: (message: string) => void
+  reject: (err: Error) => void
 }
 
 const byGroupCollect = new Map<string, ParamCollectWaiter>()

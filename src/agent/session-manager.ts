@@ -4,6 +4,7 @@ import { getUserRole } from '../db/repositories/roles.js'
 import { getMaxConcurrency, getActiveCount } from './concurrency.js'
 import type { TaskContext } from './tools/types.js'
 import { findImInputWaiter, resumeFromImInput } from '../pipeline/graph-runner.js'
+import { findParamCollectWaiter } from '../pipeline/im-router.js'
 
 type MessageProcessor = (msg: NormalizedMessage, queue: TaskQueue) => Promise<void>
 
@@ -37,6 +38,14 @@ export class SessionManager {
     if (!msg.userId) return // 系统消息/webhook 无 userId，跳过
 
     console.log(`[SessionManager] Message from ${msg.platform}:${msg.groupId} user=${msg.userName}: "${msg.text}"`)
+
+    // Param collection routing: check before graph interrupt waiter
+    const paramWaiter = findParamCollectWaiter(msg.platform, msg.groupId)
+    if (paramWaiter) {
+      console.log(`[SessionManager] Routing to param-collector for ${msg.platform}:${msg.groupId}`)
+      paramWaiter.resolve(msg.text)
+      return
+    }
 
     // Pipeline IM 路由：当前群是否有 pipeline 正等 im_input？有则把消息作为 resume value
     // 喂回 graph，绕过 SessionManager 的 queue/ack/并发流程。
