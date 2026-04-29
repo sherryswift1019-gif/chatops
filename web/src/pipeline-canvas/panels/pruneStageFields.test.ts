@@ -69,3 +69,22 @@ describe('obsoleteFieldsOnSwitch', () => {
     expect(obsoleteFieldsOnSwitch(prev, 'script')).toEqual([])
   })
 })
+
+describe('containerImage retention across stageType switches', () => {
+  it('script → llm_agent: containerImage retained', () => {
+    const next = pruneStageFields(base('script', { containerImage: 'node:18' }), 'llm_agent')
+    expect(next.containerImage).toBe('node:18')
+  })
+  it('llm_agent → script: containerImage retained', () => {
+    const next = pruneStageFields(base('llm_agent', { containerImage: 'python:3.11' }), 'script')
+    expect(next.containerImage).toBe('python:3.11')
+  })
+  it('llm_agent → approval: containerImage cleared', () => {
+    const next = pruneStageFields(base('llm_agent', { containerImage: 'go:1.21' }), 'approval')
+    expect(next.containerImage).toBeUndefined()
+  })
+  it('script → approval: containerImage cleared', () => {
+    const next = pruneStageFields(base('script', { containerImage: 'node:18' }), 'approval')
+    expect(next.containerImage).toBeUndefined()
+  })
+})

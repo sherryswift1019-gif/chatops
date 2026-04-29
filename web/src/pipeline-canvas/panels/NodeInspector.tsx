@@ -9,6 +9,7 @@ import { CapabilityParamsForm } from './CapabilityParamsForm'
 import { listPipelineNodeTypes } from '../../api/pipelineNodeTypes'
 import type { PipelineNodeType } from '../../types/pipelineNodeType'
 import { UpstreamFieldsTab } from './UpstreamFieldsTab'
+import { listTools, type ToolMeta } from '../../api/tools'
 
 const CATEGORY_LABELS: Record<string, string> = {  general: '通用',
   flow: '流程',
@@ -218,6 +219,7 @@ function DynamicParamsForm({
 }export function NodeInspector({ node, onClose, onChange, onDelete, availableRoles, dingtalkUsers, capabilities, pipelineId, ancestors, onRunUpstream, pipelineContainerImage }: Props) {
   const [form] = Form.useForm()
   const [nodeTypes, setNodeTypes] = useState<PipelineNodeType[]>([])
+  const [mcpTools, setMcpTools] = useState<ToolMeta[]>([])
 
   const nodeTypeByKey = useMemo(() => {
     const m: Record<string, PipelineNodeType> = {}
@@ -232,6 +234,10 @@ function DynamicParamsForm({
         console.error(err)
         message.error('节点类型列表加载失败，请刷新页面')
       })
+  }, [])
+
+  useEffect(() => {
+    listTools().then(setMcpTools).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -358,7 +364,13 @@ function DynamicParamsForm({
                   <Switch />
                 </Form.Item>
 
-                <Form.Item shouldUpdate={(p, c) => p.stageType !== c.stageType || p.capabilityKey !== c.capabilityKey || p.agentMode !== c.agentMode} noStyle>
+                <Form.Item shouldUpdate={(p, c) =>
+                  p.stageType !== c.stageType ||
+                  p.capabilityKey !== c.capabilityKey ||
+                  p.agentMode !== c.agentMode ||
+                  p.containerImage !== c.containerImage ||
+                  JSON.stringify(p.allowedTools) !== JSON.stringify(c.allowedTools)
+                } noStyle>
                   {({ getFieldValue }) => {
                     const t = getFieldValue('stageType')
                     if (t === 'script') {
@@ -406,6 +418,12 @@ function DynamicParamsForm({
                       const agentMode = (getFieldValue('agentMode') as string | undefined) ?? 'capability'
                       const selectedKey = getFieldValue('capabilityKey') as string | undefined
                       const selected = capabilities.find(c => c.key === selectedKey)
+                      const allowed = (getFieldValue('allowedTools') as string[] | undefined) ?? []
+                      const containerImage = getFieldValue('containerImage') as string | undefined
+                      const hasRunCommand = allowed.some(
+                        (v) => v === 'run_command' || v === 'mcp__chatops__run_command',
+                      )
+
                       return (
                         <>
                           <Form.Item label="模式" name="agentMode" initialValue="capability">
@@ -413,6 +431,18 @@ function DynamicParamsForm({
                               <Radio.Button value="capability">已有能力</Radio.Button>
                               <Radio.Button value="custom">自定义</Radio.Button>
                             </Radio.Group>
+                          </Form.Item>
+
+                          <Form.Item
+                            name="containerImage"
+                            label="运行容器镜像（可选）"
+                            extra={
+                              pipelineContainerImage
+                                ? `留空则继承 pipeline 默认：${pipelineContainerImage}。配置后 Bash 内置工具自动禁用，shell 命令需走 run_command 工具。`
+                                : '留空则在 chatops 容器内执行。配置后 Bash 内置工具自动禁用，shell 命令需走 run_command 工具。'
+                            }
+                          >
+                            <Input placeholder="例如 harbor.xxx/golang:1.21" allowClear />
                           </Form.Item>
 
                           {agentMode === 'custom' ? (
@@ -428,16 +458,45 @@ function DynamicParamsForm({
                                   placeholder="告诉 Claude 要做什么。支持 {{triggerParams.xxx}} 模板变量。"
                                 />
                               </Form.Item>
-                              <Form.Item label="可用工具" name="allowedTools">
+
+                              <Form.Item
+                                label="可用工具"
+                                name="allowedTools"
+                                extra="不选则禁用所有工具（纯推理）。MCP 平台工具和内置工具按需勾选。"
+                              >
                                 <Select
                                   mode="multiple"
-                                  placeholder="不选则禁用文件读写工具"
+                                  placeholder="按需选择 Claude 可调用的工具"
+                                  showSearch
+                                  optionFilterProp="label"
                                   options={[
-                                    { value: 'WebFetch', label: 'WebFetch（HTTP 抓取）' },
-                                    { value: 'WebSearch', label: 'WebSearch（搜索）' },
+                                    {
+                                      label: '平台 MCP 工具',
+                                      options: mcpTools.map(tm => ({
+                                        value: `mcp__chatops__${tm.name}`,
+                                        label: `${tm.name} — ${tm.description}`,
+                                      })),
+                                    },
+                                    {
+                                      label: 'Claude 内置工具',
+                                      options: [
+                                        { value: 'WebFetch', label: 'WebFetch — HTTP 抓取' },
+                                        { value: 'WebSearch', label: 'WebSearch — 搜索' },
+                                      ],
+                                    },
                                   ]}
                                 />
                               </Form.Item>
+
+                              {containerImage && !hasRunCommand && (
+                                <Alert
+                                  type="warning"
+                                  showIcon
+                                  style={{ marginBottom: 16 }}
+                                  message="配置了运行容器，但未选 run_command 工具，Claude 调 shell 命令将失败。"
+                                />
+                              )}
+
                               <Form.Item name="outputFormat" label="输出格式" initialValue="string"
                                 extra="JSON 模式下输出必须是 JSON 对象，否则该节点失败">
                                 <Radio.Group>

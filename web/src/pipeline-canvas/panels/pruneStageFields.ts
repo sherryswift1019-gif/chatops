@@ -38,11 +38,18 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
   }
   switch (newType) {
     case 'script':
-      return { ...base, ...cleared, script: '', containerImage: prev.stageType === 'script' ? prev.containerImage : undefined }
+      return {
+        ...base, ...cleared, script: '',
+        containerImage: (prev.stageType === 'script' || prev.stageType === 'llm_agent') ? prev.containerImage : undefined,
+      }
     case 'approval':
       return { ...base, ...cleared, approverIds: [], approvalDescription: '' }
     case 'llm_agent':
-      return { ...base, ...cleared, capabilityKey: '', capabilityParams: {}, agentMode: 'capability' }
+      return {
+        ...base, ...cleared,
+        capabilityKey: '', capabilityParams: {}, agentMode: 'capability',
+        containerImage: (prev.stageType === 'script' || prev.stageType === 'llm_agent') ? prev.containerImage : undefined,
+      }
     case 'wait_webhook':
       return { ...base, ...cleared, webhookTag: '' }
     // phase 3 新增 7 节点：统一用 params 容器，初始化为空对象，UI 按 paramSchema 渲染
