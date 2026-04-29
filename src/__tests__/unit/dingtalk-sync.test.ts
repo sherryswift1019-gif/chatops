@@ -23,6 +23,9 @@ vi.mock('../../db/repositories/system-config.js', () => ({
 
 vi.mock('../../db/repositories/dingtalk-users.js', () => ({
   upsertDingTalkUser: vi.fn(async () => {}),
+  getResignedUserIds: vi.fn(async () => [] as string[]),
+  getActiveUserIds: vi.fn(async () => [] as string[]),
+  markUsersAsResigned: vi.fn(async () => {}),
 }))
 
 import axios from 'axios'
