@@ -221,10 +221,24 @@ async function runScriptInDocker(
 
   const result = await executor.exec(resolvedScript)
   const output = [result.stdout, result.stderr].filter(Boolean).join('\n')
-  if (result.exitCode !== 0) {
-    return { status: 'failed', output, error: `exit code ${result.exitCode}` }
+  // Docker 路径无 server 概念，但下游消费方（buildScriptNode 写 stepOutputs）需要
+  // 形状统一的 servers[] 数组。塞一条虚拟条目：host=""、role="docker"、port=0，
+  // 其余字段镜像 docker exec 结果。让 `{{steps.<id>.output.host}}` 等模板对
+  // SSH/Docker 两路径都不破。
+  const success = result.exitCode === 0
+  const dockerDetail = {
+    host: '',
+    port: 0,
+    role: 'docker',
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    success,
   }
-  return { status: 'success', output }
+  if (!success) {
+    return { status: 'failed', output, error: `exit code ${result.exitCode}`, servers: [dockerDetail] }
+  }
+  return { status: 'success', output, servers: [dockerDetail] }
 }
 
 // Build the script node. Captures stage/index/hooks/ctx in a closure so the
@@ -284,10 +298,61 @@ function buildScriptNode(
       }
     }
 
+    const stepOutput = buildScriptStepOutput(exec)
     return {
       currentStageIndex: index,
       stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      ...(stepOutput
+        ? { stepOutputs: { [(stage as PipelineNode).id ?? stage.name]: stepOutput } }
+        : {}),
     }
+  }
+}
+
+/**
+ * Construct the structured stepOutput for a finished script stage so downstream
+ * nodes can resolve `{{steps.<scriptId>.output.<field>}}` templates.
+ *
+ * Top-level shortcut fields (host/port/role/stdout/stderr/exitCode/success)
+ * mirror the "first failure or first success" server — chosen because the
+ * PAM Proxy 诊断修复 capability uses these as the primary diagnostic source:
+ * when a multi-server install fails on the second host, the LLM should see
+ * the failing host's stdout/stderr without having to dig into servers[].
+ *
+ * Selection rule:
+ *   - 单 server：第一台
+ *   - 多 server 全成功：第一台 success
+ *   - 多 server 含失败：第一台失败的 server
+ *
+ * Returns null when the hook didn't supply a `servers` array (e.g. the
+ * "no_executor" branch, an empty-script success, or a hook mock that
+ * doesn't fill the field). In that case buildScriptNode skips the
+ * stepOutputs write — preserving the legacy "no structured output" behaviour
+ * for tests / hooks that don't produce per-server detail.
+ */
+function buildScriptStepOutput(
+  exec: StageExecutionResult,
+): { status: 'success' | 'failed'; output: Record<string, unknown> } | null {
+  const servers = exec.servers
+  if (!servers || servers.length === 0) return null
+
+  // Pick the top-level "primary" server.
+  const firstFailed = servers.find((s) => !s.success)
+  const primary = firstFailed ?? servers[0]
+
+  return {
+    status: exec.status,
+    output: {
+      host: primary.host,
+      port: primary.port,
+      role: primary.role,
+      stdout: primary.stdout,
+      stderr: primary.stderr,
+      exitCode: primary.exitCode,
+      success: primary.success,
+      ...(primary.error !== undefined ? { error: primary.error } : {}),
+      servers,
+    },
   }
 }
 

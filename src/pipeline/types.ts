@@ -101,11 +101,50 @@ export interface StageContext {
   triggerUserId?: string
 }
 
+/**
+ * Per-server (or per-docker-exec) structured execution detail.
+ *
+ * Filled in by the SSH script hook (`runScriptOnServers` 收集 per-server 数据)
+ * and by `runScriptInDocker` (单条虚拟 entry: host="", role="docker"). Other
+ * hooks (capability / customAgent) leave `StageExecutionResult.servers`
+ * undefined.
+ *
+ * Surfaced to downstream pipeline nodes via `state.stepOutputs[<scriptNodeId>]`
+ * as both top-level shortcut fields (host/stdout/stderr/exitCode/role/success
+ * — for the "first failure or first success" server) and the full
+ * `servers: ServerExecutionDetail[]` array.
+ *
+ * `exitCode === -1` indicates the SSH connection itself failed (timeout /
+ * connection refused / etc.) — the underlying process never reached an
+ * exit. `error` carries the error string in that case. For Docker / normal
+ * SSH paths, `exitCode` matches the real process exit code.
+ */
+export interface ServerExecutionDetail {
+  host: string
+  port: number
+  role: string
+  stdout: string
+  stderr: string
+  exitCode: number
+  success: boolean
+  error?: string
+}
+
 export interface StageExecutionResult {
   status: 'success' | 'failed'
   output: string
   error?: string
   artifacts?: string[]
+  /**
+   * Structured per-server execution details. Populated only by SSH/Docker
+   * `script` stage hooks; absent for capability / customAgent / executor
+   * nodes (those publish their structured output through other channels).
+   *
+   * `buildScriptNode` reads this to populate `state.stepOutputs[<id>]` so
+   * downstream `{{steps.<scriptNodeId>.output.<field>}}` templates resolve
+   * to real values instead of dangling literal `{{...}}` placeholders.
+   */
+  servers?: ServerExecutionDetail[]
 }
 
 export interface ArtifactInput {

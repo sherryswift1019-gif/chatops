@@ -263,3 +263,71 @@ describe('buildScriptNode — steps.* template forwarding', () => {
     )
   })
 })
+
+/**
+ * Integration: assert the *graph state* exposes the script node's stepOutput
+ * via state.stepOutputs[<id>] after the run finishes. This is the "writing
+ * end" of the round-trip — the prior block proved the "reading end" (a
+ * downstream script can read upstream stepOutputs); this block proves a
+ * downstream node can read THIS script's stepOutputs.
+ */
+describe('buildScriptNode — graph state.stepOutputs[<scriptId>] (downstream consumption)', () => {
+  it('SSH path: state.stepOutputs[stageId] populated with structured server detail', async () => {
+    const stages: StageDefinition[] = [
+      makeStage({
+        name: 'install',
+        stageType: 'script',
+        targetRoles: ['app'],
+        script: 'install.sh',
+      }),
+    ]
+
+    const hooks: StageHooks = {
+      async runScript(_stage, _ctx, servers): Promise<StageExecutionResult> {
+        return {
+          status: 'success',
+          output: 'log',
+          servers: [{
+            host: servers[0].host,
+            port: servers[0].port,
+            role: servers[0].role,
+            stdout: 'install ok',
+            stderr: '',
+            exitCode: 0,
+            success: true,
+          }],
+        }
+      },
+    }
+
+    const builder = buildGraphFromStages({
+      stages,
+      stageContext: {
+        runId: 42,
+        servers: { app: [sshServer] },
+        logDir: '/tmp/chatops-test',
+      },
+      hooks,
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (builder as any).compile({ checkpointer: new MemorySaver() })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await app.stream({ runId: 42 }, config))
+
+    // 读最终 graph state — id 在 buildGraphFromStages linearize 后是 "n0"
+    const finalState = (await app.getState(config)).values
+    const stepOutputs = finalState.stepOutputs as Record<
+      string,
+      { status: string; output: Record<string, unknown> }
+    > | undefined
+    expect(stepOutputs).toBeDefined()
+    expect(stepOutputs!.n0).toBeDefined()
+    expect(stepOutputs!.n0.status).toBe('success')
+    const out = stepOutputs!.n0.output
+    expect(out.host).toBe(sshServer.host)
+    expect(out.stdout).toBe('install ok')
+    expect(out.exitCode).toBe(0)
+    expect(out.success).toBe(true)
+    expect(Array.isArray(out.servers)).toBe(true)
+  })
+})

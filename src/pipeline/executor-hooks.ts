@@ -22,6 +22,7 @@ import type {
   StageContext,
   StageExecutionResult,
   ServerInfo,
+  ServerExecutionDetail,
 } from './types.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -156,6 +157,7 @@ async function runScriptOnServers(
 
   const logFile = join(logDir, `${String(ctx.stageIndex + 1).padStart(2, '0')}-script.log`)
   const allLogs: string[] = []
+  const details: ServerExecutionDetail[] = []
   let failed = false
   let failError = ''
 
@@ -189,14 +191,38 @@ async function runScriptOnServers(
       if (result.stdout) allLogs.push(`[stdout]\n${result.stdout.trimEnd()}`)
       if (result.stderr) allLogs.push(`[stderr]\n${result.stderr.trimEnd()}`)
       allLogs.push(`[exit code] ${result.code}`)
-      if (result.code !== 0) {
+      const success = result.code === 0
+      details.push({
+        host: server.host,
+        port: server.port,
+        role: server.role,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.code,
+        success,
+      })
+      if (!success) {
         failed = true
         failError = `exit code ${result.code} on ${server.host}`
       }
     } catch (err) {
-      allLogs.push(`[error] ${String(err)}`)
+      const errStr = String(err)
+      allLogs.push(`[error] ${errStr}`)
+      // SSH 抛错（timeout / connect refused / auth）时进程从未真的退出，
+      // exitCode = -1 作为"未正常退出"哨兵，让下游用统一的 `exitCode !== 0`
+      // 判定逻辑兜住。error 字段保留原始字符串供诊断。
+      details.push({
+        host: server.host,
+        port: server.port,
+        role: server.role,
+        stdout: '',
+        stderr: '',
+        exitCode: -1,
+        success: false,
+        error: errStr,
+      })
       failed = true
-      failError = String(err)
+      failError = errStr
     }
   }
 
@@ -204,8 +230,8 @@ async function runScriptOnServers(
   await writeFile(logFile, allLogs.join('\n') + '\n').catch(() => {})
 
   const output = allLogs.join('\n')
-  if (failed) return { status: 'failed', output, error: failError }
-  return { status: 'success', output }
+  if (failed) return { status: 'failed', output, error: failError, servers: details }
+  return { status: 'success', output, servers: details }
 }
 
 /** Build the default runScript/runCapability hooks used by the real executor. */
@@ -219,12 +245,19 @@ export function buildDefaultHooks(logDir: string): StageHooks {
             runScriptOnServers(stage, ctx, [server], logDir),
           ),
         )
+        const mergedServers = perServer.flatMap((r) => r.servers ?? [])
         const failed = perServer.find((r) => r.status === 'failed')
-        if (failed) return failed
+        if (failed) {
+          // Preserve the first-failed sub-call's status/output/error for
+          // back-compat (string log + 'failed') but stitch the full per-server
+          // detail array so downstream stepOutput sees every parallel branch.
+          return { ...failed, servers: mergedServers }
+        }
         return {
           status: 'success',
           output: perServer.map((r) => r.output).join('\n'),
           artifacts: perServer.flatMap((r) => r.artifacts ?? []),
+          servers: mergedServers,
         }
       }
 
