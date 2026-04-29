@@ -40,8 +40,12 @@ services:
       DATABASE_URL: postgres://chatops:chatops@postgres:5432/chatops
       PORT: "3000"
       TEST_DATA_DIR: /data/chatops/test-runs
+      HOST_TEST_DATA_DIR: /srv/chatops/test-runs
     volumes:
-      - testdata:/data/chatops/test-runs
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/chatops/test-runs:/data/chatops/test-runs
+    group_add:
+      - "${DOCKER_GID:-999}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,4 +55,3 @@ services:
 
 volumes:
   pgdata:
-  testdata:

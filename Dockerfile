@@ -27,7 +27,13 @@ RUN npx tsc --noEmit
 
 # 运行时依赖：git 用于 analyze_bug/fix_bug 的 clone + worktree
 # JDK/Maven 暂不打包，fix_bug 当前不跑测试（TODO #14 规划 DinD 多语言构建环境）
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
+ && install -m 0755 -d /etc/apt/keyrings \
+ && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+ && chmod a+r /etc/apt/keyrings/docker.asc \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
+    > /etc/apt/sources.list.d/docker.list \
+ && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system user.email "chatops@paraview.cn" \
  && git config --system user.name "ChatOps Agent"
