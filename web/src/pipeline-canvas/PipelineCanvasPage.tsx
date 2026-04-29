@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ReactFlowProvider } from '@xyflow/react'
-import { Spin, message, Modal, Drawer } from 'antd'
+import { Spin, message, Modal, Drawer, Form } from 'antd'
 import { ulid } from 'ulidx'
 import { getTestPipeline } from '../api/test-pipelines'
 import { triggerTestRun } from '../api/test-runs'
@@ -23,6 +23,7 @@ import { SideEffectDecisionModal } from './dryrun/SideEffectDecisionModal'
 import { WaitingExternalBanner } from './dryrun/WaitingExternalBanner'
 import WebhooksPanel from './panels/WebhooksPanel'
 import PipelineSettingsPanel from './panels/PipelineSettingsPanel'
+import { ParamSchemaForm } from './panels/ParamSchemaForm.js'
 import type { TestPipeline } from '../types'
 import type { StageType, StageFields } from './types'
 
@@ -156,6 +157,10 @@ export default function PipelineCanvasPage() {
   const [webhooksOpen, setWebhooksOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
 
+  // Manual trigger with paramSchema modal
+  const [manualTriggerVisible, setManualTriggerVisible] = useState(false)
+  const [paramForm] = Form.useForm()
+
   const graph = usePipelineGraph({ nodes: [], edges: [] })
   const autoLayout = useAutoLayout()
 
@@ -260,11 +265,17 @@ export default function PipelineCanvasPage() {
       message.warning('请先保存再触发')
       return
     }
-    try {
-      const { runId } = await triggerTestRun({ pipelineId, servers: {}, triggerType: 'manual' })
-      message.success(`已触发，执行记录 #${runId}`)
-    } catch (e: any) {
-      message.error(e?.response?.data?.error ?? '触发失败')
+    const paramSchemaProps = pipeline?.paramSchema?.properties
+    if (paramSchemaProps && typeof paramSchemaProps === 'object' && Object.keys(paramSchemaProps).length > 0) {
+      paramForm.resetFields()
+      setManualTriggerVisible(true)
+    } else {
+      try {
+        const { runId } = await triggerTestRun({ pipelineId, servers: {}, triggerType: 'manual' })
+        message.success(`已触发，执行记录 #${runId}`)
+      } catch (e: any) {
+        message.error(e?.response?.data?.error ?? '触发失败')
+      }
     }
   }
 
@@ -435,6 +446,36 @@ export default function PipelineCanvasPage() {
             />
           )}
         </Drawer>
+        <Modal
+          title="触发参数"
+          open={manualTriggerVisible}
+          onOk={async () => {
+            try {
+              const values = await paramForm.validateFields()
+              const { runId } = await triggerTestRun({
+                pipelineId,
+                servers: {},
+                triggerType: 'manual',
+                params: values,
+              })
+              setManualTriggerVisible(false)
+              message.success(`已触发，执行记录 #${runId}`)
+            } catch (e: any) {
+              if (e?.response?.data?.error) {
+                message.error(e.response.data.error)
+              }
+              // validation error — don't close
+            }
+          }}
+          onCancel={() => setManualTriggerVisible(false)}
+          okText="触发"
+        >
+          {pipeline?.paramSchema && (
+            <Form form={paramForm} layout="vertical">
+              <ParamSchemaForm schema={pipeline.paramSchema as Record<string, unknown>} form={paramForm} />
+            </Form>
+          )}
+        </Modal>
       </div>
     </ReactFlowProvider>
   )

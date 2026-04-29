@@ -26,6 +26,7 @@ export const triggerTestRun = (body: {
   triggeredBy?: string
   triggerType?: 'manual' | 'api'
   runtimeVars?: Record<string, string>
+  params?: Record<string, unknown>
 }) =>
   client.post<{ runId: number; message: string }>('/test-runs', body).then(r => r.data)
 

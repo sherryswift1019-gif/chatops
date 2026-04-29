@@ -62,8 +62,9 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     triggeredBy?: string
     triggerType?: 'manual' | 'api'
     runtimeVars?: Record<string, string>
+    params?: Record<string, unknown>
   } }>('/test-runs', async (req, reply) => {
-    const { pipelineId, servers, triggeredBy, triggerType, runtimeVars } = req.body
+    const { pipelineId, servers, triggeredBy, triggerType, runtimeVars, params } = req.body
     if (!pipelineId || !servers) {
       return reply.status(400).send({ error: 'pipelineId and servers required' })
     }
@@ -89,8 +90,8 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
 
     try {
       const trigger = effectiveType === 'manual'
-        ? manualTrigger({ triggeredBy: effectiveUser })
-        : apiTrigger({ triggeredBy: effectiveUser })
+        ? manualTrigger({ triggeredBy: effectiveUser, params: params ?? {} })
+        : apiTrigger({ triggeredBy: effectiveUser, params: params ?? {} })
       const runId = await runPipeline(pipelineId, effectiveServers, trigger, runtimeVars ?? {})
       return reply.status(201).send({ runId, message: 'Pipeline started' })
     } catch (e) {
