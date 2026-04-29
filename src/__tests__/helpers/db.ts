@@ -229,6 +229,8 @@ const SCHEMA_FILES = [
   'schema-v57.sql',
   // v58: capability_invocations status CHECK 加 not_executed，纯约束变更，安全加入。
   'schema-v58.sql',
+  // v59: 给 diagnose_and_repair capability 补 run_remote_command 工具，纯 UPDATE catalog，安全加入。
+  'schema-v59.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
