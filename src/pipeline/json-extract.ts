@@ -57,15 +57,38 @@ export function extractJsonObject(raw: string): Record<string, unknown> {
   }
 
   // 步骤 2：剥 markdown fence
-  // 匹配 ```json\n...\n``` 或 ```\n...\n```（lang 可选、首尾换行可选）
-  const fenceMatch = trimmed.match(/```(?:json|JSON)?\s*\n?([\s\S]*?)\n?\s*```/)
-  if (fenceMatch && fenceMatch[1].trim() !== '') {
-    try {
-      return parseStrict(fenceMatch[1].trim())
-    } catch (e) {
-      if (e instanceof NotJsonObjectError) throw e
-      // SyntaxError → 落到步骤 3
+  // 匹配所有 ```json\n...\n``` / ```\n...\n``` fence 候选（lang 可选、首尾换行可选）。
+  // 真实 LLM 输出常含多个 fence（分析报告里夹 ```bash``` shell 命令 + 末尾
+  // ```json``` 答案）；旧实现单次 match 必中第一个 fence，碰到 bash 在前会 parse
+  // 失败，再退到步骤 3 first/last `{}` substring 把散文里的 `{{...}}` 字面引用
+  // 抓进来导致 SyntaxError。
+  //
+  // 修法：迭代所有 fence，**优先尝试显式 `json`/`JSON` lang 标注的 block**
+  // (语义最稳健)，再尝试无 lang fence；每个候选 parseStrict，第一个 plain
+  // object 赢；遇 NotJsonObjectError（数组/null/primitive）立即上抛——保留
+  // "fence 内是 array 也直接拒"的现有语义；只有 SyntaxError 才继续尝试下一个。
+  const fenceMatches = Array.from(
+    trimmed.matchAll(/```(json|JSON)?[ \t]*\n?([\s\S]*?)\n?[ \t]*```/g),
+  )
+  if (fenceMatches.length > 0) {
+    const labeled = fenceMatches.filter((m) => m[1] && m[1] !== '')
+    const unlabeled = fenceMatches.filter((m) => !m[1])
+    const ordered = [...labeled, ...unlabeled]
+    let lastSyntaxErr: unknown
+    for (const m of ordered) {
+      const content = m[2].trim()
+      if (content === '') continue
+      try {
+        return parseStrict(content)
+      } catch (e) {
+        if (e instanceof NotJsonObjectError) throw e
+        lastSyntaxErr = e
+        // SyntaxError → 继续下一个 fence 候选
+      }
     }
+    // 所有 fence 候选都 parse 失败 → 落到步骤 3 兜底；lastSyntaxErr 不直接抛，
+    // 让步骤 3 兜底有机会救场（first/last `{}` substring 是最后一道防线）。
+    void lastSyntaxErr
   }
 
   // 步骤 3：找 first `{` 到 last `}` substring

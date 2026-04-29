@@ -65,4 +65,73 @@ describe('extractJsonObject', () => {
   it('NotJsonObjectError 是 Error 子类', () => {
     expect(new NotJsonObjectError('x')).toBeInstanceOf(Error)
   })
+
+  // ---- 多 markdown fence 场景（PAM Proxy run-11 stage-5 实战：散文 + bash fence + json fence）----
+
+  it('多 fence：散文 + ```bash``` 非 JSON block + 末尾 ```json``` JSON block → 取末尾 JSON', () => {
+    // 关键设计：bash block 内有 `{...}` 字面（make sure first/last `{}` 兜底
+    // 不会误把 bash 内容当 JSON 抓走），强制走步骤 2 的 fence 迭代。
+    const raw = [
+      '根据日志分析故障，以下是诊断步骤：',
+      '',
+      '```bash',
+      'ssh root@host "systemctl status app | grep -E \'\\{.*\\}\'"',
+      '```',
+      '',
+      '建议执行：',
+      '',
+      '```bash',
+      'ssh root@host "echo {ok: yes}"',
+      '```',
+      '',
+      '最终输出：',
+      '',
+      '```json',
+      '{"intent": "restart", "service": "app", "confidence": 0.92}',
+      '```',
+    ].join('\n')
+    expect(extractJsonObject(raw)).toEqual({
+      intent: 'restart',
+      service: 'app',
+      confidence: 0.92,
+    })
+  })
+
+  it('多个 ```json``` fence：返回第一个 parse 成功的对象', () => {
+    // 让兜底步骤 3 救不了：raw 里 first `{` 在第一个 json fence，last `}` 在
+    // 第二个 json fence —— substring 横跨 ` ``` second attempt: ``` ` 散文，
+    // 不是合法 JSON。所以必须靠步骤 2 的 fence 迭代取第一个能 parse 的。
+    const raw = [
+      'first attempt:',
+      '```json',
+      '{"a": 1}',
+      '```',
+      'second attempt:',
+      '```json',
+      '{"b": 2}',
+      '```',
+    ].join('\n')
+    expect(extractJsonObject(raw)).toEqual({ a: 1 })
+  })
+
+  it('回归：散文 + 单 ```json``` fence 仍取该 fence 内容（multi-fence 修法不退化单 fence 路径）', () => {
+    const raw = '说明：\n```json\n{"k": "v"}\n```\n以上。'
+    expect(extractJsonObject(raw)).toEqual({ k: 'v' })
+  })
+
+  it('多 fence：bash fence 内容里有看似 JSON 的字面 `{...}` 也不会被错认（避免 first/last `{}` 兜底误抓）', () => {
+    // 关键防御：步骤 3 的 first `{` to last `}` 兜底容易把散文里的 `{{x}}` /
+    // bash 中 `{` 抓进来，必须在步骤 2 的 fence 迭代里就能找到 json fence。
+    const raw = [
+      'analysis: see `{{triggerParams.foo}}` reference and {bracket} note',
+      '```bash',
+      'echo "{not json}"',
+      '```',
+      'final answer:',
+      '```json',
+      '{"ok": true, "n": 3}',
+      '```',
+    ].join('\n')
+    expect(extractJsonObject(raw)).toEqual({ ok: true, n: 3 })
+  })
 })

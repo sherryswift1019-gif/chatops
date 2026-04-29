@@ -59,13 +59,37 @@ describe('resolveCapabilityParams (legacy 3-arg signature)', () => {
     expect(out).toEqual({ ref: '{{vars.missing}}' })
   })
 
-  it('embedded templates (non-whole-string match) are left as literal for v1', () => {
+  it('embedded templates are resolved (string-typed) — was v1 literal-only, now matches script-node behavior', () => {
+    // 历史 v1 锁："嵌入式模板保持字面量不展开"。生产 PAM Proxy pipeline
+    // 的 capabilityParams 形如 `cd /tmp && PAM_ADDRESS={{triggerParams.x}} ./run.sh`
+    // 是嵌入式，被 LLM 收到后无法消费。现在第三段对 string 走 resolveVariables，
+    // 与 script 节点对齐。整值替换的类型保留约束不变（前两段已优先命中）。
     const out = resolveCapabilityParams(
       { url: 'https://host/{{vars.path}}' },
       undefined,
       { path: 'abc' },
     )
-    expect(out).toEqual({ url: 'https://host/{{vars.path}}' })
+    expect(out).toEqual({ url: 'https://host/abc' })
+  })
+
+  it('3-arg form: embedded {{triggerParams.x}} resolves inside a larger string', () => {
+    const out = resolveCapabilityParams(
+      { cmd: 'cd /tmp && PAM_ADDRESS={{triggerParams.pam_address}} ./install.sh' },
+      { pam_address: '10.0.0.1:8443' },
+      undefined,
+    )
+    expect(out).toEqual({
+      cmd: 'cd /tmp && PAM_ADDRESS=10.0.0.1:8443 ./install.sh',
+    })
+  })
+
+  it('3-arg form: embedded template with unresolved key keeps that placeholder literal (resolveVariables semantics)', () => {
+    const out = resolveCapabilityParams(
+      { cmd: 'echo {{vars.missing}} done' },
+      undefined,
+      {},
+    )
+    expect(out).toEqual({ cmd: 'echo {{vars.missing}} done' })
   })
 
   it('non-string values pass through untouched', () => {
@@ -159,7 +183,7 @@ describe('resolveCapabilityParams (2-arg overload with VariableContext)', () => 
     expect(out).toEqual({ flag: true, obj: { a: 1 } })
   })
 
-  it('embedded templates remain literal in 2-arg overload too', () => {
+  it('embedded templates resolved in 2-arg overload (steps / vars / triggerParams 任意 namespace)', () => {
     const ctx = makeCtx({
       steps: { x: { status: 'success', output: { name: 'alice' } } },
     })
@@ -167,7 +191,33 @@ describe('resolveCapabilityParams (2-arg overload with VariableContext)', () => 
       { msg: 'hello {{steps.x.output.name}}' },
       ctx,
     )
-    expect(out).toEqual({ msg: 'hello {{steps.x.output.name}}' })
+    expect(out).toEqual({ msg: 'hello alice' })
+  })
+
+  it('2-arg form: multiple embedded templates of mixed namespaces all resolve in one string', () => {
+    const ctx = makeCtx({
+      triggerParams: { user: 'bob' },
+      vars: { region: 'us-east-1' } as unknown as Record<string, string>,
+      steps: { load: { status: 'success', output: { id: 7 } } },
+    })
+    const out = resolveCapabilityParams(
+      {
+        msg: 'user={{triggerParams.user}} region={{vars.region}} id={{steps.load.output.id}}',
+      },
+      ctx,
+    )
+    expect(out).toEqual({
+      msg: 'user=bob region=us-east-1 id=7',
+    })
+  })
+
+  it('2-arg form: unresolved template inside a larger string keeps that placeholder literal', () => {
+    const ctx = makeCtx({ steps: {} })
+    const out = resolveCapabilityParams(
+      { msg: 'prefix {{steps.missing.output.x}} suffix' },
+      ctx,
+    )
+    expect(out).toEqual({ msg: 'prefix {{steps.missing.output.x}} suffix' })
   })
 
   it('priority: scopes > steps > vars > triggerParams (single-segment ambiguity)', () => {

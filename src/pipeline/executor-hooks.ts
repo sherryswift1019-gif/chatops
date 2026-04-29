@@ -139,8 +139,18 @@ export function resolveCapabilityParams(
       continue
     }
 
-    // 第三段：嵌入式模板 / 字面值——保持现状不展开（v1 capability 节点限制）。
-    resolved[key] = value
+    // 第三段：嵌入式模板——对 string 值走 resolveVariables 做嵌入式替换，
+    // 与 script 节点（runScriptOnServers 中 resolveVariables(script, varCtx)）
+    // 行为对齐。生产场景：capabilityParams 里 `cd /tmp && PAM_ADDRESS={{triggerParams.x}} ./run.sh`
+    // 这种嵌入式必须能被替换，否则 LLM 收到的还是字面 `{{...}}`。
+    //
+    // 类型保留约束不破：integer/object/array 字面量在 line 106-109 已被透传，
+    // 整值匹配的 `{{...}}` 在第一/二段保留原类型——只有"嵌入式 string"会到第三段，
+    // resolveVariables 输出仍是 string。
+    //
+    // 未匹配模板由 resolveVariables 自身保留字面（variables.ts:91-102），与
+    // 旧 fast path 的"未匹配保留 `{{...}}`"语义一致。
+    resolved[key] = resolveVariables(value, varCtxForPath as unknown as VariableContext)
   }
   return resolved
 }
