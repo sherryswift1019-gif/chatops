@@ -168,7 +168,21 @@ export default function TestRunsPage() {
         <Table rowKey="id" columns={columns} dataSource={data} loading={loading} {...tableProps} />
       </Card>
 
-      <Drawer title={selectedRun ? `执行详情 #${selectedRun.id}` : ''} open={drawerOpen} onClose={() => setDrawerOpen(false)} width={600}>
+      <Drawer
+        title={selectedRun ? `执行详情 #${selectedRun.id}` : ''}
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        width={600}
+        extra={selectedRun && (
+          <Button
+            icon={<ReloadOutlined />}
+            size="small"
+            onClick={() => { void refreshDetail(selectedRun.id) }}
+          >
+            刷新
+          </Button>
+        )}
+      >
         {selectedRun && (
           <>
             <Descriptions column={2} size="small" style={{ marginBottom: 16 }}>
