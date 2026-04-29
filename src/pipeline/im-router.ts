@@ -55,3 +55,32 @@ export function isGroupBusy(platform: string, groupId: string): boolean {
 export function listWaiters(): ImWaiter[] {
   return Array.from(byRun.values())
 }
+
+// ---------------------------------------------------------------------------
+// ParamCollectWaiter — 用于 im_input 参数采集的 Promise-based waiter
+// ---------------------------------------------------------------------------
+
+export interface ParamCollectWaiter {
+  platform: string
+  groupId: string
+  reject: (reason: Error) => void
+}
+
+const byGroupCollect = new Map<string, ParamCollectWaiter>()
+
+export function registerParamCollectWaiter(w: ParamCollectWaiter): void {
+  const key = groupKey(w.platform, w.groupId)
+  const existing = byGroupCollect.get(key)
+  if (existing) {
+    existing.reject(new Error('新的参数采集请求替换了旧的等待'))
+  }
+  byGroupCollect.set(key, w)
+}
+
+export function unregisterParamCollectWaiter(platform: string, groupId: string): void {
+  byGroupCollect.delete(groupKey(platform, groupId))
+}
+
+export function findParamCollectWaiter(platform: string, groupId: string): ParamCollectWaiter | null {
+  return byGroupCollect.get(groupKey(platform, groupId)) ?? null
+}
