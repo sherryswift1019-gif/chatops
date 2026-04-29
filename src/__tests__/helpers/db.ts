@@ -220,6 +220,8 @@ const SCHEMA_FILES = [
   'schema-v53.sql',
   // v54: 删除 im_input 节点类型，DELETE 幂等，安全加入。
   'schema-v54.sql',
+  // v55: dingtalk_users 新增 resigned_at 列，纯 ALTER，无 seed 数据，安全加入。
+  'schema-v55.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
