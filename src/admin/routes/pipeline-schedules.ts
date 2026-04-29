@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify'
+import cron from 'node-cron'
 import {
   listPipelineSchedules,
   createPipelineSchedule,
   updatePipelineSchedule,
   deletePipelineSchedule,
+  getPipelineScheduleById,
 } from '../../db/repositories/pipeline-schedules.js'
 import { getTestPipelineById } from '../../db/repositories/test-pipelines.js'
 import { validateTriggerParams } from '../../pipeline/validate-trigger-params.js'
@@ -23,6 +25,10 @@ export async function registerPipelineScheduleRoutes(app: FastifyInstance): Prom
   }>('/test-pipelines/:id/schedules', async (req, reply) => {
     const pipelineId = Number(req.params.id)
     const { name, cronExpr, presetParams = {}, enabled } = req.body
+
+    if (!cron.validate(cronExpr)) {
+      return reply.status(400).send({ error: 'invalid cronExpr' })
+    }
 
     const pipeline = await getTestPipelineById(pipelineId)
     if (!pipeline) return reply.status(404).send({ error: 'pipeline not found' })
@@ -47,6 +53,15 @@ export async function registerPipelineScheduleRoutes(app: FastifyInstance): Prom
     const pipelineId = Number(req.params.id)
     const scheduleId = Number(req.params.sid)
 
+    const schedule = await getPipelineScheduleById(scheduleId)
+    if (!schedule || schedule.pipelineId !== pipelineId) {
+      return reply.status(404).send({ error: 'schedule not found' })
+    }
+
+    if (req.body.cronExpr !== undefined && !cron.validate(req.body.cronExpr)) {
+      return reply.status(400).send({ error: 'invalid cronExpr' })
+    }
+
     if (req.body.presetParams !== undefined) {
       const pipeline = await getTestPipelineById(pipelineId)
       if (pipeline?.paramSchema) {
@@ -67,7 +82,13 @@ export async function registerPipelineScheduleRoutes(app: FastifyInstance): Prom
   app.delete<{ Params: { id: string; sid: string } }>(
     '/test-pipelines/:id/schedules/:sid',
     async (req, reply) => {
-      const ok = await deletePipelineSchedule(Number(req.params.sid))
+      const pipelineId = Number(req.params.id)
+      const scheduleId = Number(req.params.sid)
+      const schedule = await getPipelineScheduleById(scheduleId)
+      if (!schedule || schedule.pipelineId !== pipelineId) {
+        return reply.status(404).send({ error: 'schedule not found' })
+      }
+      const ok = await deletePipelineSchedule(scheduleId)
       if (!ok) return reply.status(404).send({ error: 'schedule not found' })
       await reloadSchedules()
       return reply.status(204).send()
@@ -78,7 +99,13 @@ export async function registerPipelineScheduleRoutes(app: FastifyInstance): Prom
   app.patch<{ Params: { id: string; sid: string }; Body: { enabled: boolean } }>(
     '/test-pipelines/:id/schedules/:sid/toggle',
     async (req, reply) => {
-      const updated = await updatePipelineSchedule(Number(req.params.sid), { enabled: req.body.enabled })
+      const pipelineId = Number(req.params.id)
+      const scheduleId = Number(req.params.sid)
+      const schedule = await getPipelineScheduleById(scheduleId)
+      if (!schedule || schedule.pipelineId !== pipelineId) {
+        return reply.status(404).send({ error: 'schedule not found' })
+      }
+      const updated = await updatePipelineSchedule(scheduleId, { enabled: req.body.enabled })
       if (!updated) return reply.status(404).send({ error: 'schedule not found' })
       await reloadSchedules()
       return reply.send(updated)
