@@ -5,6 +5,7 @@ import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import { runPipeline } from './executor.js'
 import { apiTrigger } from './trigger.js'
 import { extractServersFromPayload, isValidServersShape } from './webhook-payload.js'
+import { validateTriggerParams } from './validate-trigger-params.js'
 
 export async function registerWebhookRoute(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { token: string } }>(
@@ -51,6 +52,17 @@ export async function registerWebhookRoute(app: FastifyInstance): Promise<void> 
         bodyServers ??
         (webhook.defaultServers as Record<string, string[]> | null) ??
         {}
+
+      // 5b. paramSchema validation: ensure payload satisfies required fields
+      if (pipeline.paramSchema) {
+        const check = validateTriggerParams(pipeline.paramSchema, payload)
+        if (!check.valid) {
+          return reply.status(400).send({
+            error: '缺少必填触发参数',
+            missingFields: check.missingFields,
+          })
+        }
+      }
 
       // 6. 触发（await 拿 runId，不等 pipeline 完成）
       const triggeredBy = `webhook:${webhook.id}:${webhook.name}`
