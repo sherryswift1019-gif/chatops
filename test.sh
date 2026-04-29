@@ -289,9 +289,12 @@ run_one_round() {
     local elapsed=$((end_ts - start_ts))
 
     # 解析结果（vitest 输出格式：Test Files  N failed | M passed (...)；Tests N failed | M passed）
-    local files_line tests_line
-    files_line=$(grep -E '^[[:space:]]*Test Files' "$log" | tail -1 || true)
-    tests_line=$(grep -E '^[[:space:]]*Tests' "$log" | tail -1 || true)
+    # vitest 在 tee 管道里仍输出 ANSI 颜色码，行首是 \x1b[2m 不是空白，
+    # 必须先剥色再 grep，否则 ^[[:space:]]* 匹配不到、计数全退化成 0
+    local stripped files_line tests_line
+    stripped=$(sed -E $'s/\x1b\\[[0-9;]*m//g' "$log")
+    files_line=$(echo "$stripped" | grep -E '^[[:space:]]*Test Files' | tail -1 || true)
+    tests_line=$(echo "$stripped" | grep -E '^[[:space:]]*Tests '   | tail -1 || true)
 
     local passed=0 failed=0 skipped=0
     if [ -n "$tests_line" ]; then
