@@ -201,6 +201,7 @@ async function runScriptInDocker(
   stageIndex: number,
   executor: DockerExecutor,
   stepOutputs: Record<string, unknown>,
+  triggerParams: Record<string, unknown>,
 ): Promise<StageExecutionResult> {
   const script = stage.script ?? ''
   if (!script.trim()) return { status: 'success', output: 'No script to execute' }
@@ -213,6 +214,7 @@ async function runScriptInDocker(
     server: { host: '', port: 0, username: '', name: '', role: '' },
     vars: (ctxBase.variables ?? {}) as Record<string, string>,
     steps: stepOutputs,
+    triggerParams,
   }
   const resolvedScript = resolveVariables(script, varCtx)
 
@@ -237,17 +239,19 @@ function buildScriptNode(
   index: number,
   ctxBase: StageContextBase,
   hooks: StageHooks,
+  triggerParams?: Record<string, unknown>,
 ) {
   return async (state: typeof PipelineStateAnnotation.State) => {
     const targetServers = resolveTargetServers(stage, ctxBase.servers)
     const startedAt = nowIso()
     const startedMs = Date.now()
     const stepOutputs = state.stepOutputs ?? {}
+    const tp = triggerParams ?? {}
     let exec: StageExecutionResult
 
     if (targetServers.length > 0) {
       // SSH path — existing behaviour unchanged
-      const ctx: StageContext = { ...ctxBase, stageIndex: index, stepOutputs }
+      const ctx: StageContext = { ...ctxBase, stageIndex: index, stepOutputs, triggerParams: tp }
       try {
         exec = await hooks.runScript(stage, ctx, targetServers)
       } catch (err) {
@@ -263,13 +267,13 @@ function buildScriptNode(
         const nodeExecutor = new DockerExecutor(nodeImage)
         await nodeExecutor.setup(containerName)
         try {
-          exec = await runScriptInDocker(stage, ctxBase, index, nodeExecutor, stepOutputs)
+          exec = await runScriptInDocker(stage, ctxBase, index, nodeExecutor, stepOutputs, tp)
         } finally {
           await nodeExecutor.teardown()
         }
       } else if (ctxBase.dockerExecutor) {
         // Pipeline-level shared executor
-        exec = await runScriptInDocker(stage, ctxBase, index, ctxBase.dockerExecutor, stepOutputs)
+        exec = await runScriptInDocker(stage, ctxBase, index, ctxBase.dockerExecutor, stepOutputs, tp)
       } else {
         exec = {
           status: 'failed',
@@ -977,7 +981,7 @@ export function buildGraphFromPipeline(
         // ---- Side-effect nodes: optionally wrapped with dryRunFlavor interrupt ----
         let realFn: (state: typeof PipelineStateAnnotation.State) => Promise<unknown>
         if (node.stageType === 'script') {
-          realFn = buildScriptNode(node, i, stageContext, hooks) as typeof realFn
+          realFn = buildScriptNode(node, i, stageContext, hooks, triggerParams) as typeof realFn
         } else if (node.stageType === 'approval') {
           realFn = buildApprovalNode(node, i, triggerParams) as typeof realFn
         } else {

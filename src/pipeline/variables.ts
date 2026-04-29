@@ -5,8 +5,8 @@
  *   节点写入）与 `pipeline.variables`（流水线配置自定义变量）的合并值。
  *   script 节点走 resolveVariables（本文件），capability 节点走
  *   resolveCapabilityParams（src/pipeline/executor-hooks.ts）。
- * - `{{triggerParams.xxx}}`：仅 capability 节点识别，读取流水线触发时
- *   透传的 triggerParams。
+ * - `{{triggerParams.xxx}}`：script + capability 节点都识别，读取流水线触发时
+ *   透传的 triggerParams（webhook/IM/手动触发的输入参数）。
  * - 未匹配的模板：保留字面字符串。
  *
  * capability 第一版仅支持整值替换（^{{...}}$），不支持嵌入式模板

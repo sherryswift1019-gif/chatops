@@ -86,6 +86,15 @@ export interface StageContext {
    * never hit a stepOutputs-using script; absent ≡ empty map.
    */
   stepOutputs?: Record<string, unknown>
+  /**
+   * Per-run trigger parameters injected by buildScriptNode so that
+   * runScript hooks can resolve `{{triggerParams.x}}` templates against
+   * the values passed in at pipeline trigger time. Mirrors how capability
+   * / NodeExecutor nodes already receive triggerParams; script nodes used
+   * to drop them on the floor (the SSH timeout in PAM Proxy install.sh).
+   * Absent ≡ empty map.
+   */
+  triggerParams?: Record<string, unknown>
   // IM 触发时的上下文（im-param-collector 使用）
   triggerPlatform?: string
   triggerGroupId?: string

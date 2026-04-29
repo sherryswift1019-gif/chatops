@@ -50,6 +50,99 @@ async function drain(stream: AsyncIterable<unknown>): Promise<void> {
   }
 }
 
+describe('buildScriptNode — triggerParams.* template forwarding', () => {
+  it('SSH path: ctx.triggerParams is forwarded to hooks.runScript', async () => {
+    const stages: StageDefinition[] = [
+      makeStage({
+        name: 's1-script',
+        stageType: 'script',
+        targetRoles: ['app'],
+        script: 'PAM_ADDRESS={{triggerParams.pam_address}} ./install.sh',
+      }),
+    ]
+
+    let receivedCtx: StageContext | undefined
+    const hooks: StageHooks = {
+      async runScript(_stage, ctx): Promise<StageExecutionResult> {
+        receivedCtx = ctx
+        return { status: 'success', output: 'ok' }
+      },
+    }
+
+    const builder = buildGraphFromStages({
+      stages,
+      stageContext: {
+        runId: 42,
+        servers: { app: [sshServer] },
+        logDir: '/tmp/chatops-test',
+      },
+      hooks,
+      triggerParams: { pam_address: 'https://pam-dev.paraview.cn', branch: 'main' },
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (builder as any).compile({ checkpointer: new MemorySaver() })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await app.stream({ runId: 42 }, config))
+
+    expect(receivedCtx).toBeDefined()
+    const triggerParams = (receivedCtx as StageContext & {
+      triggerParams?: Record<string, unknown>
+    }).triggerParams
+    expect(triggerParams).toEqual({
+      pam_address: 'https://pam-dev.paraview.cn',
+      branch: 'main',
+    })
+  })
+
+  it('Docker path: {{triggerParams.x}} resolves against triggerParams in script', async () => {
+    const stages: StageDefinition[] = [
+      makeStage({
+        name: 's1-script',
+        stageType: 'script',
+        // no targetRoles → Docker path
+        script: 'PAM_ADDRESS={{triggerParams.pam_address}} ./install.sh',
+      }),
+    ]
+
+    let receivedScript: string | undefined
+    const dockerExec = {
+      async exec(command: string) {
+        receivedScript = command
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+    }
+
+    const hooks: StageHooks = {
+      async runScript(): Promise<StageExecutionResult> {
+        return { status: 'success', output: 'ssh-not-used' }
+      },
+    }
+
+    const builder = buildGraphFromStages({
+      stages,
+      stageContext: {
+        runId: 42,
+        servers: {},
+        logDir: '/tmp/chatops-test',
+        dockerExecutor: dockerExec as unknown as DockerExecutor,
+      },
+      hooks,
+      triggerParams: { pam_address: 'https://pam-dev.paraview.cn' },
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (builder as any).compile({ checkpointer: new MemorySaver() })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await app.stream({ runId: 42 }, config))
+
+    expect(receivedScript).toBeDefined()
+    // Pre-fix: 字面 "{{triggerParams.pam_address}}"
+    // Post-fix: 替换为实际值
+    expect(receivedScript).toBe(
+      'PAM_ADDRESS=https://pam-dev.paraview.cn ./install.sh',
+    )
+  })
+})
+
 describe('buildScriptNode — steps.* template forwarding', () => {
   it('SSH path: ctx.stepOutputs is forwarded to hooks.runScript', async () => {
     // s1 = capability that emits a stepOutput keyed by node id.

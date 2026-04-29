@@ -100,6 +100,7 @@ async function runScriptOnServers(
       },
       vars: ctx.variables ?? {},
       steps: ctx.stepOutputs ?? {},
+      triggerParams: ctx.triggerParams ?? {},
     }
     const resolved = resolveVariables(script, varCtx)
     const sshCfg = {
