@@ -35,9 +35,9 @@ ${stderr || '（空）'}
 \`\`\`
 
 ## 执行要求
-1. 使用 check_environment_status / get_logs 等 SSH 工具连入 ${serverHost} 诊断根因
-2. 施以修复（清残留文件 / 停冲突进程 / 修复依赖等）
-3. 重新执行上述命令，检查退出码
+1. 通过 run_remote_command 在 ${serverHost} 上诊断根因（例：\`run_remote_command(host: "${serverHost}", command: "ls -la /opt/foo && systemctl status bar")\`）；查询产线/服务整体状态用 check_environment_status，查产线日志用 get_logs
+2. 施以修复（清残留文件 / 停冲突进程 / 修复依赖等），同样通过 run_remote_command 执行写操作
+3. 重新执行上述命令（用 run_remote_command），检查退出码
 4. 若仍失败则再次分析修复，最多重试 ${maxRetries} 次
 5. 最终以 JSON 格式返回：{"success": true/false, "attempts": N, "summary": "修复摘要"}`
 }
@@ -82,7 +82,7 @@ async function handleDiagnoseAndRepair(opts: TriggerOptions): Promise<TriggerRes
           env: {
             ...(process.env as Record<string, string>),
             CHATOPS_TASK_CONTEXT: JSON.stringify(opts.context),
-            CHATOPS_ALLOWED_TOOLS: 'check_environment_status,get_logs',
+            CHATOPS_ALLOWED_TOOLS: 'check_environment_status,get_logs,run_remote_command',
             DATABASE_URL: process.env.DATABASE_URL ?? '',
             ...(await buildClaudeEnv()),
           },

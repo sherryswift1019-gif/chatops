@@ -56,6 +56,7 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   fix_code: ['developer', 'ops', 'admin'],
   run_tests: ['developer', 'tester', 'ops', 'admin'],
   run_command: ['developer', 'tester', 'ops', 'admin'],
+  run_remote_command: ['admin'],
   create_mr: ['developer', 'ops', 'admin'],
   update_ai_summary: ['developer', 'ops', 'admin'],
 

@@ -44,6 +44,12 @@ export async function getTestServerById(id: number): Promise<TestServer | null> 
   return rows[0] ? mapRow(rows[0]) : null
 }
 
+export async function getTestServerByHost(host: string): Promise<TestServer | null> {
+  const pool = getPool()
+  const { rows } = await pool.query('SELECT * FROM test_servers WHERE host = $1 ORDER BY id LIMIT 1', [host])
+  return rows[0] ? mapRow(rows[0]) : null
+}
+
 export async function createTestServer(data: {
   productLineId: number; name: string; host: string; port?: number
   username: string; authType?: 'password' | 'key'; credential: string; role: string
