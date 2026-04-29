@@ -131,6 +131,7 @@ export async function runPipeline(
     triggeredBy,
     servers: serverAssignment,
     runtimeVars: resolveError ? runtimeVarsInput : runtimeVars,
+    triggerParams,
   })
 
   // Record a failed run and bail if we couldn't even resolve the inputs.
