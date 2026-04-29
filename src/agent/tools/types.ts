@@ -10,6 +10,8 @@ export interface TaskContext {
   cwd?: string  // worktree 工作目录（分析/修复 Agent 用）
   productLineId?: number  // 产品线 ID
   originalPrompt?: string
+  /** 节点级容器名，run_command 等本地命令工具看到非空时走 docker exec */
+  dockerContainerName?: string
 }
 
 export interface ToolResult {
@@ -53,6 +55,7 @@ export const DEFAULT_TOOL_ROLES: Record<string, Role[]> = {
   // 修复 Agent 工具（系统内部触发，不直接暴露给用户）
   fix_code: ['developer', 'ops', 'admin'],
   run_tests: ['developer', 'tester', 'ops', 'admin'],
+  run_command: ['developer', 'tester', 'ops', 'admin'],
   create_mr: ['developer', 'ops', 'admin'],
   update_ai_summary: ['developer', 'ops', 'admin'],
 
