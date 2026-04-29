@@ -25,11 +25,13 @@ const statusColors: Record<string, string> = {
   running: 'processing',
   success: 'success',
   failed: 'error',
+  not_executed: 'default',
 }
 const statusLabels: Record<string, string> = {
   running: '执行中',
   success: '成功',
   failed: '失败',
+  not_executed: '未执行',
 }
 const triggerLabels: Record<string, string> = {
   im: 'IM',
@@ -196,6 +198,7 @@ export default function CapabilityInvocationsPage() {
               { value: 'running', label: '执行中' },
               { value: 'success', label: '成功' },
               { value: 'failed', label: '失败' },
+              { value: 'not_executed', label: '未执行' },
             ]}
           />
         </Space>

@@ -227,6 +227,8 @@ const SCHEMA_FILES = [
   'schema-v56.sql',
   // v57: im_triggers 新增 category 列，纯 ALTER，无 seed 数据，安全加入。
   'schema-v57.sql',
+  // v58: capability_invocations status CHECK 加 not_executed，纯约束变更，安全加入。
+  'schema-v58.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

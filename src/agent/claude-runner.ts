@@ -515,9 +515,12 @@ export class ClaudeRunner {
       }
 
       try {
-        await this.executeWithPorygon(opts, capabilityTools, capability, lockInfo)
+        const { toolCallCount } = await this.executeWithPorygon(opts, capabilityTools, capability, lockInfo)
         if (invocationId !== null) {
-          await finishInvocation(invocationId, 'success', '', '').catch(err =>
+          // Agent 仅文本回问参数（一个工具都没调）→ not_executed；
+          // 调过任意工具（execute_*/request_approval 等）→ success。
+          const finalStatus = toolCallCount === 0 ? 'not_executed' : 'success'
+          await finishInvocation(invocationId, finalStatus, '', '').catch(err =>
             console.error('[Runner] finishInvocation failed:', err)
           )
         }
@@ -659,7 +662,7 @@ ${intentRules}
     }
   }
 
-  private async executeWithPorygon(opts: RunOptions, tools: AgentTool[], capability?: Capability, lockInfo?: { project: string; env: string }): Promise<void> {
+  private async executeWithPorygon(opts: RunOptions, tools: AgentTool[], capability?: Capability, lockInfo?: { project: string; env: string }): Promise<{ toolCallCount: number }> {
     const { prompt, context, adapter, executionMode = false } = opts
     const userId = context.initiatorId
     const runStartedAt = new Date()
@@ -734,6 +737,7 @@ ${intentRules}
     }
 
     let textBuffer = ''
+    let toolCallCount = 0
 
     try {
       console.log('[Runner] Starting porygon.query()...')
@@ -777,6 +781,7 @@ ${intentRules}
             break
 
           case 'tool_use':
+            toolCallCount++
             console.log(`[Runner] Tool called: ${msg.toolName}`, JSON.stringify(msg.input).slice(0, 200))
             break
 
@@ -793,10 +798,10 @@ ${intentRules}
               { type: 'group', id: opts.groupId },
               { text: `⚠️ Agent 错误: ${msg.message}` }
             )
-            return
+            return { toolCallCount }
         }
       }
-      console.log(`[Runner] Porygon query completed, textBuffer length=${textBuffer.length}`)
+      console.log(`[Runner] Porygon query completed, textBuffer length=${textBuffer.length}, toolCallCount=${toolCallCount}`)
     } catch (err) {
       console.error('[Runner] executeWithPorygon error:', err)
       this.clearSession(userId)
@@ -804,7 +809,7 @@ ${intentRules}
         { type: 'group', id: opts.groupId },
         { text: `❌ 执行错误: ${String(err)}` }
       ).catch(e => console.error('[Runner] Failed to send error:', e))
-      return
+      return { toolCallCount }
     }
 
     if (textBuffer.trim()) {
@@ -833,6 +838,8 @@ ${intentRules}
         console.error('[Runner] PRD post-run hook failed:', err)
       }
     }
+
+    return { toolCallCount }
   }
 
   /**

@@ -8,7 +8,7 @@ export interface CapabilityInvocation {
   groupId: string
   triggeredBy: string
   taskId: string
-  status: 'running' | 'success' | 'failed'
+  status: 'running' | 'success' | 'failed' | 'not_executed'
   params: Record<string, unknown>
   output: string
   errorMessage: string
@@ -78,7 +78,7 @@ export async function createInvocation(data: {
 
 export async function finishInvocation(
   id: number,
-  status: 'success' | 'failed',
+  status: 'success' | 'failed' | 'not_executed',
   output: string,
   errorMessage = '',
 ): Promise<void> {

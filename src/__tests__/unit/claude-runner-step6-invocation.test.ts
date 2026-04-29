@@ -192,8 +192,8 @@ describe('ClaudeRunner Step 6 — capability_invocations 审计日志', () => {
     runner = new ClaudeRunner()
   })
 
-  it('通用 capability 成功执行 → createInvocation + finishInvocation(success)', async () => {
-    vi.spyOn(runner as any, 'executeWithPorygon').mockResolvedValue(undefined)
+  it('通用 capability 成功执行（Agent 调过工具）→ createInvocation + finishInvocation(success)', async () => {
+    vi.spyOn(runner as any, 'executeWithPorygon').mockResolvedValue({ toolCallCount: 1 })
     const adapter = makeAdapter()
 
     await runner.run(baseRunOpts(adapter))
@@ -210,6 +210,16 @@ describe('ClaudeRunner Step 6 — capability_invocations 审计日志', () => {
     expect(mockFinishInvocation).toHaveBeenCalledWith(888, 'success', '', '')
   })
 
+  it('Agent 仅文本回问参数（没调工具）→ finishInvocation(not_executed)', async () => {
+    vi.spyOn(runner as any, 'executeWithPorygon').mockResolvedValue({ toolCallCount: 0 })
+    const adapter = makeAdapter()
+
+    await runner.run(baseRunOpts(adapter))
+
+    expect(mockCreateInvocation).toHaveBeenCalledOnce()
+    expect(mockFinishInvocation).toHaveBeenCalledWith(888, 'not_executed', '', '')
+  })
+
   it('executeWithPorygon 抛异常 → finishInvocation(failed, message)', async () => {
     vi.spyOn(runner as any, 'executeWithPorygon').mockRejectedValue(new Error('porygon timeout'))
     const adapter = makeAdapter()
@@ -222,7 +232,7 @@ describe('ClaudeRunner Step 6 — capability_invocations 审计日志', () => {
 
   it('createInvocation DB 故障 → executeWithPorygon 仍执行，不调 finishInvocation', async () => {
     mockCreateInvocation.mockRejectedValueOnce(new Error('db down'))
-    const execSpy = vi.spyOn(runner as any, 'executeWithPorygon').mockResolvedValue(undefined)
+    const execSpy = vi.spyOn(runner as any, 'executeWithPorygon').mockResolvedValue({ toolCallCount: 1 })
     const adapter = makeAdapter()
 
     await runner.run(baseRunOpts(adapter))

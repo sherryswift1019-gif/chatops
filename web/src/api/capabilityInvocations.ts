@@ -9,7 +9,7 @@ export interface CapabilityInvocation {
   groupId: string
   triggeredBy: string
   taskId: string
-  status: 'running' | 'success' | 'failed'
+  status: 'running' | 'success' | 'failed' | 'not_executed'
   params: Record<string, unknown>
   output: string
   errorMessage: string
