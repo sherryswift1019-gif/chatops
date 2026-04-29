@@ -71,6 +71,8 @@ export interface TestPipeline {
   variables?: Record<string, string>
   artifactInputs?: ArtifactInput[]
   containerImage?: string | null
+  paramSchema?: Record<string, unknown> | null
+  imPrompt?: string | null
   schedule?: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
 }
 

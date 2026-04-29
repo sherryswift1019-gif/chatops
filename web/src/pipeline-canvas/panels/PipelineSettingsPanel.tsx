@@ -1,6 +1,8 @@
-import { Form, Input, Button, message } from 'antd'
+import { Form, Input, Button, message, Tabs } from 'antd'
 import { updateTestPipeline } from '../../api/test-pipelines'
 import type { TestPipeline } from '../../types'
+import { TriggerParamsPanel } from './TriggerParamsPanel.js'
+import { SchedulesPanel } from './SchedulesPanel.js'
 
 interface Props {
   pipeline: TestPipeline
@@ -22,22 +24,45 @@ export default function PipelineSettingsPanel({ pipeline, onSaved }: Props) {
     }
   }
 
-  return (
-    <Form
-      form={form}
-      layout="vertical"
-      initialValues={{ containerImage: pipeline.containerImage ?? '' }}
-    >
-      <Form.Item
-        name="containerImage"
-        label="默认容器镜像"
-        extra="script 节点无 role 时使用此 image 在本机 Docker 容器内执行；留空则关闭 Docker 模式"
-      >
-        <Input placeholder="例如：node:18、harbor.internal/myapp:latest" allowClear />
-      </Form.Item>
-      <Form.Item>
-        <Button type="primary" onClick={handleSave}>保存</Button>
-      </Form.Item>
-    </Form>
-  )
+  const items = [
+    {
+      key: 'general',
+      label: '基础设置',
+      children: (
+        <Form form={form} layout="vertical" initialValues={{ containerImage: pipeline.containerImage ?? '' }}>
+          <Form.Item
+            name="containerImage"
+            label="默认容器镜像"
+            extra="script 节点无 role 时使用此 image 在本机 Docker 容器内执行；留空则关闭 Docker 模式"
+          >
+            <Input placeholder="例如：node:18、harbor.internal/myapp:latest" allowClear />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" onClick={handleSave}>保存</Button>
+          </Form.Item>
+        </Form>
+      ),
+    },
+    {
+      key: 'trigger-params',
+      label: '触发参数',
+      children: (
+        <TriggerParamsPanel
+          pipelineId={pipeline.id}
+          paramSchema={pipeline.paramSchema ?? null}
+          imPrompt={pipeline.imPrompt ?? null}
+          onSaved={(schema, prompt) => onSaved({ ...pipeline, paramSchema: schema, imPrompt: prompt })}
+        />
+      ),
+    },
+    {
+      key: 'schedules',
+      label: '定时规则',
+      children: (
+        <SchedulesPanel pipelineId={pipeline.id} paramSchema={pipeline.paramSchema ?? null} />
+      ),
+    },
+  ]
+
+  return <Tabs items={items} />
 }
