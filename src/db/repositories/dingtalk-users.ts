@@ -7,14 +7,18 @@ export interface DingTalkUser {
   department: string
   email: string | null
   syncedAt: Date
+  resignedAt: Date | null
 }
 
 function mapRow(r: Record<string, unknown>): DingTalkUser {
   return {
-    userId: r.user_id as string, name: r.name as string,
-    avatar: r.avatar as string, department: r.department as string,
+    userId: r.user_id as string,
+    name: r.name as string,
+    avatar: r.avatar as string,
+    department: r.department as string,
     email: (r.email as string | null) ?? null,
     syncedAt: r.synced_at as Date,
+    resignedAt: (r.resigned_at as Date | null) ?? null,
   }
 }
 
@@ -42,7 +46,8 @@ export async function upsertDingTalkUser(
      ON CONFLICT (user_id) DO UPDATE SET
        name = $2, avatar = $3, department = $4,
        email = COALESCE($5, dingtalk_users.email),
-       synced_at = NOW()`,
+       synced_at = NOW(),
+       resigned_at = NULL`,
     [data.userId, data.name, data.avatar ?? '', data.department ?? '', data.email ?? null]
   )
 }
@@ -74,23 +79,31 @@ export async function getDingTalkUserCount(): Promise<number> {
 export async function listDingTalkUsersPaged(
   keyword: string | null,
   page: number,
-  limit: number
+  limit: number,
+  status: 'all' | 'active' | 'resigned' = 'all'
 ): Promise<{ data: DingTalkUser[]; total: number }> {
   const pool = getPool()
   const offset = (page - 1) * limit
   const kw = keyword || null
 
+  const statusClause =
+    status === 'active' ? 'AND resigned_at IS NULL' :
+    status === 'resigned' ? 'AND resigned_at IS NOT NULL' :
+    ''
+
   const [dataResult, countResult] = await Promise.all([
     pool.query(
       `SELECT * FROM dingtalk_users
        WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')
-       ORDER BY name, user_id
+       ${statusClause}
+       ORDER BY resigned_at IS NOT NULL, name, user_id
        LIMIT $2 OFFSET $3`,
       [kw, limit, offset]
     ),
     pool.query(
       `SELECT COUNT(*) AS count FROM dingtalk_users
-       WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')`,
+       WHERE ($1::text IS NULL OR name ILIKE '%' || $1 || '%' OR user_id ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')
+       ${statusClause}`,
       [kw]
     ),
   ])
@@ -99,4 +112,34 @@ export async function listDingTalkUsersPaged(
     data: dataResult.rows.map(mapRow),
     total: parseInt(countResult.rows[0].count, 10),
   }
+}
+
+export async function getActiveUserIds(): Promise<string[]> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    'SELECT user_id FROM dingtalk_users WHERE resigned_at IS NULL'
+  )
+  return rows.map(r => r.user_id as string)
+}
+
+export async function getResignedUserIds(): Promise<string[]> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    'SELECT user_id FROM dingtalk_users WHERE resigned_at IS NOT NULL'
+  )
+  return rows.map(r => r.user_id as string)
+}
+
+export async function markUsersAsResigned(userIds: string[]): Promise<void> {
+  if (userIds.length === 0) return
+  const pool = getPool()
+  await pool.query(
+    'UPDATE dingtalk_users SET resigned_at = NOW() WHERE user_id = ANY($1)',
+    [userIds]
+  )
+}
+
+export async function deleteUser(userId: string): Promise<void> {
+  const pool = getPool()
+  await pool.query('DELETE FROM dingtalk_users WHERE user_id = $1', [userId])
 }
