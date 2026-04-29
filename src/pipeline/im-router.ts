@@ -55,3 +55,36 @@ export function isGroupBusy(platform: string, groupId: string): boolean {
 export function listWaiters(): ImWaiter[] {
   return Array.from(byRun.values())
 }
+
+/**
+ * ParamCollectWaiter — 轻量的"等一条 IM 消息用于参数采集"注册表。
+ *
+ * 与 ImWaiter（graph interrupt 恢复）独立，优先级更高：
+ * session-manager 先检查 paramCollect waiter，命中则直接 resolve，
+ * 不进入 Agent / graph 流程。
+ */
+
+export interface ParamCollectWaiter {
+  resolve(message: string): void
+}
+
+const paramWaiters = new Map<string, ParamCollectWaiter>()  // `${platform}:${groupId}`
+
+export function registerParamCollectWaiter(
+  platform: string,
+  groupId: string,
+  waiter: ParamCollectWaiter
+): void {
+  paramWaiters.set(groupKey(platform, groupId), waiter)
+}
+
+export function unregisterParamCollectWaiter(platform: string, groupId: string): void {
+  paramWaiters.delete(groupKey(platform, groupId))
+}
+
+export function findParamCollectWaiter(
+  platform: string,
+  groupId: string
+): ParamCollectWaiter | null {
+  return paramWaiters.get(groupKey(platform, groupId)) ?? null
+}
