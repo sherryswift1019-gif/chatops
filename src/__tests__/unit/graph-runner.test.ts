@@ -89,6 +89,8 @@ vi.mock('../../db/repositories/test-pipelines.js', () => ({
     artifactInputs: [],
     graph: null,
     containerImage: null,
+    paramSchema: null,
+    imPrompt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
   })),
