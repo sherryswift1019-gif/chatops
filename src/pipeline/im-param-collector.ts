@@ -57,7 +57,14 @@ export async function collectImParams(
 
   while (true) {
     const msgPromise = waitForImMessage(platform, groupId)
-    await notifyImGroup(platform, groupId, prompt)
+    try {
+      await notifyImGroup(platform, groupId, prompt)
+    } catch (notifyErr) {
+      // Notification failed: clean up waiter and suppress orphaned promise rejection
+      unregisterParamCollectWaiter(platform, groupId)
+      msgPromise.catch(() => {})
+      throw notifyErr
+    }
     const userMessage = await msgPromise
 
     const result = await consultImInputAgent({ userMessage, currentParams: collected, paramSchema })

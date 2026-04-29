@@ -174,35 +174,41 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
   const imTrigger = await getIMTrigger(opts.capabilityKey)
   if (imTrigger) {
     if (imTrigger.pipelineId) {
-      try {
-        // 动态 import 避免 coordinator ↔ executor-hooks ↔ coordinator 循环依赖。
-        const { runPipeline, imTrigger: imTriggerCtx } = await import('../pipeline/executor.js')
-        const runId = await runPipeline(
-          imTrigger.pipelineId,
-          {},  // IM 触发场景通常不预分配服务器，由 pipeline 内部按需处理
-          imTriggerCtx({
-            triggeredBy: opts.context.initiatorId,
-            platform: opts.context.platform,
-            groupId: opts.context.groupId,
-            userId: opts.context.initiatorId,
-            params: opts.extraParams ?? {},
-          }),
-          {},  // runtimeVars 走 trigger.params 通道
-          undefined,  // onComplete：进度反馈由 im-notifier 从 pipeline 内部推送
-        )
-        console.log(
-          `[AgentCoordinator] pipeline run #${runId} started for "${opts.capabilityKey}" (via im_trigger)`,
-        )
-        return {
-          success: true,
-          output: `Pipeline run #${runId} started`,
-          data: { runId, pipelineId: imTrigger.pipelineId },
+      const pipelineId = imTrigger.pipelineId
+      const platform = opts.context.platform
+      const groupId = opts.context.groupId
+      const initiatorId = opts.context.initiatorId
+
+      void (async () => {
+        try {
+          const { runPipeline, imTrigger: imTriggerCtx } = await import('../pipeline/executor.js')
+          const { getTestPipelineById } = await import('../db/repositories/test-pipelines.js')
+          const { collectImParams } = await import('../pipeline/im-param-collector.js')
+
+          const pipeline = await getTestPipelineById(pipelineId)
+          if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)
+
+          let params: Record<string, unknown> = opts.extraParams ?? {}
+          if (pipeline.paramSchema) {
+            params = await collectImParams(platform, groupId, pipeline.paramSchema, pipeline.imPrompt)
+          }
+
+          await runPipeline(
+            pipelineId,
+            {},
+            imTriggerCtx({ triggeredBy: initiatorId, platform, groupId, userId: initiatorId, params }),
+            {},
+            undefined,
+          )
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          console.error(`[AgentCoordinator] pipeline start failed for ${opts.capabilityKey}:`, msg)
+          const { notifyImGroup } = await import('../pipeline/im-notifier.js')
+          await notifyImGroup(platform, groupId, `❌ 流水线启动失败：${msg}`).catch(() => {})
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        console.error(`[AgentCoordinator] pipeline start failed for ${opts.capabilityKey}:`, msg)
-        return { success: false, error: `启动 pipeline 失败: ${msg}` }
-      }
+      })()
+
+      return { success: true, output: '流水线触发中，如需参数将提示采集', data: { pipelineId } }
     }
 
     // v43 会把入口 key 与 capability key 相同的 IM trigger 回填为 capability_key。
