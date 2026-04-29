@@ -362,7 +362,7 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
  * - test / e2e / api  → 'api'（外部接口 / 测试入口）
  * - 其他              → 'manual'（兜底，覆盖 admin 后台等场景）
  */
-function inferTriggerType(platform: string): string {
+export function inferTriggerType(platform: string): string {
   if (platform === 'dingtalk' || platform === 'feishu') return 'im'
   if (platform === 'test' || platform === 'e2e' || platform === 'api') return 'api'
   return 'manual'

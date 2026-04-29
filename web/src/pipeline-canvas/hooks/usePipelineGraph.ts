@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef } from 'react'
 import type { StageNode, StageEdge, PipelineGraphWire, StageFields, ConditionEdgeData } from '../types'
+import { wireToNodes, wireToEdges } from '../graph-transforms'
 
 interface State {
   nodes: StageNode[]
@@ -264,24 +265,4 @@ export function usePipelineGraph(initial: PipelineGraphWire) {
     deleteEdge, deleteNode,
     undo, resetDirty, toWire,
   }
-}
-
-function wireToNodes(w: PipelineGraphWire): StageNode[] {
-  return w.nodes.map(n => ({
-    id: n.id,
-    type: n.stageType,
-    position: n.position,
-    data: { ...n },
-  }))
-}
-function wireToEdges(w: PipelineGraphWire): StageEdge[] {
-  return w.edges.map(e => ({
-    id: e.id, source: e.source, target: e.target,
-    type: 'conditional',
-    sourceHandle: e.sourceHandle,
-    data: {
-      ...(e.condition ? { condition: e.condition } : {}),
-      ...(e.sourceHandle === 'default' ? { isDefault: true } : {}),
-    } as ConditionEdgeData | undefined,
-  }))
 }
