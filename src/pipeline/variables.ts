@@ -107,7 +107,15 @@ interface PathPart {
   index?: number
 }
 
-function resolvePath(obj: Record<string, unknown>, path: string): unknown {
+/**
+ * Walk a dotted/bracketed path through a context object, honouring the same
+ * priority chain as `resolveVariables` (`scopes > steps > vars > triggerParams`).
+ *
+ * Exported so capability-param resolution can share the exact same path
+ * semantics as script-template resolution. Returns `undefined` for unresolved
+ * paths so callers can decide between "preserve literal" and "throw".
+ */
+export function resolvePath(obj: Record<string, unknown>, path: string): unknown {
   // 优先级: scopes > steps > vars > triggerParams (spec §4.5)
   // 简化实现：若 obj.scopes[<head>] 命中,则从 scopes 取 head；否则从 obj 取 head。
   const parts = parsePath(path)

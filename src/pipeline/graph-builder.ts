@@ -15,6 +15,7 @@ import { getExecutor } from './node-types/registry.js'
 import type { ExecutionContext, NodeExecutionResult } from './node-types/types.js'
 import type { DockerExecutor } from './executors/docker.js'
 import { resolveVariables, type VariableContext } from './variables.js'
+import { resolveCapabilityParams } from './executor-hooks.js'
 import { evalExpression } from './expressions.js'
 import { extractJsonObject, NotJsonObjectError } from './json-extract.js'
 
@@ -302,6 +303,46 @@ function buildCapabilityNode(
     const startedMs = Date.now()
     const ctx: StageContext = { ...ctxBase, stageIndex: index }
     const runtimeVars = { ...(ctxBase.variables ?? {}), ...(state.runtimeVars ?? {}) }
+
+    // 在 hook 调用前一次性把 capabilityParams 里的 `{{steps.<id>.output.x}}` /
+    // `{{vars.<obj>.<field>}}` / `{{triggerParams.<x>.<y>}}` 嵌套模板解析掉。
+    // 旧实现只展开单段 key，hook 拿到原始 `{{...}}` 字面量，下游（capability
+    // 入参 / LLM agent）根本无法消费——这是 PAM Proxy pipeline 的失败根因。
+    //
+    // 解析后会传给 hook 替代原 stage.capabilityParams。hook 内部仍会再调一次
+    // resolveCapabilityParams（兼容性 / 防御性，无 graph-builder 走 executor 直入）：
+    // 那次 call 对已 resolve 的值是 no-op（resolve-capability-params idempotency
+    // 单测 lockdown）。
+    //
+    // 注意 vars 字段必须用结构化版（runtimeVars 原始 unknown 值），不能用
+    // buildVariableContext 那个 JSON.stringify 后的 Record<string, string>——
+    // 否则 `{{vars.config.host}}` 的 nested 路径在 resolvePath 里会撞到一个
+    // 字符串而非对象，路径展开失败保留 literal。
+    const baseCtx = buildVariableContext(state, ctxBase, triggerParams ?? {}, stage, index)
+    const varCtx: VariableContext & Record<string, unknown> = {
+      ...baseCtx,
+      vars: runtimeVars as unknown as Record<string, string>,
+    }
+    let resolvedCapabilityParams: Record<string, unknown> | undefined
+    try {
+      resolvedCapabilityParams = resolveCapabilityParams(stage.capabilityParams, varCtx)
+    } catch (err) {
+      // resolvePath 不会 throw，但保险起见兜底。
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `capability 参数解析失败: ${String(err)}`,
+        error: err instanceof Error ? err.message : String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult(stage, startedAt, startedMs, exec),
+      }
+    }
+    const stageWithResolved: StageDefinition = {
+      ...stage,
+      capabilityParams: resolvedCapabilityParams,
+    }
+
     let exec: StageExecutionResult
     try {
       const agentMode = stage.agentMode ?? 'capability'
@@ -309,13 +350,13 @@ function buildCapabilityNode(
         if (!hooks.runCustomAgent) {
           exec = { status: 'failed', output: 'custom agent hook not configured', error: 'no_hook' }
         } else {
-          exec = await hooks.runCustomAgent(stage, ctx, triggerParams, runtimeVars)
+          exec = await hooks.runCustomAgent(stageWithResolved, ctx, triggerParams, runtimeVars)
         }
       } else {
         if (!hooks.runCapability) {
           exec = { status: 'failed', output: 'capability hook not configured', error: 'no_hook' }
         } else {
-          exec = await hooks.runCapability(stage, ctx, triggerParams, runtimeVars)
+          exec = await hooks.runCapability(stageWithResolved, ctx, triggerParams, runtimeVars)
         }
       }
     } catch (err) {

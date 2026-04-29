@@ -13,7 +13,7 @@ import { fileURLToPath } from 'url'
 import { createPorygon } from '@snack-kit/porygon'
 import { buildClaudeEnv } from '../agent/claude-config.js'
 import { sshExec } from './ssh.js'
-import { resolveVariables, type VariableContext } from './variables.js'
+import { resolveVariables, resolvePath, type VariableContext } from './variables.js'
 import { triggerCapability } from '../agent/coordinator.js'
 import { DockerExecutor } from './executors/docker.js'
 import type { StageHooks } from './graph-builder.js'
@@ -29,43 +29,117 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 /**
  * Resolve capability param templates to real values.
  *
- * 整值替换（whole-string 匹配）：保留原类型。
- *   - {{triggerParams.xxx}} → triggerParams[xxx]
- *   - {{vars.xxx}}          → runtimeVars[xxx]
+ * 整值替换（whole-string 匹配 `^{{...}}$`）：保留原类型。
+ *   - 旧路径（保留向后兼容、单段 key）：
+ *     - {{triggerParams.xxx}} → triggerParams[xxx]
+ *     - {{vars.xxx}}          → runtimeVars[xxx]
+ *   - 新路径（嵌套 / steps / scopes）：fallback 到 resolvePath，复用 script
+ *     节点 resolveVariables 的 namespace 优先级（scopes > steps > vars >
+ *     triggerParams）。例：{{steps.load.output.id}} / {{vars.config.host}}
+ *     / {{triggerParams.user.name}}。
  *
  * 嵌入式模板（非整值匹配）、未匹配的模板：保留字面字符串。
  *
- * Exported for unit testing.
+ * 双签名 overload（exported for unit testing + back-compat）：
+ *   1. (params, triggerParams, runtimeVars) — 旧三参形态。内部合成最小
+ *      VariableContext（仅 triggerParams + vars），不知道 steps/scopes，所以
+ *      只能解析单段 key——这正是历史调用方期望的语义。
+ *   2. (params, varCtx) — 新两参形态。让 buildCapabilityNode 把完整 ctx
+ *      （含 steps/scopes/runtimeVars）一次性丢进来，支持 nested path。
+ *
+ * Idempotency: 已 resolve 过的结果再喂一遍仍是同一个值——展开后的字符串/数字/
+ * 对象不再含 `{{...}}`，三段式都不命中，原样返回。
  */
 export function resolveCapabilityParams(
   params: Record<string, unknown> | undefined,
   triggerParams: Record<string, unknown> | undefined,
   runtimeVars: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined
+export function resolveCapabilityParams(
+  params: Record<string, unknown> | undefined,
+  varCtx: VariableContext,
+): Record<string, unknown> | undefined
+export function resolveCapabilityParams(
+  params: Record<string, unknown> | undefined,
+  arg2: Record<string, unknown> | VariableContext | undefined,
+  runtimeVars?: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
   if (!params) return params
+
+  // 区分 overload：VariableContext 一定带 stage / pipeline / vars 这些固定 key，
+  // 旧三参形态的 triggerParams 是松散 Record<string, unknown>。这里用 'stage' 做
+  // 哨兵——同名 key 的概率几乎为零；即便撞名，旧 caller 历史上从未传带 stage
+  // 字段的 triggerParams 给 resolveCapabilityParams（zero-callsite-grep）。
+  const isVarCtx =
+    arguments.length === 2 &&
+    arg2 !== undefined &&
+    typeof arg2 === 'object' &&
+    'stage' in (arg2 as Record<string, unknown>) &&
+    'vars' in (arg2 as Record<string, unknown>)
+
+  let triggerParamsLocal: Record<string, unknown> | undefined
+  let runtimeVarsLocal: Record<string, unknown> | undefined
+  let varCtxForPath: Record<string, unknown>
+
+  if (isVarCtx) {
+    const ctx = arg2 as VariableContext
+    triggerParamsLocal = ctx.triggerParams as Record<string, unknown> | undefined
+    runtimeVarsLocal = ctx.vars as unknown as Record<string, unknown> | undefined
+    varCtxForPath = ctx as unknown as Record<string, unknown>
+  } else {
+    triggerParamsLocal = arg2 as Record<string, unknown> | undefined
+    runtimeVarsLocal = runtimeVars
+    // 合成最小 ctx 给 resolvePath fallback 用——只有 triggerParams + vars 这两
+    // 个 namespace 可见。steps/scopes 留空映射符合旧 caller 的承诺：旧三参
+    // 形态本来就没法引用 steps。
+    varCtxForPath = {
+      triggerParams: triggerParamsLocal ?? {},
+      vars: runtimeVarsLocal ?? {},
+      steps: {},
+      scopes: {},
+    }
+  }
+
   const resolved: Record<string, unknown> = {}
   for (const [key, value] of Object.entries(params)) {
-    if (typeof value === 'string') {
-      const triggerMatch = value.match(/^\{\{triggerParams\.(\w+)\}\}$/)
-      if (triggerMatch) {
-        resolved[key] =
-          triggerParams && triggerMatch[1] in triggerParams
-            ? triggerParams[triggerMatch[1]]
-            : value
-        continue
-      }
-      const varsMatch = value.match(/^\{\{vars\.(\w+)\}\}$/)
-      if (varsMatch) {
-        resolved[key] =
-          runtimeVars && varsMatch[1] in runtimeVars
-            ? runtimeVars[varsMatch[1]]
-            : value
-        continue
-      }
+    if (typeof value !== 'string') {
       resolved[key] = value
-    } else {
-      resolved[key] = value
+      continue
     }
+
+    // 第一段：旧 fast path——单段 `^{{triggerParams.key}}$`（无 . / 无 [）。
+    // 保留 triggerParams > vars 的旧排序（同名时仍优先 triggerParams），符合
+    // 历史测试 `triggerParams takes precedence over vars`。
+    const triggerMatch = value.match(/^\{\{triggerParams\.(\w+)\}\}$/)
+    if (triggerMatch) {
+      resolved[key] =
+        triggerParamsLocal && triggerMatch[1] in triggerParamsLocal
+          ? triggerParamsLocal[triggerMatch[1]]
+          : value
+      continue
+    }
+    const varsMatch = value.match(/^\{\{vars\.(\w+)\}\}$/)
+    if (varsMatch) {
+      resolved[key] =
+        runtimeVarsLocal && varsMatch[1] in runtimeVarsLocal
+          ? runtimeVarsLocal[varsMatch[1]]
+          : value
+      continue
+    }
+
+    // 第二段：fallback 到 resolvePath——支持 `^{{<nested.path[0]>}}$` 整值匹配。
+    // 对应嵌套 key（如 {{steps.load.output.id}} / {{vars.config.host}}）。
+    const wholeTemplateMatch = value.match(/^\{\{\s*([^}|]+?)\s*\}\}$/)
+    if (wholeTemplateMatch) {
+      const v = resolvePath(varCtxForPath, wholeTemplateMatch[1].trim())
+      // 解析失败：保留 literal `{{...}}`，跟旧 fast path / resolveVariables 的
+      // "未匹配保留字面"语义一致，方便排查模板配置错误。
+      resolved[key] = v === undefined ? value : v
+      continue
+    }
+
+    // 第三段：嵌入式模板 / 字面值——保持现状不展开（v1 capability 节点限制）。
+    resolved[key] = value
   }
   return resolved
 }
