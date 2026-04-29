@@ -191,6 +191,7 @@ export async function runPipeline(
     triggerGroupId: imContext?.groupId,
     triggerUserId: imContext?.userId,
     dockerExecutor,
+    pipelineContainerImage: pipelineContainerImage ?? undefined,
   }
 
   const hooks = buildDefaultHooks(logDir)

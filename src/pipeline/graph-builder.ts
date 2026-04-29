@@ -80,6 +80,8 @@ export interface StageHooks {
 // StageContext minus stageIndex — the builder fills stageIndex per node.
 export interface StageContextBase extends Omit<StageContext, 'stageIndex'> {
   dockerExecutor?: DockerExecutor
+  /** Pipeline 级默认镜像；node 没配 containerImage 时由 hooks 回落使用 */
+  pipelineContainerImage?: string
 }
 
 export interface BuildGraphInput {
