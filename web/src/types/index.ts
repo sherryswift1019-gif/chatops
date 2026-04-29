@@ -74,6 +74,8 @@ export interface TestPipeline {
   paramSchema?: Record<string, unknown> | null
   imPrompt?: string | null
   schedule?: string; enabled: boolean; triggerParams: Record<string, unknown>; createdAt: string; updatedAt: string
+  paramSchema?: Record<string, unknown> | null
+  imPrompt?: string | null
 }
 
 export interface ArtifactInput {
