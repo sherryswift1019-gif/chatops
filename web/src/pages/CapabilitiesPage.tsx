@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, Table, Button, Modal, Form, Input, Tag, Space, message, theme, Select } from 'antd'
-import { PlusOutlined } from '@ant-design/icons'
+import { ExclamationCircleTwoTone, PlusOutlined } from '@ant-design/icons'
 import {
   getCapabilities,
   createCapability,
@@ -9,6 +9,13 @@ import {
   resetCapabilitySystemPrompt,
 } from '../api/capabilities'
 import type { Capability } from '../api/capabilities'
+import { listTools, type ToolMeta } from '../api/tools'
+
+const RISK_COLORS: Record<string, string> = {
+  low: 'blue',
+  medium: 'orange',
+  high: 'red',
+}
 
 const CATEGORY_OPTIONS = [
   { value: 'feature_dev', label: '需求开发类', color: 'blue' },
@@ -27,6 +34,7 @@ function CategoryTag({ category }: { category: string | null }) {
 export default function CapabilitiesPage() {
   const { token } = theme.useToken()
   const [data, setData] = useState<Capability[]>([])
+  const [tools, setTools] = useState<ToolMeta[]>([])
   const [loading, setLoading] = useState(false)
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null)
   const [modalOpen, setModalOpen] = useState(false)
@@ -34,6 +42,7 @@ export default function CapabilitiesPage() {
   const [form] = Form.useForm()
   const [promptValue, setPromptValue] = useState('')
   const [promptModified, setPromptModified] = useState(false)
+  const toolNamesValue = (Form.useWatch('toolNames', form) ?? []) as string[]
 
   useEffect(() => {
     load()
@@ -41,8 +50,18 @@ export default function CapabilitiesPage() {
 
   async function load() {
     setLoading(true)
-    try { setData(await getCapabilities()) } finally { setLoading(false) }
+    try {
+      const [caps, tl] = await Promise.all([getCapabilities(), listTools()])
+      setData(caps)
+      setTools(tl)
+    } finally { setLoading(false) }
   }
+
+  const toolByName = useMemo(() => {
+    const m = new Map<string, ToolMeta>()
+    for (const t of tools) m.set(t.name, t)
+    return m
+  }, [tools])
 
   const filteredData = categoryFilter
     ? data.filter(r => r.category === categoryFilter)
@@ -51,6 +70,7 @@ export default function CapabilitiesPage() {
   function openCreate() {
     setEditing(null)
     form.resetFields()
+    form.setFieldsValue({ toolNames: [] })
     setPromptValue('')
     setPromptModified(false)
     setModalOpen(true)
@@ -58,7 +78,7 @@ export default function CapabilitiesPage() {
 
   function openEdit(record: Capability) {
     setEditing(record)
-    form.setFieldsValue({ ...record })
+    form.setFieldsValue({ ...record, toolNames: record.toolNames ?? [] })
     setPromptValue(record.systemPrompt ?? record.defaultSystemPrompt ?? '')
     setPromptModified(false)
     setModalOpen(true)
@@ -130,6 +150,41 @@ export default function CapabilitiesPage() {
     },
   ]
 
+  const toolOptions = [
+    ...tools.map(t => ({
+      value: t.name,
+      selectedLabel: t.name,
+      searchText: `${t.name} ${t.description}`,
+      label: (
+        <Space size={6} style={{ width: '100%' }}>
+          <span style={{ fontFamily: 'monospace' }}>{t.name}</span>
+          <Tag color={RISK_COLORS[t.riskLevel] ?? 'default'} style={{ marginInlineEnd: 0 }}>
+            {t.riskLevel}
+          </Tag>
+          {t.description && (
+            <span style={{ color: token.colorTextDescription, fontSize: 12 }}>
+              {t.description}
+            </span>
+          )}
+        </Space>
+      ),
+    })),
+    ...toolNamesValue
+      .filter(n => !toolByName.has(n))
+      .map(n => ({
+        value: n,
+        selectedLabel: `${n}（不在列表中）`,
+        searchText: n,
+        label: (
+          <Space size={6}>
+            <ExclamationCircleTwoTone twoToneColor="#faad14" />
+            <span style={{ fontFamily: 'monospace' }}>{n}</span>
+            <span style={{ color: token.colorTextDescription, fontSize: 12 }}>（不在列表中）</span>
+          </Space>
+        ),
+      })),
+  ]
+
   return (
     <Card title="能力管理" extra={<Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>新增能力</Button>}>
       <div style={{ marginBottom: 12 }}>
@@ -174,8 +229,19 @@ export default function CapabilitiesPage() {
               }))}
             />
           </Form.Item>
-          <Form.Item name="toolNames" label="关联工具 (逗号分隔)" getValueFromEvent={(e) => e.target.value.split(',').map((s: string) => s.trim()).filter(Boolean)} getValueProps={(v) => ({ value: Array.isArray(v) ? v.join(', ') : v })}>
-            <Input placeholder="如: deploy_tool, rollback_tool" />
+          <Form.Item name="toolNames" label="关联工具">
+            <Select
+              mode="multiple"
+              showSearch
+              allowClear
+              placeholder="选择该能力可调用的工具"
+              optionLabelProp="selectedLabel"
+              filterOption={(input, opt) => {
+                const tx = (opt as { searchText?: string } | undefined)?.searchText ?? ''
+                return tx.toLowerCase().includes(input.toLowerCase())
+              }}
+              options={toolOptions}
+            />
           </Form.Item>
           <Form.Item label={
             <Space>
