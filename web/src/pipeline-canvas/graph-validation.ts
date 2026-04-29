@@ -12,15 +12,6 @@ export function firstGraphIssue(nodes: ReadonlyArray<{ id: string; data: StageFi
     if (d.stageType === 'wait_webhook' && !d.webhookTag?.trim()) {
       return { nodeId: n.id, message: `节点 ${d.name}: Webhook Tag 为空` }
     }
-    if (d.stageType === 'im_input') {
-      if (!d.imInputConfig?.prompt?.trim()) {
-        return { nodeId: n.id, message: `节点 ${d.name}: 引导语为空` }
-      }
-      const ps = d.imInputConfig.paramSchema
-      if (!ps || typeof ps !== 'object' || Array.isArray(ps)) {
-        return { nodeId: n.id, message: `节点 ${d.name}: paramSchema 不是合法 object` }
-      }
-    }
     if (d.stageType === 'approval' && (!d.approverIds || d.approverIds.length === 0)) {
       return { nodeId: n.id, message: `节点 ${d.name}: 未选择审批人` }
     }
