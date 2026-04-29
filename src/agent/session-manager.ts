@@ -4,6 +4,7 @@ import { getUserRole } from '../db/repositories/roles.js'
 import { getMaxConcurrency, getActiveCount } from './concurrency.js'
 import type { TaskContext } from './tools/types.js'
 import { findImInputWaiter, resumeFromImInput } from '../pipeline/graph-runner.js'
+import { findParamCollectWaiter } from '../pipeline/im-router.js'
 
 type MessageProcessor = (msg: NormalizedMessage, queue: TaskQueue) => Promise<void>
 
@@ -51,6 +52,14 @@ export class SessionManager {
       } catch (err) {
         console.error(`[SessionManager] resumeFromImInput failed run=${waiter.runId}:`, err)
       }
+    }
+
+    // Param collection routing: check before graph interrupt waiter
+    const paramWaiter = findParamCollectWaiter(msg.platform, msg.groupId)
+    if (paramWaiter) {
+      console.log(`[SessionManager] Routing to param-collector for ${msg.platform}:${msg.groupId}`)
+      paramWaiter.resolve(msg.text)
+      return
     }
 
     // 重置命令：立刻清理该用户当前 session，下条消息走新意图
