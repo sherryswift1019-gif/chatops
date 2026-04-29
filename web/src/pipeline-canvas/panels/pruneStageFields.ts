@@ -5,9 +5,9 @@ import { BESPOKE_STAGE_TYPES } from '../types'
  * 切换 stageType 时清理旧类型独有字段：返回新的 StageFields。
  *
  * 共享字段（name / targetRoles / parallel / timeoutSeconds / retryCount /
- * onFailure / retryWhen / retryDelayMs / stageType）保留；每种 stageType 独占字段
+ * onFailure / retryWhen / retryDelayMs / stageType）保留；每種 stageType 独占字段
  * （script / approverIds / approvalDescription / capabilityKey / capabilityParams /
- * webhookTag / imInputConfig / params）被清空，新类型按默认值注入。
+ * webhookTag / params）被清空，新类型按默认值注入。
  */
 export function pruneStageFields(prev: StageFields, newType: StageType): StageFields {
   const base: StageFields = {
@@ -31,7 +31,6 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
     capabilityKey: undefined,
     capabilityParams: undefined,
     webhookTag: undefined,
-    imInputConfig: undefined,
     params: undefined,
     agentMode: undefined,
     customPrompt: undefined,
@@ -46,16 +45,6 @@ export function pruneStageFields(prev: StageFields, newType: StageType): StageFi
       return { ...base, ...cleared, capabilityKey: '', capabilityParams: {}, agentMode: 'capability' }
     case 'wait_webhook':
       return { ...base, ...cleared, webhookTag: '' }
-    case 'im_input':
-      return {
-        ...base,
-        ...cleared,
-        imInputConfig: {
-          prompt: '请提供以下参数：',
-          paramSchema: { type: 'object', properties: {}, required: [] },
-          timeoutSeconds: 600,
-        },
-      }
     // phase 3 新增 7 节点：统一用 params 容器，初始化为空对象，UI 按 paramSchema 渲染
     case 'http':
     case 'dm':
@@ -81,7 +70,6 @@ export function obsoleteFieldsOnSwitch(prev: StageFields, newType: StageType): s
     approval: ['approverIds', 'approvalDescription'],
     llm_agent: ['capabilityKey', 'capabilityParams', 'customPrompt', 'allowedTools'],
     wait_webhook: ['webhookTag'],
-    im_input: ['imInputConfig'],
     http: ['params'],
     dm: ['params'],
     db_update: ['params'],

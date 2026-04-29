@@ -72,15 +72,6 @@ const defaultStageFields = (type: StageType, id: string): StageFields => ({
   ...(type === 'approval' ? { approverIds: [], approvalDescription: '' } : {}),
   ...(type === 'llm_agent' ? { capabilityKey: '' } : {}),
   ...(type === 'wait_webhook' ? { webhookTag: '' } : {}),
-  ...(type === 'im_input'
-    ? {
-        imInputConfig: {
-          prompt: '请提供以下参数：',
-          paramSchema: { type: 'object', properties: {}, required: [] },
-          timeoutSeconds: 600,
-        },
-      }
-    : {}),
   // phase 3 7 新节点共用 params 容器；具体字段由 NodeInspector 按 paramSchema 渲染
   ...(['http', 'dm', 'db_update', 'sql_query', 'file_read', 'template_render', 'fan_out', 'switch'].includes(type)
     ? { params: {} }
@@ -93,7 +84,6 @@ function stageTypeLabel(t: StageType): string {
     case 'approval': return '审批'
     case 'llm_agent': return 'LLM Agent'
     case 'wait_webhook': return 'Webhook'
-    case 'im_input': return 'IM 输入'
     case 'http': return 'HTTP'
     case 'dm': return 'IM 私聊'
     case 'db_update': return 'DB 写入'
@@ -116,15 +106,6 @@ function firstGraphIssue(nodes: ReadonlyArray<{ id: string; data: StageFields }>
     }
     if (d.stageType === 'wait_webhook' && !d.webhookTag?.trim()) {
       return { nodeId: n.id, message: `节点 ${d.name}: Webhook Tag 为空` }
-    }
-    if (d.stageType === 'im_input') {
-      if (!d.imInputConfig?.prompt?.trim()) {
-        return { nodeId: n.id, message: `节点 ${d.name}: 引导语为空` }
-      }
-      const ps = d.imInputConfig.paramSchema
-      if (!ps || typeof ps !== 'object' || Array.isArray(ps)) {
-        return { nodeId: n.id, message: `节点 ${d.name}: paramSchema 不是合法 object` }
-      }
     }
     if (d.stageType === 'approval' && (!d.approverIds || d.approverIds.length === 0)) {
       return { nodeId: n.id, message: `节点 ${d.name}: 未选择审批人` }
