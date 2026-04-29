@@ -78,6 +78,7 @@ import {
 import { setPrdClaudeRunner } from './agent/prd/prd-agent.js'
 import { sweepOrphanReviewingPrds } from './db/repositories/prd-documents.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
+import { startPipelineScheduler } from './pipeline/scheduler.js'
 import { startMrReconciler, stopMrReconciler } from './agent/reconcile/mr-state-reconciler.js'
 import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
 
@@ -249,6 +250,9 @@ async function main(): Promise<void> {
 
   // 启动 worktree 清理调度器
   startCleanupScheduler()
+
+  // 启动 pipeline cron 调度器
+  await startPipelineScheduler()
 
   // 启动 MR 状态对账调度器（webhook 漏发兜底，默认 5min）
   startMrReconciler()
