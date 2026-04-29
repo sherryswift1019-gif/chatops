@@ -22,13 +22,10 @@ import {
   buildGraphFromPipeline,
   APPROVAL_INTERRUPT,
   WEBHOOK_INTERRUPT,
-  IM_INPUT_INTERRUPT,
-  IM_INPUT_TIMEOUT_SENTINEL,
   type StageHooks,
   type StageContextBase,
   type ApprovalInterruptValue,
   type WebhookInterruptValue,
-  type ImInputInterruptValue,
 } from './graph-builder.js'
 import { linearizeStages } from './graph-migration.js'
 import type { StageDefinition, ServerInfo, PipelineGraph } from './types.js'
@@ -50,8 +47,6 @@ import { analyzeFailure } from './failure-analyzer.js'
 import { PipelineApprovalManager } from './approval-manager.js'
 import { WebhookWaiter } from './webhook-waiter.js'
 import { buildDefaultHooks } from './executor-hooks.js'
-import { registerImWaiter, unregisterImWaiter, findRunExpectingInput, listWaiters as listImWaiters } from './im-router.js'
-import { notifyImGroup } from './im-notifier.js'
 
 // --- Public types -----------------------------------------------------------
 
@@ -202,35 +197,6 @@ export function initGraphRunnerDispatchers(): void {
   )
 }
 
-/**
- * Resume an im_input interrupt with a user IM message.
- *
- * IM adapter 入口先查 findRunExpectingInput(platform, groupId)；命中则调用此
- * helper。内部 claim 保证与超时/取消 sentinel 的竞态下最多一方生效；成功 claim
- * 后清理 waiter 并以 message 作为 resume value 触发 graph.stream。
- *
- * 返回 true 表示本次消息已作为 resume 处理；false 表示已被其他源（timeout
- * 定时器或并发 resume）先一步处理，adapter 应把消息按普通会话处理或忽略。
- */
-export async function resumeFromImInput(
-  runId: number,
-  stageIndex: number,
-  message: string,
-): Promise<boolean> {
-  const key = interruptKey(runId, stageIndex)
-  if (resolvedInterrupts.has(key)) return false
-  resolvedInterrupts.add(key)
-  clearInterruptTimer(key)
-  unregisterImWaiter({ runId, stageIndex })
-  await resumeRun(runId, new Command({ resume: message }))
-  return true
-}
-
-/** Look up which run+stage is expecting IM input for this group. */
-export function findImInputWaiter(platform: string, groupId: string): { runId: number; stageIndex: number } | null {
-  return findRunExpectingInput(platform, groupId)
-}
-
 // --- Core streaming loop ----------------------------------------------------
 
 type InitialInput = { runId: number }
@@ -350,36 +316,6 @@ async function dispatchInterrupt(ctx: RunContext, value: unknown): Promise<void>
       console.error(`[graph-runner] waiter.register failed for run ${ctx.runId}:`, err)
     }
     scheduleTimeout(ctx.runId, p.stageIndex, timeoutMs, new Command({ resume: { timeout: true } }))
-    return
-  }
-
-  if (v.type === IM_INPUT_INTERRUPT) {
-    const p = value as ImInputInterruptValue
-    const timeoutMs = p.timeoutSeconds * 1000
-    try {
-      registerImWaiter({
-        runId: ctx.runId,
-        stageIndex: p.stageIndex,
-        platform: p.platform,
-        groupId: p.groupId,
-      })
-    } catch (err) {
-      console.error(`[graph-runner] registerImWaiter failed for run ${ctx.runId}:`, err)
-    }
-    // 把 prompt 推到 IM 群
-    if (p.platform && p.groupId) {
-      await notifyImGroup(p.platform, p.groupId, p.prompt)
-    } else {
-      console.warn(
-        `[graph-runner] IM_INPUT interrupt without platform/groupId for run ${ctx.runId} stage ${p.stageIndex}`,
-      )
-    }
-    scheduleTimeout(
-      ctx.runId,
-      p.stageIndex,
-      timeoutMs,
-      new Command({ resume: IM_INPUT_TIMEOUT_SENTINEL }),
-    )
     return
   }
 }
@@ -541,11 +477,6 @@ async function finalize(
   for (const key of Array.from(interruptTimers.keys())) {
     if (key.startsWith(`${ctx.runId}:`)) clearInterruptTimer(key)
   }
-  // Drop any IM waiter still pointing at this run (defensive — handler return
-  // should have advanced past the im_input stage; here we handle crash paths).
-  for (const w of listImWaiters()) {
-    if (w.runId === ctx.runId) unregisterImWaiter({ runId: w.runId, stageIndex: w.stageIndex })
-  }
 }
 
 // --- Read-only inspector (for admin /resume endpoint) ----------------------
@@ -566,7 +497,7 @@ async function finalize(
  */
 export async function getPendingInterrupt(
   runId: number,
-): Promise<ApprovalInterruptValue | WebhookInterruptValue | ImInputInterruptValue | null> {
+): Promise<ApprovalInterruptValue | WebhookInterruptValue | null> {
   const ctx = await reloadContext(runId)
   if (!ctx) return null
   const saver = await getCheckpointer()
@@ -604,7 +535,6 @@ export async function getPendingInterrupt(
     const type = (value as { type?: unknown }).type
     if (type === APPROVAL_INTERRUPT) return value as ApprovalInterruptValue
     if (type === WEBHOOK_INTERRUPT) return value as WebhookInterruptValue
-    if (type === IM_INPUT_INTERRUPT) return value as ImInputInterruptValue
     // Unknown interrupt type — ignore defensively rather than leak it.
     return null
   }

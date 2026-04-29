@@ -43,46 +43,6 @@ describe('validatePipelineGraph — 按 stageType 必填校验', () => {
     expect(r.errors.some(e => e.includes('n1') && e.includes('webhookTag'))).toBe(true)
   })
 
-  it('im_input 节点缺 imInputConfig.prompt → 报错', () => {
-    const graph: PipelineGraph = {
-      nodes: [
-        node({
-          id: 'n1',
-          name: 'i',
-          stageType: 'im_input',
-          imInputConfig: {
-            prompt: '',
-            paramSchema: { type: 'object', properties: {} },
-          },
-        }),
-      ],
-      edges: [],
-    }
-    const r = validatePipelineGraph(graph)
-    expect(r.ok).toBe(false)
-    expect(r.errors.some(e => e.includes('n1') && e.includes('prompt'))).toBe(true)
-  })
-
-  it('im_input 节点 paramSchema 非 object → 报错', () => {
-    const graph: PipelineGraph = {
-      nodes: [
-        node({
-          id: 'n1',
-          name: 'i',
-          stageType: 'im_input',
-          imInputConfig: {
-            prompt: '请输入',
-            paramSchema: 'not-an-object' as unknown as Record<string, unknown>,
-          },
-        }),
-      ],
-      edges: [],
-    }
-    const r = validatePipelineGraph(graph)
-    expect(r.ok).toBe(false)
-    expect(r.errors.some(e => e.includes('n1') && e.includes('paramSchema'))).toBe(true)
-  })
-
   it('approval 节点缺 approverIds → 报错', () => {
     const graph: PipelineGraph = {
       nodes: [node({ id: 'n1', name: 'a', stageType: 'approval' })],
