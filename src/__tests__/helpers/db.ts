@@ -222,6 +222,9 @@ const SCHEMA_FILES = [
   'schema-v54.sql',
   // v55: dingtalk_users 新增 resigned_at 列，纯 ALTER，无 seed 数据，安全加入。
   'schema-v55.sql',
+  // v56: PAM Proxy 部署流水线移除 im_input 节点，填充 param_schema/im_prompt。
+  // DO $$ 块幂等，无 product_lines 时自动跳过，安全加入。
+  'schema-v56.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
