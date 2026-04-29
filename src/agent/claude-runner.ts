@@ -14,9 +14,10 @@ import { listProductLineEnvs } from '../db/repositories/product-line-envs.js'
 import { listEnvironments } from '../db/repositories/environments-repo.js'
 import { buildClaudeEnv } from './claude-config.js'
 import { getConfig } from '../db/repositories/system-config.js'
-import { triggerCapability, maybeCompleteAnalyze } from './coordinator.js'
+import { triggerCapability, maybeCompleteAnalyze, inferTriggerType } from './coordinator.js'
 import { ApprovalRouter } from '../approval/router.js'
 import { getApprovalRules } from '../db/repositories/approval-rules.js'
+import { createInvocation, finishInvocation } from '../db/repositories/capability-invocations.js'
 import { acquireLock, releaseLock } from './deploy-lock.js'
 import { acquire, release, type Worktree } from './worktree/manager.js'
 import { getByProductLineId } from '../db/repositories/product-knowledge-repos.js'
@@ -476,6 +477,22 @@ export class ClaudeRunner {
 
       this.clearSession(userId)
 
+      // Step 6 audit log：coordinator handler/pipeline 路径由 coordinator 写日志，
+      // 这条对话路径不经过 coordinator，需在此补写。
+      const invLog = await createInvocation({
+        capabilityKey: intent.capability,
+        triggerType: inferTriggerType(opts.platform),
+        platform: opts.platform,
+        groupId: opts.groupId,
+        triggeredBy: userId,
+        taskId: context.taskId,
+        params: { message: prompt },
+      }).catch(err => {
+        console.error('[Runner] createInvocation failed:', err)
+        return null
+      })
+      const invocationId = invLog?.id ?? null
+
       // 写操作加 deploy lock —— 是否需要由 capability.requiresDeployLock 决定（phase 1 起从 DB 读）
       const needsLock = capability.requiresDeployLock && intent.project && intent.env
       let lockInfo: { project: string; env: string } | undefined
@@ -499,10 +516,21 @@ export class ClaudeRunner {
 
       try {
         await this.executeWithPorygon(opts, capabilityTools, capability, lockInfo)
+        if (invocationId !== null) {
+          await finishInvocation(invocationId, 'success', '', '').catch(err =>
+            console.error('[Runner] finishInvocation failed:', err)
+          )
+        }
       } catch (err) {
         // 异常时释放未被 session 接管的锁
         if (lockInfo && !this.sessions.has(userId)) {
           releaseLock(lockInfo.project, lockInfo.env, userId)
+        }
+        if (invocationId !== null) {
+          const msg = err instanceof Error ? err.message : String(err)
+          await finishInvocation(invocationId, 'failed', '', msg).catch(e =>
+            console.error('[Runner] finishInvocation (catch) failed:', e)
+          )
         }
         throw err
       }
