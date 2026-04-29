@@ -79,6 +79,13 @@ export interface StageContext {
   pipeline?: { id: number; name: string }
   run?: { id: number; triggeredBy: string; triggerType: string }
   variables?: Record<string, string>
+  /**
+   * Mirror of `state.stepOutputs` injected by buildScriptNode so that
+   * runScript hooks can resolve `{{steps.<id>.output.x}}` templates
+   * against upstream node outputs. Optional for legacy callers that
+   * never hit a stepOutputs-using script; absent ≡ empty map.
+   */
+  stepOutputs?: Record<string, unknown>
   // IM 触发时的上下文（im-param-collector 使用）
   triggerPlatform?: string
   triggerGroupId?: string

@@ -200,6 +200,7 @@ async function runScriptInDocker(
   ctxBase: StageContextBase,
   stageIndex: number,
   executor: DockerExecutor,
+  stepOutputs: Record<string, unknown>,
 ): Promise<StageExecutionResult> {
   const script = stage.script ?? ''
   if (!script.trim()) return { status: 'success', output: 'No script to execute' }
@@ -211,6 +212,7 @@ async function runScriptInDocker(
     stage: { name: stage.name, index: stageIndex },
     server: { host: '', port: 0, username: '', name: '', role: '' },
     vars: (ctxBase.variables ?? {}) as Record<string, string>,
+    steps: stepOutputs,
   }
   const resolvedScript = resolveVariables(script, varCtx)
 
@@ -236,15 +238,16 @@ function buildScriptNode(
   ctxBase: StageContextBase,
   hooks: StageHooks,
 ) {
-  return async () => {
+  return async (state: typeof PipelineStateAnnotation.State) => {
     const targetServers = resolveTargetServers(stage, ctxBase.servers)
     const startedAt = nowIso()
     const startedMs = Date.now()
+    const stepOutputs = state.stepOutputs ?? {}
     let exec: StageExecutionResult
 
     if (targetServers.length > 0) {
       // SSH path — existing behaviour unchanged
-      const ctx: StageContext = { ...ctxBase, stageIndex: index }
+      const ctx: StageContext = { ...ctxBase, stageIndex: index, stepOutputs }
       try {
         exec = await hooks.runScript(stage, ctx, targetServers)
       } catch (err) {
@@ -260,13 +263,13 @@ function buildScriptNode(
         const nodeExecutor = new DockerExecutor(nodeImage)
         await nodeExecutor.setup(containerName)
         try {
-          exec = await runScriptInDocker(stage, ctxBase, index, nodeExecutor)
+          exec = await runScriptInDocker(stage, ctxBase, index, nodeExecutor, stepOutputs)
         } finally {
           await nodeExecutor.teardown()
         }
       } else if (ctxBase.dockerExecutor) {
         // Pipeline-level shared executor
-        exec = await runScriptInDocker(stage, ctxBase, index, ctxBase.dockerExecutor)
+        exec = await runScriptInDocker(stage, ctxBase, index, ctxBase.dockerExecutor, stepOutputs)
       } else {
         exec = {
           status: 'failed',

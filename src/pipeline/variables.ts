@@ -28,6 +28,20 @@ export interface VariableContext {
   server: { host: string; port: number; username: string; name: string; role: string }
   vars: Record<string, string>
   triggerParams?: Record<string, unknown>
+  /**
+   * Per-node structured outputs keyed by node id, mirrored from
+   * `state.stepOutputs` at the call site. Drives `{{steps.<id>.output.x}}`
+   * resolution. resolvePath already supports this; the field declaration
+   * makes the contract explicit and removes the need for `as any` at
+   * caller sites that previously had to bypass the missing field.
+   */
+  steps?: Record<string, unknown>
+  /**
+   * fan_out 子运行注入的 scope 对象（spec §4.5 priority: scopes > steps >
+   * vars > triggerParams）。外层 graph dispatch 永远是空。资料层 resolvePath
+   * 已经在用，类型补齐避免调用方 `as any`。
+   */
+  scopes?: Record<string, unknown>
 }
 
 export interface VariableDefinition {

@@ -99,6 +99,7 @@ async function runScriptOnServers(
         role: server.role,
       },
       vars: ctx.variables ?? {},
+      steps: ctx.stepOutputs ?? {},
     }
     const resolved = resolveVariables(script, varCtx)
     const sshCfg = {
