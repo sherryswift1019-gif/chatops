@@ -32,7 +32,9 @@ export interface ApprovalRule {
 }
 
 export interface DingTalkUser {
-  userId: string; name: string; avatar: string; department: string; syncedAt: string
+  userId: string; name: string; avatar: string; department: string
+  email?: string; syncedAt?: string
+  resignedAt: string | null
 }
 
 export interface DingTalkUsersResponse { users: DingTalkUser[]; total: number }

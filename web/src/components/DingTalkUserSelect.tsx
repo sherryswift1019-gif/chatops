@@ -29,6 +29,7 @@ export default function DingTalkUserSelect({ value, onChange, onUserSelect, init
         avatar: u.avatar ?? '',
         department: '',
         syncedAt: '',
+        resignedAt: null,
       })))
     }
   }, [initialUsers])
