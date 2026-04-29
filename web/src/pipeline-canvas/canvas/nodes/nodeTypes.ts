@@ -5,7 +5,6 @@ import { ScriptNode } from './ScriptNode'
 import { ApprovalNode } from './ApprovalNode'
 import { CapabilityNode } from './CapabilityNode'
 import { WebhookNode } from './WebhookNode'
-import { ImInputNode } from './ImInputNode'
 import { SwitchNode } from './SwitchNode'
 import { StageNodeCard } from './StageNodeCard'
 
@@ -27,7 +26,6 @@ export const nodeTypes = {
   approval: ApprovalNode,
   llm_agent: CapabilityNode,
   wait_webhook: WebhookNode,
-  im_input: ImInputNode,
   switch: SwitchNode,
   // Phase 3 NodeExecutor-backed 节点类型（共享 StageNodeCard 视觉）
   http: makeSimpleNode('#13c2c2', 'HTTP 调用', d => (d.params as { url?: string })?.url ?? '未配置 url'),

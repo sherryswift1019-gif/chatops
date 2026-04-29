@@ -74,15 +74,6 @@ const defaultStageFields = (type: StageType, id: string): StageFields => ({
   ...(type === 'approval' ? { approverIds: [], approvalDescription: '' } : {}),
   ...(type === 'llm_agent' ? { capabilityKey: '' } : {}),
   ...(type === 'wait_webhook' ? { webhookTag: '' } : {}),
-  ...(type === 'im_input'
-    ? {
-        imInputConfig: {
-          prompt: '请提供以下参数：',
-          paramSchema: { type: 'object', properties: {}, required: [] },
-          timeoutSeconds: 600,
-        },
-      }
-    : {}),
   // phase 3 7 新节点共用 params 容器；具体字段由 NodeInspector 按 paramSchema 渲染
   ...(['http', 'dm', 'db_update', 'sql_query', 'file_read', 'template_render', 'fan_out', 'switch'].includes(type)
     ? { params: {} }
@@ -95,7 +86,6 @@ function stageTypeLabel(t: StageType): string {
     case 'approval': return '审批'
     case 'llm_agent': return 'LLM Agent'
     case 'wait_webhook': return 'Webhook'
-    case 'im_input': return 'IM 输入'
     case 'http': return 'HTTP'
     case 'dm': return 'IM 私聊'
     case 'db_update': return 'DB 写入'
