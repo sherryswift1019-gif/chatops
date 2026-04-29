@@ -218,6 +218,8 @@ const SCHEMA_FILES = [
   'schema-v51.sql',
   // v53: test_pipelines 新增 param_schema/im_prompt 列 + pipeline_schedules 纯 DDL，安全加入。
   'schema-v53.sql',
+  // v54: 删除 im_input 节点类型，DELETE 幂等，安全加入。
+  'schema-v54.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
