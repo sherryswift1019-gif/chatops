@@ -7,7 +7,7 @@
  * identical hooks.
  */
 
-import { mkdir, writeFile } from 'fs/promises'
+import { mkdir, writeFile, appendFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 import { createPorygon } from '@snack-kit/porygon'
@@ -171,6 +171,15 @@ async function runScriptOnServers(
   let failed = false
   let failError = ''
 
+  // 流式落盘：先 mkdir + 清空（如有残留），后续每条 push 都立即 append。
+  // 这样 SSE 实时日志 endpoint 能看到逐行进度，而不是要等 stage 跑完才看到全文。
+  await mkdir(dirname(logFile), { recursive: true }).catch(() => {})
+  await writeFile(logFile, '').catch(() => {})
+  const pushLine = async (line: string): Promise<void> => {
+    allLogs.push(line)
+    await appendFile(logFile, line + '\n').catch(() => {})
+  }
+
   for (const server of servers) {
     const varCtx: VariableContext = {
       productLine: ctx.productLine ?? { name: '', displayName: '' },
@@ -195,12 +204,12 @@ async function runScriptOnServers(
       username: server.username,
       password: server.password,
     }
-    allLogs.push(`=== ${server.host} ===`)
+    await pushLine(`=== ${server.host} ===`)
     try {
       const result = await sshExec(sshCfg, resolved)
-      if (result.stdout) allLogs.push(`[stdout]\n${result.stdout.trimEnd()}`)
-      if (result.stderr) allLogs.push(`[stderr]\n${result.stderr.trimEnd()}`)
-      allLogs.push(`[exit code] ${result.code}`)
+      if (result.stdout) await pushLine(`[stdout]\n${result.stdout.trimEnd()}`)
+      if (result.stderr) await pushLine(`[stderr]\n${result.stderr.trimEnd()}`)
+      await pushLine(`[exit code] ${result.code}`)
       const success = result.code === 0
       details.push({
         host: server.host,
@@ -217,7 +226,7 @@ async function runScriptOnServers(
       }
     } catch (err) {
       const errStr = String(err)
-      allLogs.push(`[error] ${errStr}`)
+      await pushLine(`[error] ${errStr}`)
       // SSH 抛错（timeout / connect refused / auth）时进程从未真的退出，
       // exitCode = -1 作为"未正常退出"哨兵，让下游用统一的 `exitCode !== 0`
       // 判定逻辑兜住。error 字段保留原始字符串供诊断。
@@ -235,9 +244,6 @@ async function runScriptOnServers(
       failError = errStr
     }
   }
-
-  await mkdir(dirname(logFile), { recursive: true }).catch(() => {})
-  await writeFile(logFile, allLogs.join('\n') + '\n').catch(() => {})
 
   const output = allLogs.join('\n')
   if (failed) return { status: 'failed', output, error: failError, servers: details }
