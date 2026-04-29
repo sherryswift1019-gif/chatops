@@ -31,6 +31,7 @@ export function ParamSchemaForm({ schema }: Props) {
             required={isRequired}
             rules={isRequired ? [{ required: true, message: `${key} 必填` }] : []}
             extra={typeof prop.description === 'string' ? prop.description : undefined}
+            valuePropName={prop.type === 'boolean' ? 'checked' : 'value'}
           >
             {renderControl(prop)}
           </Form.Item>
