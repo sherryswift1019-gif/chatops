@@ -5,7 +5,7 @@ import { getDingTalkUserById, getDingTalkUsersByIds } from '../../db/repositorie
 import { runPipeline, manualTrigger, apiTrigger } from '../../pipeline/executor.js'
 import { getPendingInterrupt, resumeRun } from '../../pipeline/graph-runner.js'
 import { APPROVAL_INTERRUPT, WEBHOOK_INTERRUPT } from '../../pipeline/graph-builder.js'
-import { listTestServers } from '../../db/repositories/test-servers.js'
+import { autoResolveServersByRole } from '../../pipeline/server-resolver.js'
 import { readFile, stat } from 'fs/promises'
 import { join } from 'path'
 import { createReadStream } from 'fs'
@@ -78,14 +78,7 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     // Auto-resolve servers by role when none explicitly provided
     let effectiveServers = servers
     if (Object.keys(servers).length === 0) {
-      const allServers = await listTestServers()
-      const byRole: Record<string, string[]> = {}
-      for (const s of allServers) {
-        if (s.role) {
-          if (!byRole[s.role]) byRole[s.role] = []
-          byRole[s.role].push(String(s.id))
-        }
-      }
+      const byRole = await autoResolveServersByRole()
       if (Object.keys(byRole).length > 0) effectiveServers = byRole
     }
 

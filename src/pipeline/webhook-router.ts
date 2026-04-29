@@ -6,6 +6,7 @@ import { runPipeline } from './executor.js'
 import { apiTrigger } from './trigger.js'
 import { extractServersFromPayload, isValidServersShape } from './webhook-payload.js'
 import { validateTriggerParams } from './validate-trigger-params.js'
+import { autoResolveServersByRole } from './server-resolver.js'
 
 export async function registerWebhookRoute(app: FastifyInstance): Promise<void> {
   app.post<{ Params: { token: string } }>(
@@ -46,12 +47,18 @@ export async function registerWebhookRoute(app: FastifyInstance): Promise<void> 
         return reply.status(400).send({ error: '_servers must be Record<string, string[]>' })
       }
 
-      // 5. 拆 _servers，合并优先级
+      // 5. 拆 _servers，合并优先级：bodyServers > webhook.defaultServers >
+      //    按 role 自动分配（与 admin manual/api 触发路径行为对齐）。
+      //    都没有时 effectiveServers={}，runPipeline 跳过 hydrateServerAssignments
+      //    走 serverless 路径。
       const { servers: bodyServers, payload } = extractServersFromPayload(body)
-      const effectiveServers: Record<string, string[]> =
+      let effectiveServers: Record<string, string[]> =
         bodyServers ??
         (webhook.defaultServers as Record<string, string[]> | null) ??
         {}
+      if (Object.keys(effectiveServers).length === 0) {
+        effectiveServers = await autoResolveServersByRole()
+      }
 
       // 5b. paramSchema validation: ensure payload satisfies required fields
       if (pipeline.paramSchema) {

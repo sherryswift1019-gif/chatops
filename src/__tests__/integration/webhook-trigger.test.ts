@@ -128,4 +128,45 @@ describe('POST /webhook/pipeline/:token', () => {
     expect(trigger.params).not.toHaveProperty('_servers')
     expect(trigger.triggeredBy).toMatch(/^webhook:\d+:ci$/)
   })
+
+  it('body 无 _servers + webhook.default_servers=NULL → 按 role 自动分配 test_servers', async () => {
+    const { runPipeline } = await import('../../pipeline/executor.js')
+    // Seed: 一台 role=proxy / 一台 role=db 的服务器（产线随便建一个）
+    const pool = getPool()
+    const { rows: plRows } = await pool.query(
+      `INSERT INTO product_lines (name, display_name) VALUES ($1, $2) RETURNING id`,
+      ['wh-auto-resolve-pl', 'WH Auto Resolve PL'],
+    )
+    const productLineId = plRows[0].id as number
+    const insert = async (role: string, host: string): Promise<number> => {
+      const { rows } = await pool.query(
+        `INSERT INTO test_servers (product_line_id, name, host, port, username, auth_type, credential, role, tags)
+         VALUES ($1,$2,$3,22,'root','password','x',$4,'{}'::jsonb) RETURNING id`,
+        [productLineId, `s-${role}`, host, role],
+      )
+      return rows[0].id as number
+    }
+    const proxyId = await insert('proxy', '10.0.0.1')
+    const dbId = await insert('db', '10.0.0.2')
+
+    const pipelineId = await insertTestPipeline()
+    const wh = await createPipelineWebhook({ pipelineId, name: 'ci', createdBy: 'test' })
+    // default_servers 留空（createPipelineWebhook 的默认行为就是 NULL）
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhook/pipeline/${wh.token}`,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ref: 'main' }),
+    })
+    expect(res.statusCode).toBe(202)
+
+    const mockFn = runPipeline as ReturnType<typeof vi.fn>
+    expect(mockFn).toHaveBeenCalledOnce()
+    const effectiveServers = mockFn.mock.calls[0][1] as Record<string, string[]>
+    expect(effectiveServers).toEqual({
+      proxy: [String(proxyId)],
+      db: [String(dbId)],
+    })
+  })
 })
