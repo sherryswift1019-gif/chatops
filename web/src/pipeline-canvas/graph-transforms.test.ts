@@ -64,12 +64,13 @@ describe('wireToEdges', () => {
   })
 
   it('带 condition 的边：data.condition 有值', () => {
+    const cond = { kind: 'expression' as const, expression: 'status == "ok"' }
     const wire: PipelineGraphWire = {
       nodes: [],
-      edges: [{ id: 'e1', source: 's', target: 't', condition: 'status == "ok"' }],
+      edges: [{ id: 'e1', source: 's', target: 't', condition: cond }],
     }
     const [edge] = wireToEdges(wire)
-    expect(edge.data?.condition).toBe('status == "ok"')
+    expect(edge.data?.condition).toEqual(cond)
   })
 
   it('sourceHandle="default" 时注入 data.isDefault=true', () => {
