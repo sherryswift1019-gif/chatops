@@ -23,8 +23,14 @@ describe('pruneStageFields', () => {
     expect(next.script).toBeUndefined()
     expect(next.capabilityKey).toBe('')
     expect(next.capabilityParams).toEqual({})
+    expect(next.agentMode).toBe('capability')
     expect(next.stageType).toBe('llm_agent')
     expect(next.name).toBe('n')  // 共享字段保留
+  })
+
+  it('切换为 llm_agent 时 agentMode 默认为 capability（firstGraphIssue 依赖此值）', () => {
+    const next = pruneStageFields(base('approval'), 'llm_agent')
+    expect(next.agentMode).toBe('capability')
   })
 
   it('approval → im_input: 清掉 approverIds，注入 imInputConfig 默认值', () => {
