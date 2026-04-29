@@ -2,8 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import Fastify, { type FastifyInstance } from 'fastify'
 import { resetTestDb } from '../helpers/db.js'
 import { registerToolsRoutes } from '../../admin/routes/tools.js'
-// Task 3 完成后会改用 run_command 作为锚点
-import '../../agent/tools/run-tests.js'
+import '../../agent/tools/run-command.js'
 
 let app: FastifyInstance
 
@@ -22,9 +21,9 @@ describe('GET /admin/tools', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json() as Array<{ name: string; description: string; riskLevel: string }>
     const names = body.map(t => t.name)
-    expect(names).toContain('run_tests')
-    const runTests = body.find(t => t.name === 'run_tests')!
-    expect(runTests.description).toMatch(/worktree/)
-    expect(runTests.riskLevel).toBe('medium')
+    expect(names).toContain('run_command')
+    const runCmd = body.find(t => t.name === 'run_command')!
+    expect(runCmd.description).toMatch(/工作区/)
+    expect(runCmd.riskLevel).toBe('medium')
   })
 })
