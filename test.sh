@@ -4,7 +4,7 @@
 #
 # 用法:
 #   ./test.sh                     # 跑全套测试（落盘到 logs/test-*.log + 生成 markdown 报告）
-#   ./test.sh --setup-env         # 初始化环境：依赖检查 / pnpm install / 起 postgres
+#   ./test.sh --setup-env         # 初始化环境：缺啥装啥（docker/node/pnpm/psql）+ 预拉镜像 + pnpm install + bootstrap DB
 #   ./test.sh --filter <pattern>  # 只跑匹配文件名/路径的测试（透传给 vitest run）
 #   ./test.sh --list              # 仅列出测试文件不执行
 #   ./test.sh --keep              # 跑完保留 testcontainer 容器（调试用）
@@ -69,7 +69,7 @@ setup_env() {
     header "ChatOps 测试环境准备 ($OS)"
 
     # ─── 1. 工具可用性检查 ────────────────────────────────────────────────────
-    info "[1/5] 检查工具..."
+    info "[1/6] 检查工具..."
     local tools_ok=true
     check() {
         local name="$1" required="${2:-true}"
@@ -97,16 +97,69 @@ setup_env() {
 
     if [ "$tools_ok" = false ]; then
         echo ""
+        warn "工具缺失，尝试自动安装（需 sudo）..."
         case "$OS" in
-            macos)  warn "macOS 安装：brew install node pnpm docker postgresql jq" ;;
-            ubuntu) warn "Ubuntu 安装：see https://nodejs.org + corepack enable + apt install docker.io postgresql-client jq" ;;
-            *)      warn "请按各发行版方式安装上述工具" ;;
+            macos)
+                if ! command -v brew &>/dev/null; then
+                    fail "需要先装 Homebrew: https://brew.sh"; exit 1
+                fi
+                brew install node pnpm postgresql jq || true
+                if ! command -v docker &>/dev/null; then
+                    warn "macOS Docker 请手动从 https://orbstack.dev 或 https://docker.com 安装"
+                fi
+                ;;
+            ubuntu|debian)
+                if [ "$(id -u)" -ne 0 ] && ! sudo -n true 2>/dev/null; then
+                    warn "本步需要 sudo，过程中可能弹出密码提示"
+                fi
+                sudo apt-get update -qq
+                # Node.js 20 LTS（NodeSource）—— 仅当 node 缺失或非 v20/v22 时安装
+                if ! command -v node &>/dev/null \
+                   || [[ "$(node -v 2>/dev/null)" != v20* && "$(node -v 2>/dev/null)" != v22* ]]; then
+                    curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+                    sudo apt-get install -y --no-install-recommends nodejs
+                fi
+                sudo apt-get install -y --no-install-recommends \
+                    postgresql-client jq git ca-certificates curl gnupg
+                if ! command -v pnpm &>/dev/null; then
+                    sudo corepack enable 2>/dev/null || sudo npm install -g pnpm
+                fi
+                # docker-ce + docker-ce-cli
+                if ! command -v docker &>/dev/null; then
+                    sudo install -m 0755 -d /etc/apt/keyrings
+                    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | \
+                        sudo gpg --dearmor --yes -o /etc/apt/keyrings/docker.gpg
+                    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+                        | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+                    sudo apt-get update -qq
+                    sudo apt-get install -y --no-install-recommends \
+                        docker-ce docker-ce-cli containerd.io
+                    sudo systemctl enable --now docker
+                fi
+                # 当前用户加入 docker 组
+                if ! id -nG "$USER" | grep -qw docker; then
+                    sudo usermod -aG docker "$USER"
+                    warn "已把 $USER 加入 docker 组，需重新登录或 'newgrp docker' 后才能免 sudo 跑 docker"
+                fi
+                ;;
+            *)
+                fail "暂不支持自动安装：$OS。请按发行版自行装 node / pnpm / docker / postgresql-client / jq"
+                exit 1
+                ;;
         esac
-        fail "工具缺失，先装再来"; exit 1
+        info "重新检查工具可用性..."
+        tools_ok=true
+        check node
+        check pnpm
+        check docker
+        check git
+        if [ "$tools_ok" = false ]; then
+            fail "自动安装后仍有工具缺失，请手动处理（可能需要重新登录让 docker 组生效）"; exit 1
+        fi
     fi
 
     # ─── 2. Docker daemon 检查 ────────────────────────────────────────────────
-    info "[2/5] 检查 Docker daemon..."
+    info "[2/6] 检查 Docker daemon..."
     if ! docker info &>/dev/null; then
         case "$OS" in
             macos)  warn "Docker Desktop / OrbStack 未跑，请先启动" ;;
@@ -116,8 +169,20 @@ setup_env() {
     fi
     info "  Docker daemon OK"
 
-    # ─── 3. pnpm install（后端 + 前端）──────────────────────────────────────
-    info "[3/5] 后端 pnpm install..."
+    # ─── 3. 预拉测试用镜像 ────────────────────────────────────────────────────
+    info "[3/6] 预拉 alpine:3.19（DooD 集成测基线镜像）..."
+    if docker image inspect alpine:3.19 &>/dev/null; then
+        info "  alpine:3.19 已在本地"
+    else
+        if docker pull alpine:3.19 2>&1 | tail -3; then
+            info "  alpine:3.19 拉取完成"
+        else
+            warn "  alpine:3.19 拉取失败，集成测首跑会自动重试（或手动 docker pull alpine:3.19）"
+        fi
+    fi
+
+    # ─── 4. pnpm install（后端 + 前端）──────────────────────────────────────
+    info "[4/6] 后端 pnpm install..."
     (cd "$PROJ_ROOT" && pnpm install --frozen-lockfile 2>&1 | tail -5) \
         || { fail "后端 pnpm install 失败"; exit 1; }
 
@@ -127,8 +192,8 @@ setup_env() {
             || { fail "前端 pnpm install 失败"; exit 1; }
     fi
 
-    # ─── 4. PostgreSQL 测试库 bootstrap ───────────────────────────────────────
-    info "[4/5] PostgreSQL 测试库准备..."
+    # ─── 5. PostgreSQL 测试库 bootstrap ───────────────────────────────────────
+    info "[5/6] PostgreSQL 测试库准备..."
     if docker ps --format '{{.Names}}' | grep -q '^chatops-postgres-1$'; then
         info "  chatops-postgres-1 容器已跑（开发用）"
         # 顺手 bootstrap chatops_test 数据库（resetTestDb 的 marker 会在首跑自动建）
@@ -143,8 +208,8 @@ setup_env() {
         info "  开发用 postgres 容器未跑，集成测试将走 testcontainer 自动起（每文件 ~5s）"
     fi
 
-    # ─── 5. 完成 ──────────────────────────────────────────────────────────────
-    info "[5/5] 完成"
+    # ─── 6. 完成 ──────────────────────────────────────────────────────────────
+    info "[6/6] 完成"
     echo ""
     info "下一步："
     echo "  ./test.sh                   # 跑全套测试"
