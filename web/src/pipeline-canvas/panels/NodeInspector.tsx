@@ -43,6 +43,7 @@ function capabilityOptions(list: CapabilityOption[], currentKey?: string) {
         </div>
       </div>
     ),
+    selectedLabel: `${c.displayName} (${c.key})`,
     key: c.key,
     searchText: `${c.displayName} ${c.key}`,
   }))
@@ -55,6 +56,7 @@ function capabilityOptions(list: CapabilityOption[], currentKey?: string) {
           <span>{currentKey}（不在能力列表中）</span>
         </div>
       ),
+      selectedLabel: `${currentKey}（不在能力列表中）`,
       key: currentKey,
       searchText: currentKey,
     })
@@ -516,6 +518,7 @@ function DynamicParamsForm({
                                   showSearch
                                   placeholder="选择一个 Agent Capability"
                                   options={capabilityOptions(capabilities, selectedKey)}
+                                  optionLabelProp="selectedLabel"
                                   filterOption={(input, opt) => {
                                     const tx = (opt as { searchText?: string } | undefined)?.searchText ?? ''
                                     return tx.toLowerCase().includes(input.toLowerCase())
