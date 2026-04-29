@@ -27,7 +27,7 @@ RUN npx tsc --noEmit
 
 # 运行时依赖：git 用于 analyze_bug/fix_bug 的 clone + worktree
 # JDK/Maven 暂不打包，fix_bug 当前不跑测试（TODO #14 规划 DinD 多语言构建环境）
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gnupg gosu \
  && install -m 0755 -d /etc/apt/keyrings \
  && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
  && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -39,11 +39,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
  && git config --system user.name "ChatOps Agent"
 
 RUN chown -R chatops:chatops /app
-USER chatops
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
   CMD node -e "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)throw 1})" || exit 1
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "--import", "tsx/esm", "src/server.ts"]
