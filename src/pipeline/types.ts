@@ -1,14 +1,3 @@
-export interface ImInputConfig {
-  /** 首次引导语；支持 {{triggerParams.xxx}}。 */
-  prompt: string
-  /** 需要采集的参数 JSON Schema（至少 properties+required）。 */
-  paramSchema: Record<string, unknown>
-  /** 可选：用于加载 system_prompt / 工具白名单增强 Agent 判定（预留，v1 未用）。 */
-  capabilityKey?: string
-  /** 收集超时（秒），超过则 stage 失败。 */
-  timeoutSeconds?: number
-}
-
 /**
  * Phase 3 引入的 7 种 NodeExecutor 类型字面量。
  * graph-builder switch 通过这些 union 落到通用 dispatch（buildExecutorNode）。
@@ -32,7 +21,6 @@ export interface StageDefinition {
     | 'approval'
     | 'llm_agent'
     | 'wait_webhook'
-    | 'im_input'
     | ExecutorNodeStageType
   targetRoles: string[]
   parallel: boolean
@@ -66,8 +54,6 @@ export interface StageDefinition {
   allowedTools?: string[]
   // wait_webhook stage（等待外部 Webhook 恢复）
   webhookTag?: string
-  // im_input stage（IM 对话式参数采集）
-  imInputConfig?: ImInputConfig
 }
 
 export function getStageType(stage: StageDefinition): StageDefinition['stageType'] {
@@ -93,7 +79,7 @@ export interface StageContext {
   pipeline?: { id: number; name: string }
   run?: { id: number; triggeredBy: string; triggerType: string }
   variables?: Record<string, string>
-  // IM 触发时的上下文（im_input stage 需要；其他 stage 可忽略）
+  // IM 触发时的上下文（im-param-collector 使用）
   triggerPlatform?: string
   triggerGroupId?: string
   triggerUserId?: string

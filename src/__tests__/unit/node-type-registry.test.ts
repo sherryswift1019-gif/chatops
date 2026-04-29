@@ -36,13 +36,13 @@ describe('node-type registry', () => {
 })
 
 describe('node-type barrel', () => {
-  it('registers all 13 stage types when index is imported (T17 capability → llm_agent + switch)', async () => {
+  it('registers all 12 stage types when index is imported (T17 capability → llm_agent + switch)', async () => {
     __resetRegistryForTesting()
     // 动态 import barrel 触发自注册
     await import('../../pipeline/node-types/index.js')
     const keys = getRegisteredNodeTypeKeys()
     expect(keys).toEqual(new Set([
-      'script','approval','llm_agent','wait_webhook','im_input',
+      'script','approval','llm_agent','wait_webhook',
       'http','dm','db_update','sql_query','file_read','template_render','fan_out','switch',
     ]))
   })

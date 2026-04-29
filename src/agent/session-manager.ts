@@ -3,7 +3,6 @@ import { TaskQueue } from './task-queue.js'
 import { getUserRole } from '../db/repositories/roles.js'
 import { getMaxConcurrency, getActiveCount } from './concurrency.js'
 import type { TaskContext } from './tools/types.js'
-import { findImInputWaiter, resumeFromImInput } from '../pipeline/graph-runner.js'
 import { findParamCollectWaiter } from '../pipeline/im-router.js'
 
 type MessageProcessor = (msg: NormalizedMessage, queue: TaskQueue) => Promise<void>
@@ -45,21 +44,6 @@ export class SessionManager {
       console.log(`[SessionManager] Routing to param-collector for ${msg.platform}:${msg.groupId}`)
       paramWaiter.resolve(msg.text)
       return
-    }
-
-    // Pipeline IM 路由：当前群是否有 pipeline 正等 im_input？有则把消息作为 resume value
-    // 喂回 graph，绕过 SessionManager 的 queue/ack/并发流程。
-    const waiter = findImInputWaiter(msg.platform, msg.groupId)
-    if (waiter) {
-      console.log(`[SessionManager] Routing to pipeline run=${waiter.runId} stage=${waiter.stageIndex}`)
-      try {
-        const handled = await resumeFromImInput(waiter.runId, waiter.stageIndex, msg.text)
-        if (handled) return
-        // claim 失败（例如 timeout 定时器先一步把 interrupt resolve 了）：
-        // 继续走正常 Agent 流程；用户消息不会丢，但也不会被喂到该 pipeline。
-      } catch (err) {
-        console.error(`[SessionManager] resumeFromImInput failed run=${waiter.runId}:`, err)
-      }
     }
 
     // 重置命令：立刻清理该用户当前 session，下条消息走新意图
