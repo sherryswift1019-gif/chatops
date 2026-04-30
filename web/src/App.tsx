@@ -29,6 +29,8 @@ const MetricsPage            = lazy(() => import('./pages/MetricsPage'))
 const PrdDocumentsPage       = lazy(() => import('./pages/PrdDocumentsPage'))
 const PrdChatPage            = lazy(() => import('./pages/PrdChatPage'))
 const PrdMetricsPage         = lazy(() => import('./pages/PrdMetricsPage'))
+const E2eTargetsPage         = lazy(() => import('./pages/E2eTargetsPage'))
+const E2eSpecsPage           = lazy(() => import('./pages/E2eSpecsPage'))
 
 const FONT = "'Urbanist', -apple-system, BlinkMacSystemFont, sans-serif"
 
@@ -235,6 +237,13 @@ export default function App() {
             } />
             <Route path="/prd-chat/:sessionKey" element={
               <Suspense fallback={null}><PrdChatPage /></Suspense>
+            } />
+            {/* E2E 自动化测试 */}
+            <Route path="/e2e-targets" element={
+              <Suspense fallback={null}><E2eTargetsPage /></Suspense>
+            } />
+            <Route path="/e2e-specs" element={
+              <Suspense fallback={null}><E2eSpecsPage /></Suspense>
             } />
           </Route>
         </Routes>

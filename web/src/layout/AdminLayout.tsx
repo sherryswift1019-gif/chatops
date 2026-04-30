@@ -17,6 +17,7 @@ import {
   DashboardOutlined,
   FileTextOutlined,
   MessageOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons'
 import { me, logout, type MeResponse } from '../api/auth'
 
@@ -40,6 +41,8 @@ const PAGE_NAMES: Record<string, string> = {
   '/prd-metrics': 'PRD 指标',
   '/prd-chat': 'PRD 对话',
   '/product-knowledge': '知识库',
+  '/e2e-targets': '被测项目',
+  '/e2e-specs': '测试规约',
 }
 
 const menuItems = [
@@ -81,6 +84,14 @@ const menuItems = [
     children: [
       { key: '/tools', icon: <ToolOutlined />, label: '工具管理' },
       { key: '/system-config', icon: <SettingOutlined />, label: '系统配置' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: '自动化测试',
+    children: [
+      { key: '/e2e-targets', icon: <ExperimentOutlined />, label: '被测项目' },
+      { key: '/e2e-specs', icon: <FileTextOutlined />, label: '测试规约' },
     ],
   },
 ]
