@@ -36,3 +36,4 @@ fi
 
 echo "==> Build complete: ${IMAGE_NAME}:${IMAGE_TAG}"
 docker images "${IMAGE_NAME}:${IMAGE_TAG}" --format "Size: {{.Size}}"
+echo "{\"artifact\":\"${IMAGE_NAME}:${IMAGE_TAG}\",\"kind\":\"docker-image\"}"

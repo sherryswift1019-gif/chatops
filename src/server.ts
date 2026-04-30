@@ -24,6 +24,7 @@ import { assertRegistryConsistent } from './pipeline/node-types/registry.js'
 import { listEnabledNodeTypeKeys } from './db/repositories/pipeline-node-types.js'
 import './pipeline/node-types/index.js'  // 触发 5 种 node type 自注册
 import { registerWebhookRoute } from './pipeline/webhook-router.js'
+import { verifySandboxSafety } from './e2e/sandbox-sentinel.js'
 
 // Register all tools by importing them
 import './agent/tools/check-env-status.js'
@@ -430,6 +431,7 @@ async function main(): Promise<void> {
     await adapter.start?.()
   }
 
+  await verifySandboxSafety()
   await app.listen({ port: config.PORT, host: '0.0.0.0' })
 
   // Graceful shutdown
