@@ -1,5 +1,5 @@
 // src/e2e/pipeline-b/nodes/setup-sandbox.ts
-import { writeFileSync, mkdtempSync, readFileSync } from 'fs'
+import { mkdtempSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
