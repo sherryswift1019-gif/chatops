@@ -28,6 +28,22 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
+export interface DockerExecOptions {
+  containerId: string
+  user?: string
+}
+
+export function buildDockerExecClaudeArgs(
+  claudeArgs: string[],
+  dockerExec: DockerExecOptions | undefined,
+): { bin: string; args: string[] } {
+  if (!dockerExec) return { bin: 'claude', args: claudeArgs }
+  const dockerArgs = ['exec', '-i']
+  if (dockerExec.user) dockerArgs.push('--user', dockerExec.user)
+  dockerArgs.push(dockerExec.containerId, 'claude', ...claudeArgs)
+  return { bin: 'docker', args: dockerArgs }
+}
+
 /**
  * 把 capability handler 返回的内部 error code（见 analyzer.classifyError / fix-runner /
  * approve-l3-handler 等）翻译成面向终端用户的中文友好提示。
@@ -857,8 +873,9 @@ ${intentRules}
     freshSession?: boolean
     maxTurns?: number
     timeoutMs?: number
+    dockerExec?: DockerExecOptions
   }): Promise<string> {
-    const { prompt, systemPrompt, context, tools, cwd, sessionKey, freshSession, maxTurns, timeoutMs } = opts
+    const { prompt, systemPrompt, context, tools, cwd, sessionKey, freshSession, maxTurns, timeoutMs, dockerExec } = opts
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
 
     const existingSessionId = !freshSession && sessionKey ? this.getSessionId(sessionKey) : undefined
@@ -866,9 +883,26 @@ ${intentRules}
 
     console.log(`[Runner] executeCapabilityDirect: cwd=${cwd}, tools=${tools.map(t=>t.name).join(',')}, resume=${!!existingSessionId}, maxTurns=${maxTurns ?? 200}, timeoutMs=${timeoutMs ?? 'none'}`)
 
+    // 若指定 dockerExec，创建一个临时 wrapper 脚本让 Claude CLI 在容器内运行
+    let cliPath: string | undefined
+    if (dockerExec) {
+      const { writeFileSync, chmodSync } = await import('fs')
+      const { tmpdir } = await import('os')
+      const { join: pathJoin } = await import('path')
+      const safeId = dockerExec.containerId.replace(/[^a-z0-9]/g, '-')
+      const wrapper = pathJoin(tmpdir(), `claude-docker-exec-${safeId}.sh`)
+      const userFlag = dockerExec.user ? `--user ${dockerExec.user} ` : ''
+      writeFileSync(wrapper, `#!/bin/sh\nexec docker exec -i ${userFlag}${dockerExec.containerId} claude "$@"\n`)
+      chmodSync(wrapper, 0o755)
+      cliPath = wrapper
+    }
+
     let textBuffer = ''
 
-    const queryIter = this.porygon.query({
+    const queryIter = (cliPath
+      ? createPorygon({ defaultBackend: 'claude', backends: { claude: { interactive: false, cliPath } } })
+      : this.porygon
+    ).query({
       prompt,
       appendSystemPrompt: systemPrompt,
       ...(existingSessionId ? { resume: existingSessionId } : {}),
