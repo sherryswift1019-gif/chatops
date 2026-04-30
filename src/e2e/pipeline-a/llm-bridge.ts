@@ -1,6 +1,32 @@
 // src/e2e/pipeline-a/llm-bridge.ts
-// Placeholder: 真实 LLM 调用留给集成阶段对接 claude-runner
-export async function executeCapabilityDirectForE2e(_prompt: string, _sessionKey: string): Promise<string> {
-  // TODO: 接入 ClaudeRunner.executeCapabilityDirect
-  return ''
+import { ClaudeRunner } from '../../agent/claude-runner.js'
+import type { TaskContext } from '../../agent/tools/types.js'
+
+let _runner: ClaudeRunner | null = null
+
+function getRunner(): ClaudeRunner {
+  if (!_runner) _runner = new ClaudeRunner()
+  return _runner
+}
+
+const E2E_CONTEXT: TaskContext = {
+  taskId: 'e2e-pipeline-a',
+  groupId: 'e2e-pipeline-a',
+  platform: 'internal',
+  initiatorId: 'pipeline-a',
+  initiatorRole: null,
+}
+
+export async function executeCapabilityDirectForE2e(prompt: string, sessionKey: string): Promise<string> {
+  return getRunner().executeCapabilityDirect({
+    prompt,
+    systemPrompt: 'You are a Playwright test engineer. Output only TypeScript code or JSON as requested.',
+    context: E2E_CONTEXT,
+    tools: [],
+    cwd: process.cwd(),
+    sessionKey,
+    freshSession: true,
+    maxTurns: 5,
+    timeoutMs: 120_000,
+  })
 }
