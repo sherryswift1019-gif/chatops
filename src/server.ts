@@ -80,6 +80,7 @@ import {
 } from './agent/prd-submit/index.js'
 import { setPrdClaudeRunner } from './agent/prd/prd-agent.js'
 import { sweepOrphanReviewingPrds } from './db/repositories/prd-documents.js'
+import { recoverInflightE2eRuns } from './e2e/pipeline-b/startup-recovery.js'
 import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
 import { startPipelineScheduler } from './pipeline/scheduler.js'
 import { startMrReconciler, stopMrReconciler } from './agent/reconcile/mr-state-reconciler.js'
@@ -269,6 +270,14 @@ async function main(): Promise<void> {
     }
   } catch (err) {
     app.log.warn({ err }, '[prd-sweep] sweep orphan reviewing PRDs failed')
+  }
+
+  // 启动兜底：把被上次进程中断的 e2e run（running / awaiting_fix）全部标 aborted
+  // + best-effort 清理沙盒 / 删 iteration branch，防资源泄漏。
+  try {
+    await recoverInflightE2eRuns()
+  } catch (err) {
+    app.log.warn({ err }, '[E2eRecovery] startup recovery failed (non-fatal)')
   }
 
   // Session manager — processes each message
