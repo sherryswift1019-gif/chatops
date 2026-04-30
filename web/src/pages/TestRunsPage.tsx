@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
-import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar, Divider, Input, theme } from 'antd'
+import { Card, Table, Tag, Button, Drawer, Timeline, Space, Descriptions, message, Avatar, Divider, Input, Segmented, theme } from 'antd'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, UserOutlined, CodeOutlined } from '@ant-design/icons'
 import { getTestRuns, getTestRun, resumeTestRun } from '../api/test-runs'
 import type { TestRunWithUser } from '../api/test-runs'
 import { getTestPipelines } from '../api/test-pipelines'
 import { usePagination } from '../hooks/usePagination'
 import { useStageLogStream } from '../hooks/useStageLogStream'
+import { StageLogView, StageOutputView } from '../components/StageLogView'
 import type { TestPipeline, StageResult } from '../types'
 
 const statusColors: Record<string, string> = { pending: 'default', running: 'processing', success: 'success', failed: 'error', cancelled: 'warning' }
@@ -19,14 +20,25 @@ function formatDuration(ms: number): string {
 
 /**
  * 单 stage 实时日志面板。EventSource 订阅 backend SSE，自动滚到底部。
+ * pretty / raw 视图切换：pretty 用 StageLogView 解析渲染，raw 保留 dark <pre>。
  * 父组件控制 mount/unmount 即可，hook 内部接管 connect / cleanup。
  */
 function StageLogPanel({ runId, stageIndex }: { runId: number; stageIndex: number }) {
   const { content, status, fileType, errorMsg, finalStatus } = useStageLogStream(runId, stageIndex, true)
-  const preRef = useRef<HTMLPreElement | null>(null)
+  const prettyRef = useRef<HTMLDivElement | null>(null)
+  const rawRef = useRef<HTMLPreElement | null>(null)
+  const [viewMode, setViewMode] = useState<'pretty' | 'raw'>('pretty')
+
   useEffect(() => {
-    if (preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight
-  }, [content])
+    // 内容变化后下一帧滚到底，避免用户错过最新行
+    requestAnimationFrame(() => {
+      if (viewMode === 'pretty' && prettyRef.current) {
+        prettyRef.current.scrollTop = prettyRef.current.scrollHeight
+      } else if (viewMode === 'raw' && rawRef.current) {
+        rawRef.current.scrollTop = rawRef.current.scrollHeight
+      }
+    })
+  }, [content, viewMode])
 
   const statusLabel: Record<string, string> = {
     connecting: '连接中…',
@@ -38,31 +50,46 @@ function StageLogPanel({ runId, stageIndex }: { runId: number; stageIndex: numbe
 
   return (
     <div style={{ marginTop: 8 }}>
-      <div style={{ fontSize: 12, color: '#999', marginBottom: 4 }}>
-        <Tag color={status === 'streaming' ? 'processing' : status === 'done' ? 'green' : status === 'error' ? 'red' : 'default'}>
-          {statusLabel[status] ?? status}
-        </Tag>
-        {fileType && <span style={{ marginLeft: 6 }}>来源：<code>{fileType}.log</code></span>}
-        {errorMsg && status === 'error' && <span style={{ marginLeft: 6, color: '#f5222d' }}>{errorMsg}</span>}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+        <div style={{ fontSize: 12, color: '#999' }}>
+          <Tag color={status === 'streaming' ? 'processing' : status === 'done' ? 'green' : status === 'error' ? 'red' : 'default'}>
+            {statusLabel[status] ?? status}
+          </Tag>
+          {fileType && <span style={{ marginLeft: 6 }}>来源：<code>{fileType}.log</code></span>}
+          {errorMsg && status === 'error' && <span style={{ marginLeft: 6, color: '#f5222d' }}>{errorMsg}</span>}
+        </div>
+        <Segmented
+          size="small"
+          value={viewMode}
+          onChange={(v) => setViewMode(v as 'pretty' | 'raw')}
+          options={[
+            { label: '美化视图', value: 'pretty' },
+            { label: '原始', value: 'raw' },
+          ]}
+        />
       </div>
-      <pre
-        ref={preRef}
-        style={{
-          background: '#1e1e1e',
-          color: '#d4d4d4',
-          padding: '10px 12px',
-          borderRadius: 4,
-          fontSize: 12,
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-          maxHeight: 320,
-          overflow: 'auto',
-          marginTop: 0,
-        }}
-      >
-        {content || (status === 'waiting' ? '（日志尚未生成）' : '')}
-      </pre>
+      {viewMode === 'pretty' ? (
+        <StageLogView raw={content} scrollRef={prettyRef} />
+      ) : (
+        <pre
+          ref={rawRef}
+          style={{
+            background: '#0d1117',
+            color: '#c9d1d9',
+            padding: '10px 12px',
+            borderRadius: 4,
+            fontSize: 12,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            maxHeight: 360,
+            overflow: 'auto',
+            marginTop: 0,
+          }}
+        >
+          {content || (status === 'waiting' ? '（日志尚未生成）' : '')}
+        </pre>
+      )}
     </div>
   )
 }
@@ -265,25 +292,30 @@ export default function TestRunsPage() {
             <Timeline items={selectedRun.stageResults.map((s, idx) => {
               const logKey = `${selectedRun.id}:${idx}`
               const logOpen = openStageLogs[logKey] === true
+              const isRunning = s.status === 'running'
               return ({
                 color: stageStatusColors[s.status] ?? 'gray',
                 children: (
                   <div>
                     <strong>{s.name}</strong> <Tag color={stageStatusColors[s.status]}>{s.status}</Tag>
                     {s.durationMs !== undefined && <span style={{ fontSize: 12, color: '#999', marginLeft: 8 }}>{formatDuration(s.durationMs)}</span>}
-                    <Button
-                      type="link"
-                      size="small"
-                      icon={<CodeOutlined />}
-                      style={{ marginLeft: 4, padding: '0 4px' }}
-                      onClick={() => setOpenStageLogs((prev) => ({ ...prev, [logKey]: !prev[logKey] }))}
-                    >
-                      {logOpen ? '收起实时日志' : '查看实时日志'}
-                    </Button>
-                    {s.output && (
-                      <pre style={{ background: token.colorFillTertiary, border: `1px solid ${token.colorBorderSecondary}`, borderRadius: 4, padding: '8px 12px', marginTop: 6, fontSize: 12, fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto', color: token.colorText }}>
-                        {s.output}
-                      </pre>
+                    {isRunning && (
+                      <Button
+                        type="link"
+                        size="small"
+                        icon={<CodeOutlined />}
+                        style={{ marginLeft: 4, padding: '0 4px' }}
+                        onClick={() => setOpenStageLogs((prev) => ({ ...prev, [logKey]: !prev[logKey] }))}
+                      >
+                        {logOpen ? '收起实时日志' : '查看实时日志'}
+                      </Button>
+                    )}
+                    {!isRunning && (s.status === 'success' || s.status === 'failed' || s.status === 'skipped') && (
+                      <StageOutputView
+                        runId={selectedRun.id}
+                        stageIndex={idx}
+                        fallback={s.output}
+                      />
                     )}
                     {s.error && <div style={{ color: token.colorErrorText, fontSize: 12, marginTop: 4, background: token.colorErrorBg, padding: '4px 8px', borderRadius: 4 }}>{s.error}</div>}
                     {s.aiAnalysis && (
@@ -292,7 +324,7 @@ export default function TestRunsPage() {
                         <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{s.aiAnalysis}</div>
                       </div>
                     )}
-                    {logOpen && <StageLogPanel runId={selectedRun.id} stageIndex={idx} />}
+                    {isRunning && logOpen && <StageLogPanel runId={selectedRun.id} stageIndex={idx} />}
                   </div>
                 ),
               })

@@ -41,3 +41,18 @@ export const resumeTestRun = (id: number, body: ResumeTestRunBody) =>
     `/test-runs/${id}/resume`,
     body
   ).then(r => r.data)
+
+export interface StageLogResponse {
+  runId: number
+  stageIndex: number
+  filePath: string
+  fileType: 'script' | 'capability'
+  content: string
+}
+
+/**
+ * 一次性拉单 stage 的完整日志文件。404 表示没有 log 文件（如 approval / dm
+ * 等无落盘的 stage 类型），调用方应回落到 stageResult.output。
+ */
+export const getStageLog = (runId: number, stageIndex: number, signal?: AbortSignal) =>
+  client.get<StageLogResponse>(`/test-runs/${runId}/stage/${stageIndex}/log`, { signal }).then(r => r.data)

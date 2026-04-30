@@ -22,3 +22,4 @@ src/db/system-config.local.sql
 logs/
 .agents/
 var/
+.playwright-mcp/
