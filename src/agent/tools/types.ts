@@ -1,3 +1,5 @@
+import type { IMAdapter } from '../../adapters/im/types.js'
+
 export type RiskLevel = 'low' | 'medium' | 'high'
 export type Role = 'developer' | 'tester' | 'ops' | 'admin'
 
@@ -12,6 +14,10 @@ export interface TaskContext {
   originalPrompt?: string
   /** 节点级容器名，run_command 等本地命令工具看到非空时走 docker exec */
   dockerContainerName?: string
+  /** IM 消息原文（e2e_run handler 解析命令用） */
+  messageText?: string
+  /** IM 适配器实例（e2e_run handler 发送群消息用） */
+  adapter?: IMAdapter
 }
 
 export interface ToolResult {

@@ -732,3 +732,84 @@ export async function notifyDm(userId: string, message: string): Promise<void> {
   }
   await notifyDmFn(userId, message)
 }
+
+// ============ e2e_run handler ============
+import { createE2eRun } from '../db/repositories/e2e-runs.js'
+import { notifyRunStarted, notifyRunAborted } from '../e2e/pipeline-b/im-notifier.js'
+import type { ImNotifyOptions } from '../e2e/pipeline-b/im-notifier.js'
+
+export interface ParsedE2eCommand {
+  projectId: string
+  sourceBranch: string
+  scenarioFilter?: { ids?: string[]; tags?: string[] }
+}
+
+export function parseE2eImCommand(messageText: string): ParsedE2eCommand | null {
+  const normalized = messageText.replace(/^@\S+\s*/, '').trim()
+  const hasKeyword =
+    /跑\s*chatops\s*e2e/i.test(normalized) ||
+    /run\s+chatops\s+e2e/i.test(normalized)
+  if (!hasKeyword) return null
+
+  const tagMatch = normalized.match(/--tag=(\S+)/)
+  const idMatch = normalized.match(/--id=(\S+)/)
+  const branchMatch = normalized.match(/--branch=(\S+)/)
+
+  const tags = tagMatch ? [tagMatch[1]] : undefined
+  const ids = idMatch ? [idMatch[1]] : undefined
+  const scenarioFilter = tags || ids ? { tags, ids } : undefined
+
+  return {
+    projectId: 'chatops',
+    sourceBranch: branchMatch ? branchMatch[1] : 'main',
+    scenarioFilter,
+  }
+}
+
+registerCapabilityHandler('e2e_run', async (opts: TriggerOptions) => {
+  const { context } = opts
+  const parsed = parseE2eImCommand(context.messageText ?? '')
+  if (!parsed) {
+    return {
+      success: false,
+      error: '命令格式：@bot 跑 chatops e2e [--tag=<tag>] [--id=<id>] [--branch=<branch>]',
+    }
+  }
+
+  if (!context.adapter) {
+    return { success: false, error: 'e2e_run handler 需要 IMAdapter（context.adapter 为空）' }
+  }
+
+  const run = await createE2eRun({
+    targetProjectId: parsed.projectId,
+    triggerType: 'im',
+    triggerActor: context.initiatorId ?? null,
+    sourceBranch: parsed.sourceBranch,
+    iterationBranch: `test-iter/init`,
+    scenarioFilter: parsed.scenarioFilter ?? null,
+  })
+
+  const notifyOpts: ImNotifyOptions = {
+    adapter: context.adapter,
+    groupId: context.groupId,
+    runId: run.id,
+  }
+
+  const { runPipelineB } = await import('../e2e/pipeline-b/runner.js')
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(runPipelineB as any)({
+    targetProjectId: parsed.projectId,
+    sourceBranch: parsed.sourceBranch,
+    scenarioFilter: parsed.scenarioFilter,
+    triggerType: 'im',
+    triggerActor: context.initiatorId,
+    existingRunId: run.id,
+    imContext: { adapter: context.adapter, groupId: context.groupId },
+  }).catch((err: Error) => {
+    notifyRunAborted(notifyOpts, err.message).catch(() => {})
+  })
+
+  await notifyRunStarted(notifyOpts, 0)
+  return { success: true, data: { runId: String(run.id) } }
+})
