@@ -85,3 +85,32 @@ export async function countQueuedE2eRuns(targetProjectId: string): Promise<numbe
   )
   return parseInt(rows[0].count, 10)
 }
+
+export async function listE2eRuns(
+  filter: { projectId?: string; limit?: number; offset?: number },
+): Promise<{ runs: E2eRun[]; total: number }> {
+  const limit = Math.min(filter.limit ?? 20, 100)
+  const offset = filter.offset ?? 0
+  const conditions: string[] = []
+  const params: unknown[] = []
+
+  if (filter.projectId) {
+    params.push(filter.projectId)
+    conditions.push(`target_project_id = $${params.length}`)
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  params.push(limit)
+  params.push(offset)
+
+  const { rows } = await getPool().query(
+    `SELECT *, COUNT(*) OVER() AS _total
+     FROM e2e_runs ${where}
+     ORDER BY started_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params,
+  )
+
+  const total = rows.length > 0 ? Number(rows[0]._total) : 0
+  return { runs: rows.map(mapRow), total }
+}
