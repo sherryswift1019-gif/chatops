@@ -23,6 +23,8 @@ import { acquire, release, type Worktree } from './worktree/manager.js'
 import { getByProductLineId } from '../db/repositories/product-knowledge-repos.js'
 import { getPrdDocumentById } from '../db/repositories/prd-documents.js'
 import { buildRejectSystemPromptAppendix } from './prd/reject-seed.js'
+import { writeFileSync, chmodSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
 import { dirname, join, resolve as pathResolve, relative as pathRelative } from 'path'
 import { fileURLToPath } from 'url'
 
@@ -885,24 +887,26 @@ ${intentRules}
 
     // 若指定 dockerExec，创建一个临时 wrapper 脚本让 Claude CLI 在容器内运行
     let cliPath: string | undefined
+    let wrapper: string | undefined
     if (dockerExec) {
-      const { writeFileSync, chmodSync } = await import('fs')
-      const { tmpdir } = await import('os')
-      const { join: pathJoin } = await import('path')
       const safeId = dockerExec.containerId.replace(/[^a-z0-9]/g, '-')
-      const wrapper = pathJoin(tmpdir(), `claude-docker-exec-${safeId}.sh`)
-      const userFlag = dockerExec.user ? `--user ${dockerExec.user} ` : ''
-      writeFileSync(wrapper, `#!/bin/sh\nexec docker exec -i ${userFlag}${dockerExec.containerId} claude "$@"\n`)
+      wrapper = join(tmpdir(), `claude-docker-exec-${safeId}.sh`)
+      const safeContainerId = dockerExec.containerId.replace(/'/g, "'\\''")
+      const safeUser = dockerExec.user?.replace(/'/g, "'\\''")
+      const userFlag = safeUser ? `--user '${safeUser}' ` : ''
+      writeFileSync(wrapper, `#!/bin/sh\nexec docker exec -i ${userFlag}'${safeContainerId}' claude "$@"\n`)
       chmodSync(wrapper, 0o755)
       cliPath = wrapper
     }
 
     let textBuffer = ''
+    let tempPorygon: ReturnType<typeof createPorygon> | null = null
+    if (cliPath) {
+      tempPorygon = createPorygon({ defaultBackend: 'claude', backends: { claude: { interactive: false, cliPath } } })
+    }
+    const activePorygon = tempPorygon ?? this.porygon
 
-    const queryIter = (cliPath
-      ? createPorygon({ defaultBackend: 'claude', backends: { claude: { interactive: false, cliPath } } })
-      : this.porygon
-    ).query({
+    const queryIter = activePorygon.query({
       prompt,
       appendSystemPrompt: systemPrompt,
       ...(existingSessionId ? { resume: existingSessionId } : {}),
@@ -958,6 +962,14 @@ ${intentRules}
       }
     } else {
       await consume()
+    }
+
+    // 释放临时资源
+    if (tempPorygon) {
+      await tempPorygon.dispose().catch(() => {})
+    }
+    if (wrapper) {
+      try { unlinkSync(wrapper) } catch { /* ignore */ }
     }
 
     console.log(`[Runner] executeCapabilityDirect completed, output length: ${textBuffer.length}`)
