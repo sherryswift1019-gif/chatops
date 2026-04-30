@@ -1,5 +1,11 @@
 // src/e2e/pipeline-b/types.ts
 import { Annotation } from '@langchain/langgraph'
+import type { IMAdapter } from '../../adapters/im/types.js'
+
+export interface ImContext {
+  adapter: IMAdapter
+  groupId: string
+}
 
 export interface ScenarioInfo {
   id: string
@@ -73,6 +79,7 @@ export const PipelineBState = Annotation.Root({
   }),
   summaryMrUrl: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
   errorMessage: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
+  imContext: Annotation<ImContext | null>({ default: () => null, reducer: (_, v) => v }),
 })
 
 export type PipelineBStateType = typeof PipelineBState.State

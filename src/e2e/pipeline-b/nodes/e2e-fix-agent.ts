@@ -2,6 +2,8 @@
 import { getPool } from '../../../db/client.js'
 import type { SandboxHandle } from '../../../db/repositories/e2e-sandboxes.js'
 import { runE2eFix, type AiDiagnosis } from '../../../agent/e2e-fix/runner.js'
+import { notifyBugfixComplete } from '../im-notifier.js'
+import type { ImContext } from '../types.js'
 
 export interface E2eFixAgentInput {
   sandboxHandle: SandboxHandle & { containerId?: string; workdir?: string }
@@ -9,6 +11,7 @@ export interface E2eFixAgentInput {
   evidenceDir: string
   scenarioId: string
   scenarioRunId: bigint
+  imContext?: ImContext
 }
 
 export interface E2eFixAgentOutput {
@@ -42,6 +45,13 @@ export async function e2eFixAgentNode(
       WHERE id = $2`,
     [JSON.stringify(diagnosis), scenarioRunId],
   )
+
+  if (diagnosis.success && input.imContext) {
+    notifyBugfixComplete(
+      { adapter: input.imContext.adapter, groupId: input.imContext.groupId, runId: scenarioRunId },
+      scenarioId,
+    ).catch(() => {})
+  }
 
   return { lastFixResult: diagnosis }
 }

@@ -9,6 +9,7 @@ import {
 } from '../../../db/repositories/e2e-scenario-runs.js'
 import { updateE2eRunStatus } from '../../../db/repositories/e2e-runs.js'
 import { runScript } from '../run-script.js'
+import { notifyScenarioFailed } from '../im-notifier.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function runScenarioNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
@@ -71,6 +72,12 @@ export async function runScenarioNode(state: PipelineBStateType): Promise<Partia
   }
 
   console.log(`[PipelineB:runScenario] runId=${runId} scenario=${currentScenario.id} attempt=${attemptNumber} result=${scenarioResult}`)
+  if (scenarioResult !== 'pass' && state.imContext) {
+    notifyScenarioFailed(
+      { adapter: state.imContext.adapter, groupId: state.imContext.groupId, runId },
+      currentScenario.id,
+    ).catch(() => {})
+  }
   return {
     lastScenarioResult: scenarioResult,
     currentScenarioRunId: scenarioRunRecord.id,

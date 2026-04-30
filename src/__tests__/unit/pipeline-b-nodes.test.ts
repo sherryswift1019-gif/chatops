@@ -132,6 +132,7 @@ const BASE_STATE: PipelineBStateType = {
   governorState: DEFAULT_GOVERNOR,
   summaryMrUrl: null,
   errorMessage: null,
+  imContext: null,
 }
 
 beforeEach(() => {

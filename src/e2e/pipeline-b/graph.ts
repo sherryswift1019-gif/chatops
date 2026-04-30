@@ -61,6 +61,7 @@ export function buildPipelineBGraph() {
         evidenceDir: state.evidenceDirTemp!,
         scenarioId: state.currentScenario!.id,
         scenarioRunId: state.currentScenarioRunId!,
+        imContext: state.imContext ?? undefined,
       })
     )
     .addNode('redeploy', redeployNode)

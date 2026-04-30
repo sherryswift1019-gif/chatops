@@ -2,6 +2,7 @@
 import { join } from 'path'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import { runScript } from '../run-script.js'
+import { notifyRunStarted } from '../im-notifier.js'
 import type { PipelineBStateType, ScenarioInfo } from '../types.js'
 
 function isScenarioInfo(x: unknown): x is ScenarioInfo {
@@ -50,5 +51,11 @@ export async function discoverNode(state: PipelineBStateType): Promise<Partial<P
   }
 
   console.log(`[PipelineB:discover] runId=${state.runId} found ${scenarios.length} scenarios`)
+  if (state.imContext) {
+    notifyRunStarted(
+      { adapter: state.imContext.adapter, groupId: state.imContext.groupId, runId: state.runId },
+      scenarios.length,
+    ).catch(() => {})
+  }
   return { pendingScenarios: scenarios }
 }

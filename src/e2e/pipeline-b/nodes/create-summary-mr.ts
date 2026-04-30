@@ -2,6 +2,7 @@
 import { resolveGitlabConfig } from '../../../config/gitlab.js'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import { updateE2eRunStatus } from '../../../db/repositories/e2e-runs.js'
+import { notifyRunPassed } from '../im-notifier.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function createSummaryMrNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
@@ -58,6 +59,16 @@ export async function createSummaryMrNode(state: PipelineBStateType): Promise<Pa
     finishedAt: new Date(),
     summaryMrUrl: mrUrl ?? undefined,
   })
+
+  if (state.imContext) {
+    const fixedCount = Object.values(state.governorState.perScenarioAttempts)
+      .filter(n => n > 1).length
+    notifyRunPassed(
+      { adapter: state.imContext.adapter, groupId: state.imContext.groupId, runId },
+      fixedCount,
+      mrUrl,
+    ).catch(() => {})
+  }
 
   return { summaryMrUrl: mrUrl }
 }

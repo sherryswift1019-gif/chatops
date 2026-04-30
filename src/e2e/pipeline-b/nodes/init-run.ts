@@ -6,6 +6,17 @@ import { runScript } from '../run-script.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function initRunNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
+  if (state.runId && state.runId !== 0n) {
+    // existingRunId 已由 runner 传入（coordinator handler 预创建），跳过 createE2eRun
+    await updateE2eRunStatus(state.runId, 'running')
+    const project = await getE2eTargetProject(state.targetProjectId)
+    if (!project) throw new Error(`e2e target project not found: ${state.targetProjectId}`)
+    return {
+      iterationBranch: `test-iter/${state.runId}`,
+      projectScripts: project.scripts ?? { build: 'build.sh', deploy: 'deploy.sh', test: 'test.sh' },
+    }
+  }
+
   const project = await getE2eTargetProject(state.targetProjectId)
   if (!project) throw new Error(`e2e_target_projects: "${state.targetProjectId}" not found`)
 

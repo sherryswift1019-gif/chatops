@@ -1,5 +1,6 @@
 // src/e2e/pipeline-b/nodes/finalize-failed.ts
 import { updateE2eRunStatus } from '../../../db/repositories/e2e-runs.js'
+import { notifyRunFailed } from '../im-notifier.js'
 import type { PipelineBStateType } from '../types.js'
 
 export function governorCheck(state: PipelineBStateType): 'continue' | 'over_budget' {
@@ -34,6 +35,13 @@ export async function finalizeFailedNode(state: PipelineBStateType): Promise<Par
     finishedAt: new Date(),
     abortReason: reason,
   })
+
+  if (state.imContext) {
+    notifyRunFailed(
+      { adapter: state.imContext.adapter, groupId: state.imContext.groupId, runId },
+      reason,
+    ).catch(() => {})
+  }
 
   console.log(`[PipelineB:finalizeFailed] runId=${runId} reason=${reason}`)
   return { errorMessage: reason }

@@ -2,7 +2,8 @@
 import { buildPipelineBGraph } from './graph.js'
 import { teardownSandboxNode } from './nodes/teardown-sandbox.js'
 import { updateE2eRunStatus, countQueuedE2eRuns } from '../../db/repositories/e2e-runs.js'
-import type { PipelineBStateType, GovernorState } from './types.js'
+import type { PipelineBStateType, GovernorState, ImContext } from './types.js'
+import { notifyRunAborted } from './im-notifier.js'
 
 const MAX_QUEUED_RUNS = 2
 const DEFAULT_GOVERNOR_LIMITS = {
@@ -23,6 +24,8 @@ export interface RunPipelineBOptions {
     maxRunHours?: number
     maxTotalAttempts?: number
   }
+  existingRunId?: bigint
+  imContext?: ImContext
 }
 
 export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: bigint; status: string }> {
@@ -64,6 +67,8 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
     errorMessage: null,
     projectScripts: { build: 'build.sh', deploy: 'deploy.sh', test: 'test.sh' },
     scenarioFilter: opts.scenarioFilter ?? null,
+    ...(opts.existingRunId ? { runId: opts.existingRunId } : {}),
+    imContext: opts.imContext ?? null,
   }
 
   const graph = buildPipelineBGraph()
@@ -82,6 +87,14 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
       await updateE2eRunStatus(runId, 'aborted', { abortReason: String(err) }).catch(() => undefined)
     }
     await teardownSandboxNode(lastKnownState as PipelineBStateType).catch(() => undefined)
+    if (opts.imContext) {
+      const runIdForNotify = (lastKnownState as PipelineBStateType).runId
+      const msg = err instanceof Error ? err.message : String(err)
+      notifyRunAborted(
+        { adapter: opts.imContext.adapter, groupId: opts.imContext.groupId, runId: runIdForNotify },
+        msg,
+      ).catch(() => {})
+    }
     throw err
   }
 }
