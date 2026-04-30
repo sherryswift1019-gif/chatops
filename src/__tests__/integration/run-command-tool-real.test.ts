@@ -11,7 +11,11 @@ const hasDocker = (() => {
   try { execSync('docker version --format ok', { stdio: 'pipe' }); return true } catch { return false }
 })()
 
-describe.skipIf(!hasDocker)('run_command real docker', () => {
+// CI uses socket binding (DooD): /tmp paths in the runner container are not
+// visible on the Docker daemon host, so bind mount tests cannot pass there.
+const canTest = hasDocker && process.env.CI !== 'true'
+
+describe.skipIf(!canTest)('run_command real docker', () => {
   it('docker path: command runs inside container with cwd from bind-mounted host dir', async () => {
     const hostDir = mkdtempSync(join(tmpdir(), 'chatops-rc-'))
     process.env.TEST_DATA_DIR = '/data/chatops/test-runs'
