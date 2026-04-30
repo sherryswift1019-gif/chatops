@@ -19,9 +19,16 @@ export async function registerE2eEvidenceRoutes(app: FastifyInstance): Promise<v
     if (!filePath) {
       return reply.status(400).send({ error: 'file path required' })
     }
+    if (!/^\d+$/.test(runId)) return reply.status(400).send({ error: 'invalid runId' })
+    if (!/^\d+$/.test(attemptNumber)) return reply.status(400).send({ error: 'invalid attemptNumber' })
+    if (!/^[a-zA-Z0-9_-]+$/.test(scenarioId)) return reply.status(400).send({ error: 'invalid scenarioId' })
 
     const root = getEvidenceRoot()
     const fullPath = join(root, runId, scenarioId, attemptNumber, filePath)
+    const normalizedRoot = root.endsWith('/') ? root : root + '/'
+    if (!fullPath.startsWith(normalizedRoot)) {
+      return reply.status(400).send({ error: 'invalid path' })
+    }
 
     try {
       const s = await stat(fullPath)
