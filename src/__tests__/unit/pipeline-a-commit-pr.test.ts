@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-vi.mock('child_process', () => ({ spawnSync: vi.fn() }))
+vi.mock('child_process', () => ({ spawnSync: vi.fn(), execFile: vi.fn() }))
 vi.mock('fs', () => ({
   writeFileSync: vi.fn(),
   mkdirSync: vi.fn(),
@@ -72,7 +72,6 @@ describe('commitAndPrNode', () => {
     expect(result.completedSpecs![0].specId).toBe(1n)
     expect(result.completedSpecs![0].status).toBe('pr_open')
     expect(result.completedSpecs![0].prUrl).toContain('merge_requests')
-    expect(result.currentSpecIndex).toBe(1)
     expect(result.baselineAttempts).toBe(0)
     expect(result.staticCheckAttempts).toBe(0)
 

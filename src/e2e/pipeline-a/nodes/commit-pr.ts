@@ -1,10 +1,13 @@
 // src/e2e/pipeline-a/nodes/commit-pr.ts
-import { spawnSync } from 'child_process'
+import { spawnSync, execFile } from 'child_process'
 import { writeFileSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
+import { promisify } from 'util'
 import { resolveGitlabConfig } from '../../../config/gitlab.js'
 import { updateE2eSpecStatus } from '../../../db/repositories/e2e-specs.js'
 import type { PipelineAStateType } from '../types.js'
+
+const execFileAsync = promisify(execFile)
 
 function git(args: string[], env: Record<string, string> = {}): { status: number; stdout: string } {
   const r = spawnSync('git', args, {
@@ -102,7 +105,6 @@ export async function commitAndPrNode(state: PipelineAStateType): Promise<Partia
 
   return {
     completedSpecs: [{ specId: spec.specId, status: 'pr_open', prUrl }],
-    currentSpecIndex: state.currentSpecIndex + 1,
     baselineAttempts: 0,
     staticCheckAttempts: 0,
     sandboxHandle: null,
@@ -121,31 +123,27 @@ async function autoMergePr(prUrl: string, specId: bigint, token: string, gitlabU
   for (let i = 0; i < maxAttempts; i++) {
     await new Promise(r => setTimeout(r, 30_000))
 
-    const checkResult = spawnSync('glab', ['mr', 'view', iid, '--output=json'], {
-      encoding: 'utf8',
-      timeout: 30_000,
-      env: {
-        ...process.env,
-        GITLAB_TOKEN: token,
-        GITLAB_HOST: gitlabUrl,
-      },
-    })
+    try {
+      const { stdout } = await execFileAsync('glab', ['mr', 'view', iid, '--output=json'], {
+        timeout: 30_000,
+        env: {
+          ...process.env,
+          GITLAB_TOKEN: token,
+          GITLAB_HOST: gitlabUrl,
+        },
+      })
 
-    if (checkResult.status === 0) {
-      try {
-        const mr = JSON.parse(checkResult.stdout ?? '{}')
-        if (mr.detailed_merge_status === 'mergeable' || mr.pipeline?.status === 'success') {
-          ciPassed = true
-          break
-        }
-        if (mr.pipeline?.status === 'failed') {
-          console.warn(`[PipelineA:autoMerge] CI failed for MR ${iid}`)
-          break
-        }
-      } catch (e) {
-        console.warn(`[PipelineA:autoMerge] failed to parse MR view result`, e)
-        continue
+      const mr = JSON.parse(stdout ?? '{}')
+      if (mr.detailed_merge_status === 'mergeable' || mr.pipeline?.status === 'success') {
+        ciPassed = true
+        break
       }
+      if (mr.pipeline?.status === 'failed') {
+        console.warn(`[PipelineA:autoMerge] CI failed for MR ${iid}`)
+        break
+      }
+    } catch (e) {
+      console.warn(`[PipelineA:autoMerge] glab mr view error (attempt ${i+1}):`, e)
     }
   }
 
@@ -155,20 +153,18 @@ async function autoMergePr(prUrl: string, specId: bigint, token: string, gitlabU
   }
 
   // CI passed, merge the MR
-  const mergeResult = spawnSync('glab', ['mr', 'merge', iid, '--yes', '--squash'], {
-    encoding: 'utf8',
-    timeout: 60_000,
-    env: {
-      ...process.env,
-      GITLAB_TOKEN: token,
-      GITLAB_HOST: gitlabUrl,
-    },
-  })
-
-  if (mergeResult.status === 0) {
+  try {
+    await execFileAsync('glab', ['mr', 'merge', iid, '--yes', '--squash'], {
+      timeout: 60_000,
+      env: {
+        ...process.env,
+        GITLAB_TOKEN: token,
+        GITLAB_HOST: gitlabUrl,
+      },
+    })
     await updateE2eSpecStatus(specId, 'committed')
     console.log(`[PipelineA:autoMerge] successfully merged MR ${iid} for spec ${specId}`)
-  } else {
-    console.warn(`[PipelineA:autoMerge] failed to merge MR ${iid}: ${mergeResult.stderr}`)
+  } catch (e) {
+    console.warn(`[PipelineA:autoMerge] failed to merge MR ${iid}:`, e)
   }
 }
