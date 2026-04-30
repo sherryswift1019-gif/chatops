@@ -75,3 +75,13 @@ export async function listInflightE2eRuns(): Promise<E2eRun[]> {
   )
   return rows.map(mapRow)
 }
+
+export async function countQueuedE2eRuns(targetProjectId: string): Promise<number> {
+  const { rows } = await getPool().query<{ count: string }>(
+    `SELECT COUNT(*) AS count FROM e2e_runs
+      WHERE target_project_id = $1
+        AND status IN ('pending', 'running', 'awaiting_fix')`,
+    [targetProjectId]
+  )
+  return parseInt(rows[0].count, 10)
+}
