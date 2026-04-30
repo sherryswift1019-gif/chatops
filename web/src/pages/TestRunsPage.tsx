@@ -12,10 +12,16 @@ import type { TestPipeline, StageResult } from '../types'
 const statusColors: Record<string, string> = { pending: 'default', running: 'processing', success: 'success', failed: 'error', cancelled: 'warning' }
 const statusLabels: Record<string, string> = { pending: '等待中', running: '执行中', success: '成功', failed: '失败', cancelled: '已取消' }
 
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
+function formatDuration(ms: number | null): string {
+  if (ms == null) return '-'
+  if (ms < 1000) return `${Math.round(ms)}ms`
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
   return `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`
+}
+
+function runDurationMs(r: { startedAt: string | null; finishedAt: string | null }): number | null {
+  if (!r.startedAt || !r.finishedAt) return null
+  return new Date(r.finishedAt).getTime() - new Date(r.startedAt).getTime()
 }
 
 /**
@@ -227,8 +233,8 @@ export default function TestRunsPage() {
     { title: '触发人', dataIndex: 'triggeredByName', render: (_: unknown, r: TestRunWithUser) => r.triggeredByName ? <span><Avatar size={20} src={r.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{r.triggeredByName}</span> : (r.triggeredBy || '-') },
     { title: '状态', dataIndex: 'status', render: (v: string) => <Tag color={statusColors[v]}>{statusLabels[v] ?? v}</Tag> },
     { title: '进度', render: (_: unknown, r: TestRunWithUser) => `${r.stageResults.filter(s => s.status === 'success' || s.status === 'failed').length}/${r.stageResults.length}` },
+    { title: '耗时', width: 90, render: (_: unknown, r: TestRunWithUser) => formatDuration(runDurationMs(r)) },
     { title: '开始时间', dataIndex: 'startedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
-    { title: '结束时间', dataIndex: 'finishedAt', render: (v: string | null) => v ? new Date(v).toLocaleString('zh-CN') : '-' },
     {
       title: '操作',
       render: (_: unknown, r: TestRunWithUser) => (
@@ -272,7 +278,7 @@ export default function TestRunsPage() {
               <Descriptions.Item label="触发方式">{triggerLabels[selectedRun.triggerType]}</Descriptions.Item>
               <Descriptions.Item label="触发人">{selectedRun.triggeredByName ? <span><Avatar size={20} src={selectedRun.triggeredByAvatar} icon={<UserOutlined />} style={{ marginRight: 4 }} />{selectedRun.triggeredByName}</span> : (selectedRun.triggeredBy || '-')}</Descriptions.Item>
               <Descriptions.Item label="开始时间">{selectedRun.startedAt ? new Date(selectedRun.startedAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
-              <Descriptions.Item label="结束时间">{selectedRun.finishedAt ? new Date(selectedRun.finishedAt).toLocaleString('zh-CN') : '-'}</Descriptions.Item>
+              <Descriptions.Item label="耗时">{formatDuration(runDurationMs(selectedRun))}</Descriptions.Item>
             </Descriptions>
 
             {selectedRun.errorMessage && (
