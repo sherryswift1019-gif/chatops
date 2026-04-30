@@ -24,7 +24,8 @@ export async function runScenarioNode(state: PipelineBStateType): Promise<Partia
   const attemptNumber = (await getLatestAttemptNumber(runId, currentScenario.id)) + 1
 
   const evidenceRoot = process.env.E2E_EVIDENCE_ROOT ?? '/var/chatops/e2e-evidence'
-  const evidenceDir = join(evidenceRoot, String(runId), currentScenario.id, String(attemptNumber))
+  const safeScenarioId = currentScenario.id.replace(/[^a-zA-Z0-9_\-]/g, '_')
+  const evidenceDir = join(evidenceRoot, String(runId), safeScenarioId, String(attemptNumber))
   mkdirSync(evidenceDir, { recursive: true })
 
   const scenarioRunRecord = await createScenarioRun({
