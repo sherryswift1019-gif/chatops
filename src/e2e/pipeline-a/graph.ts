@@ -11,9 +11,7 @@ import { commitAndPrNode } from './nodes/commit-pr.js'
 import type { PipelineAStateType } from './types.js'
 
 export function buildPipelineAGraph() {
-  const graph = new StateGraph(PipelineAState)
-
-  graph
+  const g = new StateGraph(PipelineAState)
     .addNode('init_generation', initGenerationNode)
     .addNode('generate_or_skip', generateOrSkipNode)
     .addNode('static_check', staticCheckNode)
@@ -25,11 +23,11 @@ export function buildPipelineAGraph() {
     .addNode('commit_and_pr', commitAndPrNode)
     .addNode('teardown_sandbox', teardownBaselineSandboxNode)
 
-  graph.addEdge(START, 'init_generation')
-  graph.addEdge('init_generation', 'generate_or_skip')
-  graph.addEdge('generate_or_skip', 'static_check')
+  g.addEdge(START, 'init_generation')
+  g.addEdge('init_generation', 'generate_or_skip')
+  g.addEdge('generate_or_skip', 'static_check')
 
-  graph.addConditionalEdges('static_check', (s: PipelineAStateType) => {
+  g.addConditionalEdges('static_check', (s: PipelineAStateType) => {
     if (s.staticCheckResult === 'pass') return 'setup_baseline_sandbox'
     if (s.staticCheckAttempts >= s.maxStaticCheckAttempts) return 'teardown_sandbox'
     return 'fix_script_static'
@@ -39,10 +37,10 @@ export function buildPipelineAGraph() {
     teardown_sandbox: 'teardown_sandbox',
   })
 
-  graph.addEdge('fix_script_static', 'static_check')
-  graph.addEdge('setup_baseline_sandbox', 'run_baseline_check')
+  g.addEdge('fix_script_static', 'static_check')
+  g.addEdge('setup_baseline_sandbox', 'run_baseline_check')
 
-  graph.addConditionalEdges('run_baseline_check', (s: PipelineAStateType) => {
+  g.addConditionalEdges('run_baseline_check', (s: PipelineAStateType) => {
     if (s.lastBaselineResult?.passed) return 'commit_and_pr'
     return 'diagnose_baseline'
   }, {
@@ -50,7 +48,7 @@ export function buildPipelineAGraph() {
     diagnose_baseline: 'diagnose_baseline',
   })
 
-  graph.addConditionalEdges('diagnose_baseline', (s: PipelineAStateType) => {
+  g.addConditionalEdges('diagnose_baseline', (s: PipelineAStateType) => {
     if (s.diagnosisVerdict === 'product_bug') return 'teardown_sandbox'
     if (s.baselineAttempts >= s.maxBaselineAttempts) return 'teardown_sandbox'
     return 'fix_script_baseline'
@@ -59,10 +57,10 @@ export function buildPipelineAGraph() {
     teardown_sandbox: 'teardown_sandbox',
   })
 
-  graph.addEdge('fix_script_baseline', 'run_baseline_check')
-  graph.addEdge('commit_and_pr', 'teardown_sandbox')
+  g.addEdge('fix_script_baseline', 'run_baseline_check')
+  g.addEdge('commit_and_pr', 'teardown_sandbox')
 
-  graph.addConditionalEdges('teardown_sandbox', (s: PipelineAStateType) => {
+  g.addConditionalEdges('teardown_sandbox', (s: PipelineAStateType) => {
     if (s.currentSpecIndex < s.specs.length) return 'generate_or_skip'
     return END
   }, {
@@ -70,5 +68,5 @@ export function buildPipelineAGraph() {
     [END]: END,
   })
 
-  return graph.compile()
+  return g.compile()
 }
