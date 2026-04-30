@@ -231,6 +231,7 @@ const SCHEMA_FILES = [
   'schema-v58.sql',
   // v59: 给 diagnose_and_repair capability 补 run_remote_command 工具，纯 UPDATE catalog，安全加入。
   'schema-v59.sql',
+  'schema-v1000.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
