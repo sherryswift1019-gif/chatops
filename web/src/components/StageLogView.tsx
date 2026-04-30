@@ -177,9 +177,9 @@ export function parseLogContent(raw: string): LogEntry[] {
 }
 
 function shortTime(iso: string): string {
-  // ISO 时间戳缩成 HH:mm:ss（运行进度看分秒就够了，UTC/本地差异不重要）
-  const m = iso.match(/T(\d{2}):(\d{2}):(\d{2})/)
-  return m ? `${m[1]}:${m[2]}:${m[3]}` : iso
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
 }
 
 const STR = {

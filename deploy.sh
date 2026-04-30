@@ -13,6 +13,12 @@ fi
 # Source .env for variable expansion in docker-compose
 set -a; source .env; set +a
 
+# 禁用 BuildKit：BuildKit 会重新向 Harbor 做 OAuth 验证，
+# 而内网 Harbor TLS 证书不符合标准会导致构建失败；旧版 builder 使用本地缓存镜像。
+export DOCKER_BUILDKIT=0
+# 本地构建优先使用本地 base 镜像，避免重新拉取
+export BASE_IMAGE="${BASE_IMAGE:-chatops-base:local}"
+
 ACTION="${1:-up}"
 
 case "$ACTION" in

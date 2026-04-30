@@ -9,10 +9,11 @@
  * 这个 helper（pipeline_schedules 目前无显式 servers 字段，相当于"调用方未指定"）。
  *
  * 故意不动的路径（业务语义上故意传 {}，不需要兜底）：
- *   - coordinator.ts (internal capability pipeline，按 binding 显式分配)
+ *   - coordinator.ts imTrigger IIFE 已接入 autoResolveServersByRole（不再例外）
  *   - submit-handler.ts (PRD submit internal pipeline，serverless)
  *   - autotest.ts (自带 host 模式的 by-role 自动分配，旧路径)
  *   - executor-legacy.ts (legacy 引擎)
+ *   - coordinator.ts runPipelineAsCapability (internal capability pipeline，真正 serverless)
  */
 
 import { listTestServers } from '../db/repositories/test-servers.js'

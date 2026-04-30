@@ -61,6 +61,10 @@ vi.mock('../../pipeline/im-param-collector.js', () => ({
   collectImParams: vi.fn(async () => ({})),
 }))
 
+vi.mock('../../pipeline/server-resolver.js', () => ({
+  autoResolveServersByRole: vi.fn(async () => ({})),
+}))
+
 // ─── tests ────────────────────────────────────────────────────
 
 describe('AgentCoordinator - triggerCapability', () => {
@@ -797,6 +801,38 @@ describe('AgentCoordinator - IM 触发 pipeline 完成回调', () => {
         'dingtalk',
         'g-deploy',
         expect.stringMatching(/❌.*流水线启动失败.*DB connection lost/s),
+      )
+    }, { timeout: 1000 })
+  })
+
+  it('IM 触发的 pipeline 使用 autoResolveServersByRole 结果作为 serverAssignment', async () => {
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    const { runPipeline } = await import('../../pipeline/executor.js') as any
+    const { getTestPipelineById: getPipelineMock } =
+      await import('../../db/repositories/test-pipelines.js')
+    const { autoResolveServersByRole } = await import('../../pipeline/server-resolver.js')
+
+    ;(autoResolveServersByRole as any).mockResolvedValueOnce({ proxy: ['3', '5'] })
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'pam-deploy', pipelineId: 20, capabilityKey: null, enabled: true,
+    })
+    ;(getPipelineMock as any).mockResolvedValueOnce({
+      id: 20, name: 'PAM Proxy部署', paramSchema: null, imPrompt: null,
+    })
+    ;(runPipeline as any).mockResolvedValueOnce(99)
+
+    await triggerCapability({
+      capabilityKey: 'pam-deploy',
+      context: { taskId: 't-srv', groupId: 'g-pam', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    await vi.waitFor(() => {
+      expect(runPipeline).toHaveBeenCalledWith(
+        20,
+        { proxy: ['3', '5'] },   // 必须是 autoResolveServersByRole 的返回值，不能是 {}
+        expect.any(Object),
+        expect.any(Object),
+        expect.any(Function),
       )
     }, { timeout: 1000 })
   })

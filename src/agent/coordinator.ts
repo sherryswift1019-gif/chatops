@@ -185,6 +185,7 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
           const { getTestPipelineById } = await import('../db/repositories/test-pipelines.js')
           const { collectImParams } = await import('../pipeline/im-param-collector.js')
           const { notifyImGroup } = await import('../pipeline/im-notifier.js')
+          const { autoResolveServersByRole } = await import('../pipeline/server-resolver.js')
 
           const pipeline = await getTestPipelineById(pipelineId)
           if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)
@@ -194,9 +195,11 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
             params = await collectImParams(platform, groupId, pipeline.paramSchema, pipeline.imPrompt)
           }
 
+          const serverAssignment = await autoResolveServersByRole()
+
           await runPipeline(
             pipelineId,
-            {},
+            serverAssignment,
             imTriggerCtx({ triggeredBy: initiatorId, platform, groupId, userId: initiatorId, params }),
             {},
             (result) => {
