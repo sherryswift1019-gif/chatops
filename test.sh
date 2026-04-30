@@ -450,7 +450,7 @@ main() {
 
     if [[ "$ACTION" == "static-check" ]]; then
       echo "==> Running static check (tsc --noEmit)..."
-      cd web && npx tsc --noEmit && cd ..
+      (cd web && npx tsc --noEmit)
       npx tsc --noEmit
       echo "==> Static check passed."
       exit 0
@@ -459,6 +459,9 @@ main() {
     if [[ "$ACTION" == "scenario" ]]; then
       if [[ -z "$SCENARIO_ID" ]]; then
         echo "--scenario requires a scenario ID" >&2; exit 1
+      fi
+      if [[ ! "$SCENARIO_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        echo "--scenario: SCENARIO_ID must match [a-zA-Z0-9_-]+" >&2; exit 1
       fi
       EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/e2e-evidence}"
       mkdir -p "${EVIDENCE_DIR}/${SCENARIO_ID}/artifacts"
