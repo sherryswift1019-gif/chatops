@@ -12,7 +12,8 @@ export async function generateOrSkipNode(state: PipelineAStateType): Promise<Par
   const project = await getE2eTargetProject(spec.targetProjectId)
   if (!project) throw new Error(`project not found: ${spec.targetProjectId}`)
 
-  const outScriptPath = `tests/e2e/${spec.specPath.split('/').pop()!.replace('.md', '.spec.ts')}`
+  const parts = spec.specPath.split('/')
+  const outScriptPath = `tests/e2e/${parts.slice(-2).join('/').replace('.md', '.spec.ts')}`
 
   if (project.capabilities.generate) {
     const testScript = join(project.workingDir, project.scripts.test)

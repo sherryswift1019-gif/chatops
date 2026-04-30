@@ -34,12 +34,8 @@ ${manifestContent || '(无证据文件)'}
   const output = await executeCapabilityDirectForE2e(prompt, `diagnose-baseline-${spec.specId}`)
 
   let verdict: DiagnosisVerdict = 'script_bug'
-  try {
-    const match = output.match(/"verdict"\s*:\s*"(script_bug|product_bug)"/)
-    if (match) verdict = match[1] as DiagnosisVerdict
-  } catch {
-    /* default */
-  }
+  const match = output.match(/"verdict"\s*:\s*"(script_bug|product_bug)"/)
+  if (match) verdict = match[1] as DiagnosisVerdict
 
   console.log(`[PipelineA:diagnose] spec ${spec.specId}: verdict=${verdict}`)
   return { diagnosisVerdict: verdict }

@@ -7,7 +7,8 @@ type ValidStatus = typeof VALID_STATUSES[number]
 
 export async function registerE2eSpecRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { projectId?: string } }>('/e2e-specs', async (req, reply) => {
-    const projectId = req.query.projectId ?? 'chatops'
+    const { projectId } = req.query
+    if (!projectId) return reply.status(400).send({ error: 'projectId required' })
     return reply.send(await listE2eSpecs(projectId))
   })
 
