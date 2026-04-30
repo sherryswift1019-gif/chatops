@@ -18,7 +18,7 @@ export async function runPipelineA(input: PipelineAInput): Promise<void> {
 
   console.log(`[PipelineA] Starting for project=${input.targetProjectId}, specs=${input.specPaths?.length ?? 'all'}`)
 
-  for await (const chunk of await graph.stream(initialState, { recursionLimit: 50 })) {
+  for await (const chunk of await graph.stream(initialState, { recursionLimit: 200 })) {
     const [nodeName] = Object.entries(chunk)[0]
     console.log(`[PipelineA] ${nodeName} completed`)
   }

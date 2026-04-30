@@ -2,6 +2,9 @@ import type { FastifyInstance } from 'fastify'
 import { listE2eSpecs, getE2eSpec, upsertE2eSpec, updateE2eSpecStatus } from '../../db/repositories/e2e-specs.js'
 import { runPipelineA } from '../../e2e/pipeline-a/runner.js'
 
+const VALID_STATUSES = ['pending', 'generating', 'pr_open', 'committed', 'baseline_failed', 'blocked_on_baseline_bug', 'skipped'] as const
+type ValidStatus = typeof VALID_STATUSES[number]
+
 export async function registerE2eSpecRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Querystring: { projectId?: string } }>('/e2e-specs', async (req, reply) => {
     const projectId = req.query.projectId ?? 'chatops'
@@ -44,7 +47,10 @@ export async function registerE2eSpecRoutes(app: FastifyInstance): Promise<void>
       if (req.body.skip) {
         await updateE2eSpecStatus(spec.id, 'skipped')
       } else if (req.body.generationStatus) {
-        await updateE2eSpecStatus(spec.id, req.body.generationStatus as any)
+        if (!VALID_STATUSES.includes(req.body.generationStatus as ValidStatus)) {
+          return reply.status(400).send({ error: `invalid generationStatus: ${req.body.generationStatus}` })
+        }
+        await updateE2eSpecStatus(spec.id, req.body.generationStatus as ValidStatus)
       }
       return reply.send(await getE2eSpec(spec.id))
     },
