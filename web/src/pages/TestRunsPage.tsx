@@ -235,7 +235,7 @@ export default function TestRunsPage() {
         <Space>
           <a onClick={() => showDetail(r.id)}>详情</a>
           {(r.status === 'success' || r.status === 'failed') && (
-            <a href={`/api/test-runs/${r.id}/report`} target="_blank" rel="noopener"><FileTextOutlined /></a>
+            <a href={`/admin/test-runs/${r.id}/report`} target="_blank" rel="noopener"><FileTextOutlined /></a>
           )}
         </Space>
       ),
@@ -332,10 +332,10 @@ export default function TestRunsPage() {
 
             {(selectedRun.status === 'success' || selectedRun.status === 'failed') && (
               <Space style={{ marginTop: 16 }}>
-                <Button type="primary" icon={<FileTextOutlined />} href={`/api/test-runs/${selectedRun.id}/report`} target="_blank">
+                <Button type="primary" icon={<FileTextOutlined />} href={`/admin/test-runs/${selectedRun.id}/report`} target="_blank">
                   查看报告
                 </Button>
-                <Button icon={<DownloadOutlined />} href={`/api/test-runs/${selectedRun.id}/report/download`}>
+                <Button icon={<DownloadOutlined />} href={`/admin/test-runs/${selectedRun.id}/report/download`}>
                   下载数据包
                 </Button>
               </Space>
