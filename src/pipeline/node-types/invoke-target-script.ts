@@ -21,6 +21,7 @@ registerNodeType({
       const stdout: Buffer[] = []
       const stderr: Buffer[] = []
       let timedOut = false
+      let settled = false
 
       const child = spawn(scriptPath, args, {
         env: { ...process.env, ...env },
@@ -31,12 +32,17 @@ registerNodeType({
       const timer = setTimeout(() => {
         timedOut = true
         child.kill('SIGTERM')
+        setTimeout(() => {
+          try { child.kill('SIGKILL') } catch { /* already dead */ }
+        }, 5000)
       }, timeoutSeconds * 1000)
 
       child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk))
       child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk))
 
       child.on('close', (code) => {
+        if (settled) return
+        settled = true
         clearTimeout(timer)
         const stdoutStr = Buffer.concat(stdout).toString('utf8')
         const stderrStr = Buffer.concat(stderr).toString('utf8')
@@ -57,6 +63,8 @@ registerNodeType({
       })
 
       child.on('error', (err) => {
+        if (settled) return
+        settled = true
         clearTimeout(timer)
         resolve({ status: 'failed', output: { exitCode: -1, stdout: '', stderr: err.message, parsed: null }, error: err.message })
       })
