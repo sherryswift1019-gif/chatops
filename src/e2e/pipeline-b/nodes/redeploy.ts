@@ -20,7 +20,9 @@ export async function redeployNode(state: PipelineBStateType): Promise<Partial<P
   writeFileSync(handleFile, JSON.stringify(state.sandboxHandle))
 
   if (state.sandboxId) {
-    await updateSandboxStatus(state.sandboxId, 'redeploying').catch(() => {})
+    await updateSandboxStatus(state.sandboxId, 'redeploying').catch((err) => {
+      console.warn(`[PipelineB:redeploy] updateSandboxStatus(redeploying) failed: ${err}`)
+    })
   }
 
   const result = await runScript(
@@ -31,13 +33,17 @@ export async function redeployNode(state: PipelineBStateType): Promise<Partial<P
 
   if (result.exitCode !== 0) {
     if (state.sandboxId) {
-      await updateSandboxStatus(state.sandboxId, 'failed').catch(() => {})
+      await updateSandboxStatus(state.sandboxId, 'failed').catch((err) => {
+        console.warn(`[PipelineB:redeploy] updateSandboxStatus(failed) failed: ${err}`)
+      })
     }
     throw new Error(`redeploy: failed (exit ${result.exitCode}): ${result.stderr.slice(0, 400)}`)
   }
 
   if (state.sandboxId) {
-    await updateSandboxStatus(state.sandboxId, 'ready').catch(() => {})
+    await updateSandboxStatus(state.sandboxId, 'ready').catch((err) => {
+      console.warn(`[PipelineB:redeploy] updateSandboxStatus(ready) failed: ${err}`)
+    })
   }
 
   console.log(`[PipelineB:redeploy] runId=${state.runId} redeployed ok`)

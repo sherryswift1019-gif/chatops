@@ -1,5 +1,5 @@
 // src/e2e/pipeline-b/nodes/setup-sandbox.ts
-import { writeFileSync, mkdtempSync } from 'fs'
+import { writeFileSync, mkdtempSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
@@ -30,7 +30,6 @@ export async function setupSandboxNode(state: PipelineBStateType): Promise<Parti
 
   let handleJson: Record<string, unknown>
   try {
-    const { readFileSync } = await import('fs')
     handleJson = JSON.parse(readFileSync(handleFile, 'utf8'))
   } catch (err) {
     throw new Error(`setup-sandbox: failed to read handle file: ${err}`)
