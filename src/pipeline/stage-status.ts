@@ -17,13 +17,26 @@
  *   subsequent chunk persists until the node finalizes — at which point the
  *   langgraph state will publish a finalized entry and merge will overwrite
  *   the running entry by name.
+ *
+ * Race condition fix:
+ *   Both markStageRunning and mergeAndPersistStageResults are read-modify-write
+ *   on test_runs.stage_results. graph-builder fires markStageRunning at node
+ *   entry while graph-runner streams chunks → persistValues → merge in
+ *   parallel; without serialization the two writers race on the same row,
+ *   each merging on top of stale `existing`, and the later writer overwrites
+ *   the earlier one's entry. Symptom: running entries vanish, stage_results
+ *   array order scrambles.
+ *
+ *   Fix: serialize all stage_results writes for a given runId via a Postgres
+ *   transaction-scoped advisory lock (`pg_advisory_xact_lock(NS, runId)`).
+ *   The read + merge + write happens inside the same client/transaction so
+ *   nobody else can interleave. Different runs use different lock keys (the
+ *   second arg is runId) so unrelated runs don't block each other.
  */
 
-import {
-  getTestRunById,
-  updateTestRunStage,
-  type StageResult,
-} from '../db/repositories/test-runs.js'
+import { getPool } from '../db/client.js'
+import type { PoolClient } from 'pg'
+import type { StageResult, TestRun } from '../db/repositories/test-runs.js'
 import { mergeStageResults } from './graph-state.js'
 
 /**
@@ -50,6 +63,85 @@ export interface StageDescriptor {
 }
 
 /**
+ * Advisory lock namespace for stage_results writes. The two-arg variant of
+ * pg_advisory_xact_lock takes (int4, int4) — first arg is a fixed namespace,
+ * second is the runId. Different runIds map to different lock keys.
+ *
+ * Value chosen: arbitrary 32-bit integer, must be stable across processes that
+ * touch test_runs.stage_results so they all serialize on the same key.
+ */
+const STAGE_RESULTS_LOCK_NS = 0x0c4a7019
+
+/**
+ * Helper for the row-level read-modify-write critical section:
+ *   BEGIN
+ *   SELECT pg_advisory_xact_lock(NS, runId)
+ *   read stage_results
+ *   merge in JS
+ *   write stage_results back
+ *   COMMIT
+ *
+ * Uses a single PoolClient (not the pool's default round-robin) so the
+ * transaction's lock and the SELECT/UPDATE are guaranteed to run on the same
+ * connection — critical for advisory locks (they're per-session).
+ */
+async function withRunStageLock<T>(
+  runId: number,
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [
+      STAGE_RESULTS_LOCK_NS,
+      runId,
+    ])
+    const result = await fn(client)
+    await client.query('COMMIT')
+    return result
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined)
+    throw err
+  } finally {
+    client.release()
+  }
+}
+
+/**
+ * Read the test_runs row using a specific client (so the read participates in
+ * the same transaction as the surrounding lock + write). Mirrors the subset of
+ * fields the helpers actually use, so we don't need to depend on the repo's
+ * mapRow (which uses the pool default connection).
+ */
+async function readRunForUpdate(
+  client: PoolClient,
+  runId: number,
+): Promise<Pick<TestRun, 'currentStage' | 'stageResults'> | null> {
+  const { rows } = await client.query(
+    'SELECT current_stage, stage_results FROM test_runs WHERE id = $1',
+    [runId],
+  )
+  if (rows.length === 0) return null
+  const r = rows[0]
+  return {
+    currentStage: r.current_stage as number,
+    stageResults: (r.stage_results ?? []) as StageResult[],
+  }
+}
+
+async function writeStageResults(
+  client: PoolClient,
+  runId: number,
+  currentStage: number,
+  stageResults: StageResult[],
+): Promise<void> {
+  await client.query(
+    'UPDATE test_runs SET current_stage = $2, stage_results = $3 WHERE id = $1',
+    [runId, currentStage, JSON.stringify(stageResults)],
+  )
+}
+
+/**
  * Mark `stage` as running in test_runs.stage_results without touching
  * current_stage. By-name merge: if an entry with the same name already exists
  * AND it's not finalized, update it to running; if it IS finalized (resume /
@@ -64,24 +156,28 @@ export async function markStageRunning(
   startedAtIso: string,
 ): Promise<void> {
   try {
-    const run = await getTestRunById(runId)
-    if (!run) return
-    const existing = run.stageResults ?? []
-    const prior = existing.find((r) => r.name === stage.name)
-    // Already finalized → preserve the historical record.
-    if (prior && FINALIZED.has(prior.status)) return
-    // Already running → don't reset startedAt (stale chunk replays / re-entry
-    // would otherwise rewrite the original start time).
-    if (prior && prior.status === 'running') return
+    await withRunStageLock(runId, async (client) => {
+      const run = await readRunForUpdate(client, runId)
+      if (!run) return
+      const existing = run.stageResults
+      const prior = existing.find((r) => r.name === stage.name)
+      // Already finalized → preserve the historical record.
+      if (prior && FINALIZED.has(prior.status)) return
+      // Already running → don't reset startedAt (stale chunk replays / re-entry
+      // would otherwise rewrite the original start time).
+      if (prior && prior.status === 'running') return
 
-    const entry: StageResult = {
-      name: stage.name,
-      type: stage.stageType ?? stage.type ?? 'unknown',
-      status: 'running',
-      startedAt: startedAtIso,
-    }
-    const merged = mergeStageResults(existing, entry)
-    await updateTestRunStage(runId, run.currentStage, merged)
+      const entry: StageResult = {
+        name: stage.name,
+        type: stage.stageType ?? stage.type ?? 'unknown',
+        status: 'running',
+        startedAt: startedAtIso,
+      }
+      const merged = mergeStageResults(existing, entry)
+      // markStageRunning does not move current_stage — it's a UI hint only;
+      // keep the existing value to avoid clobbering progress made elsewhere.
+      await writeStageResults(client, runId, run.currentStage, merged)
+    })
   } catch (err) {
     console.warn(`[stage-status] markStageRunning failed for run ${runId}:`, err)
   }
@@ -104,8 +200,37 @@ export async function mergeAndPersistStageResults(
   currentStage: number,
   stateStageResults: StageResult[],
 ): Promise<void> {
-  const run = await getTestRunById(runId)
-  const existing = run?.stageResults ?? []
-  const merged = mergeStageResults(existing, stateStageResults)
-  await updateTestRunStage(runId, currentStage, merged)
+  await withRunStageLock(runId, async (client) => {
+    const run = await readRunForUpdate(client, runId)
+    const existing = run?.stageResults ?? []
+    const merged = mergeStageResults(existing, stateStageResults)
+    await writeStageResults(client, runId, currentStage, merged)
+  })
+}
+
+/**
+ * Race-safe variant of "stamp aiAnalysis onto an existing finalized stage
+ * entry". Used by graph-runner.annotateFailuresWithAi after an AI-driven
+ * failure analysis returns. Operates by-name (not by-index) so concurrent
+ * stage_results writes (e.g. a still-streaming node) can't desync the
+ * positional index between read and write.
+ *
+ * Idempotent: if no entry with `stageName` exists OR it already has aiAnalysis,
+ * the helper is a no-op.
+ */
+export async function mergeAiAnalysisIntoStage(
+  runId: number,
+  stageName: string,
+  aiAnalysis: string,
+): Promise<void> {
+  await withRunStageLock(runId, async (client) => {
+    const run = await readRunForUpdate(client, runId)
+    if (!run) return
+    const next = run.stageResults.slice()
+    const idx = next.findIndex((r) => r.name === stageName)
+    if (idx < 0) return
+    if (next[idx].aiAnalysis) return
+    next[idx] = { ...next[idx], aiAnalysis }
+    await writeStageResults(client, runId, run.currentStage, next)
+  })
 }

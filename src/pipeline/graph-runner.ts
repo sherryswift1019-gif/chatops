@@ -33,10 +33,12 @@ import type { StageResult } from '../db/repositories/test-runs.js'
 import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import {
   getTestRunById,
-  updateTestRunStage,
   finishTestRun,
 } from '../db/repositories/test-runs.js'
-import { mergeAndPersistStageResults } from './stage-status.js'
+import {
+  mergeAndPersistStageResults,
+  mergeAiAnalysisIntoStage,
+} from './stage-status.js'
 import { getProductLineById } from '../db/repositories/product-lines.js'
 import {
   listTestServers,
@@ -227,7 +229,7 @@ async function streamGraph(
 
   try {
     // streamMode='values' → every chunk is the full merged state, which we
-    // forward directly to updateTestRunStage. Interrupt chunks still arrive
+    // forward to mergeAndPersistStageResults. Interrupt chunks still arrive
     // as `{ __interrupt__: Interrupt[] }`.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const stream = await compiled.stream(inputOrCommand as any, {
@@ -396,7 +398,9 @@ async function annotateFailuresWithAi(
         .join(',')
       const analysis = await analyzeFailure(stage.script ?? '', sr.output ?? '', hosts)
       stageResults[i] = { ...sr, aiAnalysis: analysis }
-      await updateTestRunStage(ctx.runId, i, stageResults).catch(() => {})
+      // Race-safe: by-name merge under advisory lock (not by-index overwrite),
+      // so a concurrent stage_results writer can't lose the aiAnalysis stamp.
+      await mergeAiAnalysisIntoStage(ctx.runId, sr.name, analysis).catch(() => {})
     } catch { /* best effort */ }
   }
 }

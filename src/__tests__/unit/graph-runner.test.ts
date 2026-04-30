@@ -10,12 +10,21 @@ import { MemorySaver } from '@langchain/langgraph'
 
 // --- Mocks (must be hoisted before the graph-runner import) ----------------
 
+// vi.hoisted 让 factory 之间共享同一份 in-memory map（factory 在 module load 前执行,
+// 不能闭包外部变量；vi.hoisted 是官方 escape hatch）。stage-status 路径和
+// test-runs 路径都要看到同一个 latest，否则 finalize() 读不到 stage-status 写过的
+// stageResults，summarizeStatus 会误判为 success。
+const sharedStore = vi.hoisted(() => ({
+  latest: new Map<number, Array<Record<string, unknown>>>(),
+  updateTestRunStageCalls: [] as Array<{
+    id: number
+    currentStage: number
+    stageResults: Array<Record<string, unknown>>
+  }>,
+}))
+
 // In-memory stores so tests can inspect what the runner persisted.
-const updateTestRunStageCalls: Array<{
-  id: number
-  currentStage: number
-  stageResults: Array<Record<string, unknown>>
-}> = []
+const updateTestRunStageCalls = sharedStore.updateTestRunStageCalls
 const finishTestRunCalls: Array<{
   id: number
   status: string
@@ -32,11 +41,72 @@ vi.mock('../../pipeline/graph-runtime.js', async () => {
   }
 })
 
+// stage-status race-fix 后通过 getPool() 直连 DB，绕过 test-runs repo。
+// 单测里 mock 它，把写入路由到 sharedStore.latest，保持 finalize 路径可观察。
+vi.mock('../../pipeline/stage-status.js', async () => {
+  // mergeStageResults 需要从真模块拿；不能 mock graph-state。
+  const { mergeStageResults } = await import('../../pipeline/graph-state.js')
+  return {
+    markStageRunning: vi.fn(
+      async (
+        runId: number,
+        stage: { name: string; stageType?: string; type?: string },
+        startedAtIso: string,
+      ) => {
+        const existing = sharedStore.latest.get(runId) ?? []
+        const FINALIZED = new Set(['success', 'failed', 'skipped'])
+        const prior = existing.find((r) => r.name === stage.name)
+        if (prior && FINALIZED.has(prior.status as string)) return
+        if (prior && prior.status === 'running') return
+        const entry = {
+          name: stage.name,
+          type: stage.stageType ?? stage.type ?? 'unknown',
+          status: 'running',
+          startedAt: startedAtIso,
+        }
+        const merged = mergeStageResults(existing as never, entry as never)
+        sharedStore.latest.set(runId, JSON.parse(JSON.stringify(merged)))
+        sharedStore.updateTestRunStageCalls.push({
+          id: runId,
+          currentStage: 0,
+          stageResults: JSON.parse(JSON.stringify(merged)),
+        })
+      },
+    ),
+    mergeAndPersistStageResults: vi.fn(
+      async (
+        runId: number,
+        currentStage: number,
+        stateStageResults: Array<Record<string, unknown>>,
+      ) => {
+        const existing = sharedStore.latest.get(runId) ?? []
+        const merged = mergeStageResults(
+          existing as never,
+          stateStageResults as never,
+        )
+        sharedStore.latest.set(runId, JSON.parse(JSON.stringify(merged)))
+        sharedStore.updateTestRunStageCalls.push({
+          id: runId,
+          currentStage,
+          stageResults: JSON.parse(JSON.stringify(merged)),
+        })
+      },
+    ),
+    mergeAiAnalysisIntoStage: vi.fn(
+      async (runId: number, stageName: string, aiAnalysis: string) => {
+        const existing = sharedStore.latest.get(runId) ?? []
+        const next = existing.slice()
+        const idx = next.findIndex((r) => r.name === stageName)
+        if (idx < 0) return
+        if ((next[idx] as { aiAnalysis?: string }).aiAnalysis) return
+        next[idx] = { ...next[idx], aiAnalysis }
+        sharedStore.latest.set(runId, JSON.parse(JSON.stringify(next)))
+      },
+    ),
+  }
+})
+
 vi.mock('../../db/repositories/test-runs.js', () => {
-  // Track the latest stageResults per runId so finalize() reads back what
-  // updateTestRunStage just wrote (mirrors real DB behaviour in a single
-  // in-process map).
-  const latest = new Map<number, Array<Record<string, unknown>>>()
   return {
     getTestRunById: vi.fn(async (id: number) => ({
       id,
@@ -46,7 +116,7 @@ vi.mock('../../db/repositories/test-runs.js', () => {
       status: 'running',
       servers: { app: ['10.0.0.1'] },
       currentStage: 0,
-      stageResults: latest.get(id) ?? [],
+      stageResults: sharedStore.latest.get(id) ?? [],
       reportPath: '',
       startedAt: new Date('2026-01-01T00:00:00Z'),
       finishedAt: null,
@@ -54,10 +124,20 @@ vi.mock('../../db/repositories/test-runs.js', () => {
       createdAt: new Date(),
       runtimeVars: {},
     })),
-    updateTestRunStage: vi.fn(async (id: number, currentStage: number, stageResults: Array<Record<string, unknown>>) => {
-      latest.set(id, JSON.parse(JSON.stringify(stageResults)))
-      updateTestRunStageCalls.push({ id, currentStage, stageResults: JSON.parse(JSON.stringify(stageResults)) })
-    }),
+    updateTestRunStage: vi.fn(
+      async (
+        id: number,
+        currentStage: number,
+        stageResults: Array<Record<string, unknown>>,
+      ) => {
+        sharedStore.latest.set(id, JSON.parse(JSON.stringify(stageResults)))
+        sharedStore.updateTestRunStageCalls.push({
+          id,
+          currentStage,
+          stageResults: JSON.parse(JSON.stringify(stageResults)),
+        })
+      },
+    ),
     finishTestRun: vi.fn(async (id: number, status: string, reportPath: string, errorMessage = '') => {
       finishTestRunCalls.push({ id, status, reportPath, errorMessage })
     }),
@@ -276,6 +356,7 @@ beforeEach(() => {
   finishTestRunCalls.length = 0
   bulkSetCalls.length = 0
   requestCardCalls.length = 0
+  sharedStore.latest.clear()
   mockApprovalSetResumeHandler.mockClear()
   mockWaiterRegister.mockClear()
   mockWaiterSetResumeHandler.mockClear()
