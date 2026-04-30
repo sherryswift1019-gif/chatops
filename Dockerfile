@@ -2,6 +2,10 @@
 # base 镜像已含后端 + 前端 node_modules，业务构建仅 COPY 源码 + build。
 
 ARG BASE_IMAGE=harbor.paraview.cn/chatops/chatops-base:latest
+ARG DOCKER_IMAGE=harbor.paraview.cn/para-pam/docker:27
+
+# docker CLI 二进制来自 Harbor（避免访问 download.docker.com）
+FROM ${DOCKER_IMAGE} AS docker-cli
 
 # ============================================================
 # Stage 1: 前端构建（node_modules 已在 base 中，只需 COPY 源码 + build）
@@ -26,17 +30,13 @@ COPY --from=web-build /app/web/dist web/dist
 RUN npx tsc --noEmit
 
 # 运行时依赖：git 用于 analyze_bug/fix_bug 的 clone + worktree
-# JDK/Maven 暂不打包，fix_bug 当前不跑测试（TODO #14 规划 DinD 多语言构建环境）
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gnupg gosu \
- && install -m 0755 -d /etc/apt/keyrings \
- && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
- && chmod a+r /etc/apt/keyrings/docker.asc \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" \
-    > /etc/apt/sources.list.d/docker.list \
- && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+# docker CLI 直接从 docker-cli stage 复制，不走外网 apt 源
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gosu \
  && rm -rf /var/lib/apt/lists/* \
  && git config --system user.email "chatops@paraview.cn" \
  && git config --system user.name "ChatOps Agent"
+
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
 RUN chown -R chatops:chatops /app
 

@@ -101,11 +101,14 @@ test:
     DATABASE_URL: "postgres://chatops:chatops@postgres:5432/chatops"
     # pnpm 使用 store 加速后续构建；CI 缓存见下面 cache 段
     PNPM_HOME: /root/.pnpm-store
+    # 内网 npm 代理：影响 corepack 下载 pnpm 及后续 pnpm install
+    NPM_CONFIG_REGISTRY: "http://proxy.paraview.cn/repository/npm-proxy/"
   before_script:
     # alpine node 镜像不自带 pnpm；按 packageManager 指定版本安装
     - corepack enable
     - corepack prepare pnpm@10.33.0 --activate
     - pnpm config set store-dir "$PNPM_HOME"
+    - pnpm config set registry http://proxy.paraview.cn/repository/npm-proxy/
     - pnpm install --frozen-lockfile
     - pnpm --dir web install --frozen-lockfile
   script:

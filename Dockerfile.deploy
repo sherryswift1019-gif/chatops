@@ -1,2 +1,4 @@
-FROM docker:27
-RUN apk add --no-cache openssh-client sshpass curl
+FROM harbor.paraview.cn/para-pam/docker:27
+RUN echo "http://proxy.paraview.cn/repository/raw-proxy-alpine/v3.20/main" > /etc/apk/repositories \
+ && echo "http://proxy.paraview.cn/repository/raw-proxy-alpine/v3.20/community" >> /etc/apk/repositories \
+ && apk add --no-cache openssh-client sshpass curl

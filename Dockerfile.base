@@ -12,8 +12,8 @@ RUN corepack enable && corepack prepare pnpm@10 --activate
 
 WORKDIR /app
 
-# 内网无法访问 npmjs.org，使用淘宝镜像源
-RUN pnpm config set registry https://registry.npmmirror.com
+# 使用内网 Nexus npm 代理
+RUN pnpm config set registry http://proxy.paraview.cn/repository/npm-proxy/
 
 # 后端依赖
 COPY package.json pnpm-lock.yaml ./
