@@ -1,5 +1,5 @@
 import { spawnSync } from 'child_process'
-import { writeFileSync } from 'fs'
+import { writeFileSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
@@ -19,13 +19,13 @@ export async function setupBaselineSandboxNode(state: PipelineAStateType): Promi
 
   const deployScript = join(project.workingDir, project.scripts.deploy)
   const buildScript = join(project.workingDir, project.scripts.build)
+  const handleFile = join(tmpdir(), 'e2e-handle-baseline-' + Date.now() + '.json')
 
-  // Step 1: provision — parse handle JSON from stdout
-  const provision = runScript(deployScript, [`provision`, `--branch=${baseBranch}`])
+  // Step 1: provision — write handle JSON to file via --out-handle
+  const provision = runScript(deployScript, [`provision`, `--branch=${baseBranch}`, `--out-handle=${handleFile}`])
   if (provision.status !== 0) throw new Error(`provision failed: ${provision.stderr.slice(0, 300)}`)
 
-  let handleJson: Record<string, unknown> = {}
-  try { handleJson = JSON.parse(provision.stdout.trim()) } catch { handleJson = {} }
+  const handleJson = JSON.parse(readFileSync(handleFile, 'utf8')) as Record<string, unknown>
 
   const sandboxRecord = await createSandbox({
     e2eRunId: null,
@@ -41,7 +41,7 @@ export async function setupBaselineSandboxNode(state: PipelineAStateType): Promi
   }
 
   // Step 3: deploy
-  const deploy = runScript(deployScript, [`deploy`])
+  const deploy = runScript(deployScript, [`deploy`, `--handle=${handleFile}`])
   if (deploy.status !== 0) {
     await updateSandboxStatus(sandboxRecord.id, 'failed')
     throw new Error(`deploy failed: ${deploy.stderr.slice(0, 300)}`)
@@ -77,10 +77,8 @@ export async function teardownBaselineSandboxNode(state: PipelineAStateType): Pr
   }
 
   const spec = state.specs[state.currentSpecIndex]
-  const specWasCommitted =
-    state.completedSpecs.length > 0 &&
-    state.completedSpecs[state.completedSpecs.length - 1].specId === spec?.specId
-  const nextIndex = specWasCommitted ? state.currentSpecIndex : state.currentSpecIndex + 1
+  const specWasCommitted = state.completedSpecs.some(c => c.specId === spec?.specId)
+  const nextIndex = state.currentSpecIndex + 1
 
   // 未经 commit_and_pr 成功路径到达 teardown 时，标记当前 spec 为失败状态
   if (spec && !specWasCommitted) {
