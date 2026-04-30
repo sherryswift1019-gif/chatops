@@ -29,11 +29,16 @@ function runDurationMs(r: { startedAt: string | null; finishedAt: string | null 
  * pretty / raw 视图切换：pretty 用 StageLogView 解析渲染，raw 保留 dark <pre>。
  * 父组件控制 mount/unmount 即可，hook 内部接管 connect / cleanup。
  */
-function StageLogPanel({ runId, stageIndex }: { runId: number; stageIndex: number }) {
+function StageLogPanel({ runId, stageIndex, onDone }: { runId: number; stageIndex: number; onDone?: () => void }) {
   const { content, status, fileType, errorMsg, finalStatus } = useStageLogStream(runId, stageIndex, true)
   const prettyRef = useRef<HTMLDivElement | null>(null)
   const rawRef = useRef<HTMLPreElement | null>(null)
   const [viewMode, setViewMode] = useState<'pretty' | 'raw'>('pretty')
+
+  useEffect(() => {
+    if (status === 'done') onDone?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status])
 
   useEffect(() => {
     // 内容变化后下一帧滚到底，避免用户错过最新行
@@ -330,7 +335,7 @@ export default function TestRunsPage() {
                         <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{s.aiAnalysis}</div>
                       </div>
                     )}
-                    {isRunning && logOpen && <StageLogPanel runId={selectedRun.id} stageIndex={idx} />}
+                    {isRunning && logOpen && <StageLogPanel runId={selectedRun.id} stageIndex={idx} onDone={() => { void refreshDetail(selectedRun.id) }} />}
                   </div>
                 ),
               })

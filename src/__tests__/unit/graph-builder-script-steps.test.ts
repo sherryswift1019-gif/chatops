@@ -264,6 +264,58 @@ describe('buildScriptNode — steps.* template forwarding', () => {
   })
 })
 
+describe('buildScriptNode — targetRoles=[] with non-empty servers map', () => {
+  it('takes Docker path even when servers map is populated, if targetRoles is empty', async () => {
+    // Regression: autoResolveServersByRole populates stageContext.servers with
+    // all system servers. A script node with no targetRoles selected should
+    // still take the Docker path, not SSH to all available servers.
+    const stages: StageDefinition[] = [
+      makeStage({
+        name: 's1-script',
+        stageType: 'script',
+        targetRoles: [], // no roles selected → Docker path
+        script: 'echo hello',
+      }),
+    ]
+
+    let dockerExecCalled = false
+    let sshHookCalled = false
+
+    const dockerExec = {
+      async exec(_command: string) {
+        dockerExecCalled = true
+        return { stdout: 'hello', stderr: '', exitCode: 0 }
+      },
+    }
+
+    const hooks: StageHooks = {
+      async runScript(): Promise<StageExecutionResult> {
+        sshHookCalled = true
+        return { status: 'success', output: 'ssh-should-not-run' }
+      },
+    }
+
+    const builder = buildGraphFromStages({
+      stages,
+      stageContext: {
+        runId: 42,
+        // servers is non-empty — simulates autoResolveServersByRole output
+        servers: { app: [sshServer] },
+        logDir: '/tmp/chatops-test',
+        dockerExecutor: dockerExec as unknown as DockerExecutor,
+      },
+      hooks,
+    })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const app = (builder as any).compile({ checkpointer: new MemorySaver() })
+    const config = { configurable: { thread_id: randomUUID() } }
+    await drain(await app.stream({ runId: 42 }, config))
+
+    expect(dockerExecCalled).toBe(true)
+    expect(sshHookCalled).toBe(false)
+  })
+})
+
 /**
  * Integration: assert the *graph state* exposes the script node's stepOutput
  * via state.stepOutputs[<id>] after the run finishes. This is the "writing

@@ -146,9 +146,8 @@ function nodeName(index: number, stage: StageDefinition): string {
   return `stage_${index}_${stage.stageType}`
 }
 
-// Resolve target servers from the stage context using targetRoles.
-// Mirrors executor.ts behaviour: empty targetRoles falls back to every
-// server bound to any role in the run.
+// Resolve target servers for a stage. Empty targetRoles = no server target
+// (use Docker path); non-empty = SSH to the listed roles only.
 function resolveTargetServers(
   stage: StageDefinition,
   servers: Record<string, ServerInfo[]>,
@@ -156,7 +155,7 @@ function resolveTargetServers(
   if (stage.targetRoles.length > 0) {
     return stage.targetRoles.flatMap((role) => servers[role] ?? [])
   }
-  return Object.values(servers).flat()
+  return []
 }
 
 function nowIso(): string {
