@@ -27,6 +27,7 @@ describe('runE2eFix', () => {
   let executeCapabilityDirectMock: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
+    vi.resetModules()
     vi.clearAllMocks()
     executeCapabilityDirectMock = vi.fn()
     const { ClaudeRunner } = await import('../../agent/claude-runner.js')
@@ -120,6 +121,7 @@ describe('runE2eFix', () => {
       expect.objectContaining({
         dockerExec: expect.objectContaining({ containerId: 'my-container-id' }),
         timeoutMs: 30 * 60 * 1000,
+        maxTurns: 40,
       }),
     )
   })

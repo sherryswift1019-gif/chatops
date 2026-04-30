@@ -31,8 +31,10 @@ const E2E_FIX_CONTEXT: TaskContext = {
   initiatorRole: null,
 }
 
+let _runner: ClaudeRunner | null = null
 function getRunner(): ClaudeRunner {
-  return new ClaudeRunner()
+  if (!_runner) _runner = new ClaudeRunner()
+  return _runner
 }
 
 function parseLastJsonLine(output: string): AiDiagnosis | null {
@@ -60,8 +62,6 @@ function parseLastJsonLine(output: string): AiDiagnosis | null {
 }
 
 export async function runE2eFix(input: E2eFixInput): Promise<AiDiagnosis> {
-  const systemPrompt = readFileSync(SKILL_PATH, 'utf8')
-
   const userMessage = [
     `场景 ${input.scenarioId} 在沙盒里失败。`,
     `Evidence dir: ${input.evidenceDir}`,
@@ -77,6 +77,7 @@ export async function runE2eFix(input: E2eFixInput): Promise<AiDiagnosis> {
   ].join('\n')
 
   try {
+    const systemPrompt = readFileSync(SKILL_PATH, 'utf8')
     const output = await getRunner().executeCapabilityDirect({
       prompt: userMessage,
       systemPrompt,
