@@ -89,7 +89,7 @@ case "$ACTION" in
   "kind": "docker-compose-local",
   "endpoints": { "api": "http://localhost:${API_PORT}" },
   "modules": [],
-  "internalRefs": { "network": "${SANDBOX_NET}", "apiPort": ${API_PORT}, "runId": "${RUN_ID}" }
+  "internalRefs": { "network": "${SANDBOX_NET}", "apiPort": ${API_PORT}, "runId": "${RUN_ID}", "branch": "${BRANCH}" }
 }
 EOF
     echo "==> Sandbox provisioned. Handle: ${OUT_HANDLE}"
@@ -100,7 +100,7 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "teardown: --handle file not found: $HANDLE" >&2; exit 1
     fi
-    SANDBOX_NET=$(python3 -c "import json,sys; d=json.load(open('$HANDLE')); print(d['internalRefs']['network'])")
+    SANDBOX_NET=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['network'])" "$HANDLE")
     echo "==> Tearing down sandbox network: ${SANDBOX_NET}"
     docker ps -a --filter "network=${SANDBOX_NET}" --format "{{.ID}}" | xargs -r docker rm -f
     docker network rm "${SANDBOX_NET}" 2>/dev/null || true
@@ -112,7 +112,7 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "healthcheck: --handle file not found" >&2; exit 1
     fi
-    API_PORT=$(python3 -c "import json,sys; d=json.load(open('$HANDLE')); print(d['internalRefs']['apiPort'])")
+    API_PORT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['apiPort'])" "$HANDLE")
     echo "==> Healthcheck on port ${API_PORT}..."
     for i in $(seq 1 30); do
       if curl -sf "http://localhost:${API_PORT}/health" > /dev/null 2>&1; then
@@ -128,8 +128,8 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "deploy: --handle file not found" >&2; exit 1
     fi
-    API_PORT=$(python3 -c "import json,sys; d=json.load(open('$HANDLE')); print(d['internalRefs']['apiPort'])")
-    SANDBOX_NET=$(python3 -c "import json,sys; d=json.load(open('$HANDLE')); print(d['internalRefs']['network'])")
+    API_PORT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['apiPort'])" "$HANDLE")
+    SANDBOX_NET=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['network'])" "$HANDLE")
     echo "==> Deploying into sandbox (port ${API_PORT}, net ${SANDBOX_NET})..."
     E2E_SANDBOX_MODE=true \
     PORT="${API_PORT}" \
@@ -144,7 +144,7 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "redeploy: --handle file not found" >&2; exit 1
     fi
-    API_PORT=$(python3 -c "import json,sys; d=json.load(open('$HANDLE')); print(d['internalRefs']['apiPort'])")
+    API_PORT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['apiPort'])" "$HANDLE")
     echo "==> Redeploying sandbox (port ${API_PORT})..."
     E2E_SANDBOX_MODE=true PORT="${API_PORT}" docker compose -p "e2e-${API_PORT}" restart chatops
     echo "{\"redeployedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
