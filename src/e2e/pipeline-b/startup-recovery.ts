@@ -70,12 +70,14 @@ export async function recoverInflightE2eRuns(): Promise<void> {
     await updateE2eRunStatus(run.id, 'aborted', {
       finishedAt: new Date(),
       abortReason: 'process_restart',
+    }).catch((err) => {
+      console.error(`[E2eRecovery] updateE2eRunStatus failed for run ${run.id}:`, err)
     })
 
     const sandbox = await getSandboxByRunId(run.id)
+    const project = await getE2eTargetProject(run.targetProjectId).catch(() => null)
 
     if (sandbox && sandbox.status !== 'torn_down' && sandbox.status !== 'failed') {
-      const project = await getE2eTargetProject(run.targetProjectId).catch(() => null)
       const workDir = project?.workingDir ?? '.'
       const deployScriptName = project?.scripts.deploy ?? 'deploy.sh'
       const deployScript = join(workDir, deployScriptName)
@@ -85,7 +87,6 @@ export async function recoverInflightE2eRuns(): Promise<void> {
       })
     }
 
-    const project = await getE2eTargetProject(run.targetProjectId).catch(() => null)
     const gitlabRepo = project?.gitlabRepo ?? run.targetProjectId
     await deleteRemoteBranchBestEffort(gitlabRepo, run.iterationBranch).catch((err) => {
       console.error(`[E2eRecovery] branch delete failed for ${run.iterationBranch}:`, err)

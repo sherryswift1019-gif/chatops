@@ -134,6 +134,15 @@ describe('recoverInflightE2eRuns', () => {
     expect(updateSandboxStatus).not.toHaveBeenCalled()
   })
 
+  it('已是 failed 的沙盒 → 跳过 teardown', async () => {
+    vi.mocked(listInflightE2eRuns).mockResolvedValue([makeRun(6n, 'e2e/iter-fff')] as any)
+    vi.mocked(getSandboxByRunId).mockResolvedValue(makeSandbox(31n, 6n, 'failed') as any)
+
+    await recoverInflightE2eRuns()
+    expect(runScript).not.toHaveBeenCalled()
+    expect(updateSandboxStatus).not.toHaveBeenCalled()
+  })
+
   it('delete branch fetch 抛异常 → 不阻止 run 标 aborted', async () => {
     vi.mocked(listInflightE2eRuns).mockResolvedValue([makeRun(7n, 'e2e/iter-ggg')] as any)
     vi.mocked(getSandboxByRunId).mockResolvedValue(null)
