@@ -184,6 +184,7 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
           const { runPipeline, imTrigger: imTriggerCtx } = await import('../pipeline/executor.js')
           const { getTestPipelineById } = await import('../db/repositories/test-pipelines.js')
           const { collectImParams } = await import('../pipeline/im-param-collector.js')
+          const { notifyImGroup } = await import('../pipeline/im-notifier.js')
 
           const pipeline = await getTestPipelineById(pipelineId)
           if (!pipeline) throw new Error(`Pipeline ${pipelineId} not found`)
@@ -198,13 +199,26 @@ export async function triggerCapability(opts: TriggerOptions): Promise<TriggerRe
             {},
             imTriggerCtx({ triggeredBy: initiatorId, platform, groupId, userId: initiatorId, params }),
             {},
-            undefined,
+            (result) => {
+              const icon = result.status === 'success' ? '✅' : '❌'
+              const lines = [`${icon} 流水线「${result.pipelineName}」${result.status === 'success' ? '执行成功' : '执行失败'}`]
+              if (result.status === 'failed' && result.errorMessage) {
+                lines.push(`原因：${result.errorMessage}`)
+              }
+              lines.push(`耗时：${Math.round(result.durationMs / 1000)}s`)
+              notifyImGroup(platform, groupId, lines.join('\n')).catch((e) => {
+                console.warn(`[AgentCoordinator] notify result failed platform=${platform} group=${groupId}:`, e)
+              })
+            },
           )
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           console.error(`[AgentCoordinator] pipeline start failed for ${opts.capabilityKey}:`, msg)
+          // 独立 import：避免 try 块顶部的 import 失败时 catch 里用不到 notifyImGroup
           const { notifyImGroup } = await import('../pipeline/im-notifier.js')
-          await notifyImGroup(platform, groupId, `❌ 流水线启动失败：${msg}`).catch(() => {})
+          await notifyImGroup(platform, groupId, `❌ 流水线启动失败：${msg}`).catch((e) => {
+            console.warn(`[AgentCoordinator] notify start-failed failed platform=${platform} group=${groupId}:`, e)
+          })
         }
       })()
 

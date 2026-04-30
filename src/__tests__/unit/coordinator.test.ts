@@ -49,6 +49,18 @@ vi.mock('../../pipeline/executor.js', () => ({
   scheduledTrigger: (args: any) => ({ type: 'scheduled', ...args }),
 }))
 
+vi.mock('../../pipeline/im-notifier.js', () => ({
+  notifyImGroup: vi.fn(async () => {}),
+}))
+
+vi.mock('../../db/repositories/test-pipelines.js', () => ({
+  getTestPipelineById: vi.fn(async () => null),
+}))
+
+vi.mock('../../pipeline/im-param-collector.js', () => ({
+  collectImParams: vi.fn(async () => ({})),
+}))
+
 // ─── tests ────────────────────────────────────────────────────
 
 describe('AgentCoordinator - triggerCapability', () => {
@@ -658,5 +670,134 @@ describe('AgentCoordinator - checkAndTriggerHandover', () => {
       capabilityKey: 'notify_bug',
       extraParams: expect.objectContaining({ reportId: 42 }),
     }))
+  })
+})
+
+describe('AgentCoordinator - IM 触发 pipeline 完成回调', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('pipeline 成功 → notifyImGroup 收到成功消息', async () => {
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    const { runPipeline } = await import('../../pipeline/executor.js') as any
+    const { notifyImGroup } = await import('../../pipeline/im-notifier.js')
+    const { getTestPipelineById: getPipelineMock } =
+      await import('../../db/repositories/test-pipelines.js')
+
+    // deploy key 未在 capabilities mock 中注册，但 pipelineId != null 时直接走 pipeline 分支，不查 capabilities
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'deploy', pipelineId: 10, capabilityKey: null, enabled: true,
+    })
+    ;(getPipelineMock as any).mockResolvedValueOnce({
+      id: 10, name: '部署流水线', paramSchema: null, imPrompt: null,
+    })
+
+    let capturedOnComplete: ((r: any) => void) | undefined
+    ;(runPipeline as any).mockImplementation(
+      async (_id: number, _sa: any, _trigger: any, _rv: any, onComplete: any) => {
+        capturedOnComplete = onComplete
+        return 55
+      }
+    )
+
+    await triggerCapability({
+      capabilityKey: 'deploy',
+      context: { taskId: 't-im1', groupId: 'g-deploy', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    // 等 async IIFE 里的 runPipeline 被调（多个 await import 后）
+    await vi.waitFor(() => expect(capturedOnComplete).toBeDefined(), { timeout: 1000 })
+
+    capturedOnComplete!({
+      runId: 55,
+      pipelineName: '部署流水线',
+      status: 'success',
+      errorMessage: '',
+      stageResults: [],
+      durationMs: 5000,
+    })
+
+    await vi.waitFor(() => {
+      expect(notifyImGroup).toHaveBeenCalledWith(
+        'dingtalk',
+        'g-deploy',
+        expect.stringMatching(/✅.*部署流水线/s),
+      )
+    }, { timeout: 1000 })
+  })
+
+  it('pipeline 失败 → notifyImGroup 收到失败消息含错误原因', async () => {
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    const { runPipeline } = await import('../../pipeline/executor.js') as any
+    const { notifyImGroup } = await import('../../pipeline/im-notifier.js')
+    const { getTestPipelineById: getPipelineMock } =
+      await import('../../db/repositories/test-pipelines.js')
+
+    // deploy key 未在 capabilities mock 中注册，但 pipelineId != null 时直接走 pipeline 分支，不查 capabilities
+    ;(getIMTrigger as any).mockResolvedValueOnce({
+      key: 'deploy', pipelineId: 10, capabilityKey: null, enabled: true,
+    })
+    ;(getPipelineMock as any).mockResolvedValueOnce({
+      id: 10, name: '部署流水线', paramSchema: null, imPrompt: null,
+    })
+
+    let capturedOnComplete: ((r: any) => void) | undefined
+    ;(runPipeline as any).mockImplementation(
+      async (_id: number, _sa: any, _trigger: any, _rv: any, onComplete: any) => {
+        capturedOnComplete = onComplete
+        return 56
+      }
+    )
+
+    await triggerCapability({
+      capabilityKey: 'deploy',
+      context: { taskId: 't-im2', groupId: 'g-deploy', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    await vi.waitFor(() => expect(capturedOnComplete).toBeDefined(), { timeout: 1000 })
+
+    capturedOnComplete!({
+      runId: 56,
+      pipelineName: '部署流水线',
+      status: 'failed',
+      errorMessage: 'SSH 连接超时',
+      stageResults: [],
+      durationMs: 3000,
+    })
+
+    await vi.waitFor(() => {
+      expect(notifyImGroup).toHaveBeenCalledWith(
+        'dingtalk',
+        'g-deploy',
+        expect.stringMatching(/❌.*SSH 连接超时/s),
+      )
+    }, { timeout: 1000 })
+  })
+
+  it('runPipeline 抛出 → notifyImGroup 收到启动失败消息', async () => {
+    const { getIMTrigger } = await import('../../db/repositories/im-triggers.js')
+    const { runPipeline } = await import('../../pipeline/executor.js') as any
+    const { notifyImGroup } = await import('../../pipeline/im-notifier.js')
+    const { getTestPipelineById: getPipelineMock } =
+      await import('../../db/repositories/test-pipelines.js')
+
+    // deploy key 未在 capabilities mock 中注册，但 pipelineId != null 时直接走 pipeline 分支，不查 capabilities
+    ;(getIMTrigger as any).mockResolvedValueOnce({ key: 'deploy', pipelineId: 10, capabilityKey: null, enabled: true })
+    ;(getPipelineMock as any).mockResolvedValueOnce({ id: 10, name: '部署流水线', paramSchema: null, imPrompt: null })
+    ;(runPipeline as any).mockRejectedValueOnce(new Error('DB connection lost'))
+
+    await triggerCapability({
+      capabilityKey: 'deploy',
+      context: { taskId: 't-err', groupId: 'g-deploy', platform: 'dingtalk', initiatorId: 'u1', initiatorRole: 'developer' },
+    })
+
+    await vi.waitFor(() => {
+      expect(notifyImGroup).toHaveBeenCalledWith(
+        'dingtalk',
+        'g-deploy',
+        expect.stringMatching(/❌.*流水线启动失败.*DB connection lost/s),
+      )
+    }, { timeout: 1000 })
   })
 })
