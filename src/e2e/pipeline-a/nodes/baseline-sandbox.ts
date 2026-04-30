@@ -4,6 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import { createSandbox, updateSandboxStatus } from '../../../db/repositories/e2e-sandboxes.js'
+import { updateE2eSpecStatus } from '../../../db/repositories/e2e-specs.js'
 import type { PipelineAStateType, BaselineSandboxHandle } from '../types.js'
 
 function runScript(scriptPath: string, args: string[], timeoutMs = 300_000) {
@@ -75,11 +76,20 @@ export async function teardownBaselineSandboxNode(state: PipelineAStateType): Pr
     }
   }
 
+  const spec = state.specs[state.currentSpecIndex]
   const specWasCommitted =
     state.completedSpecs.length > 0 &&
-    state.completedSpecs[state.completedSpecs.length - 1].specId ===
-      state.specs[state.currentSpecIndex]?.specId
+    state.completedSpecs[state.completedSpecs.length - 1].specId === spec?.specId
   const nextIndex = specWasCommitted ? state.currentSpecIndex : state.currentSpecIndex + 1
+
+  // 未经 commit_and_pr 成功路径到达 teardown 时，标记当前 spec 为失败状态
+  if (spec && !specWasCommitted) {
+    const finalStatus =
+      state.diagnosisVerdict === 'product_bug'
+        ? 'blocked_on_baseline_bug'
+        : 'baseline_failed'
+    await updateE2eSpecStatus(spec.specId, finalStatus)
+  }
 
   return {
     sandboxHandle: null,
