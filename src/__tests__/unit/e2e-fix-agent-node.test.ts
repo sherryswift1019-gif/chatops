@@ -27,8 +27,7 @@ describe('e2eFixAgentNode', () => {
     vi.clearAllMocks()
     const runner = await import('../../agent/e2e-fix/runner.js')
     runE2eFixMock = runner.runE2eFix as ReturnType<typeof vi.fn>
-    const { getPool } = await import('../../db/client.js')
-    poolQueryMock = (getPool as ReturnType<typeof vi.fn>)().query
+    poolQueryMock = _mockPool.query
   })
 
   it('calls runE2eFix with correct params derived from state', async () => {
