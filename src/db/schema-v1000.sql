@@ -98,11 +98,12 @@ INSERT INTO e2e_target_projects (id, display_name, gitlab_repo, default_branch, 
 );
 
 -- invoke_target_script 节点注册
-INSERT INTO pipeline_node_types (key, display_name, description, param_schema, enabled)
+INSERT INTO pipeline_node_types (key, display_name, description, category, param_schema, enabled)
 VALUES (
   'invoke_target_script',
   '调用项目脚本',
   '调用被测项目的约定脚本（build/deploy/test/fix），按 stdout JSON + exit code 协议解析结果',
+  'specialized',
   '{"type":"object","properties":{"scriptPath":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"env":{"type":"object"},"timeoutSeconds":{"type":"number"},"workingDir":{"type":"string"}},"required":["scriptPath","args"]}',
   true
 )
