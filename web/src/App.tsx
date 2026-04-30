@@ -31,6 +31,8 @@ const PrdChatPage            = lazy(() => import('./pages/PrdChatPage'))
 const PrdMetricsPage         = lazy(() => import('./pages/PrdMetricsPage'))
 const E2eTargetsPage         = lazy(() => import('./pages/E2eTargetsPage'))
 const E2eSpecsPage           = lazy(() => import('./pages/E2eSpecsPage'))
+const E2eRunsPage            = lazy(() => import('./pages/E2eRunsPage'))
+const E2eRunDetailPage       = lazy(() => import('./pages/E2eRunDetailPage'))
 
 const FONT = "'Urbanist', -apple-system, BlinkMacSystemFont, sans-serif"
 
@@ -244,6 +246,12 @@ export default function App() {
             } />
             <Route path="/e2e-specs" element={
               <Suspense fallback={null}><E2eSpecsPage /></Suspense>
+            } />
+            <Route path="/e2e-runs" element={
+              <Suspense fallback={null}><E2eRunsPage /></Suspense>
+            } />
+            <Route path="/e2e-runs/:runId" element={
+              <Suspense fallback={null}><E2eRunDetailPage /></Suspense>
             } />
           </Route>
         </Routes>
