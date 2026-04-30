@@ -29,10 +29,13 @@ fail()   { echo -e "${RED}[FAIL]${NC} $*"; }
 header() { echo -e "\n${CYAN}═══ $* ═══${NC}\n"; }
 
 # ─── 全局参数 ─────────────────────────────────────────────────────────────────
-ACTION="run"        # run | setup-env | typecheck | list
+ACTION="run"        # run | setup-env | typecheck | list | discover | static-check | scenario
 FILTER=""
 KEEP=false
 ROUNDS=1
+SCENARIO_ID=""
+EVIDENCE_DIR=""
+FORMAT="text"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -42,6 +45,11 @@ while [[ $# -gt 0 ]]; do
         --filter)    FILTER="$2"; shift 2 ;;
         --keep)      KEEP=true; shift ;;
         --rounds)    ROUNDS="$2"; shift 2 ;;
+        --discover)  ACTION="discover"; shift ;;
+        --static-check) ACTION="static-check"; shift ;;
+        --scenario)  ACTION="scenario"; SCENARIO_ID="$2"; shift 2 ;;
+        --evidence-dir) EVIDENCE_DIR="$2"; shift 2 ;;
+        --format)    FORMAT="$2"; shift 2 ;;
         -h|--help)
             sed -n '3,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) fail "Unknown: $1"; exit 1 ;;
@@ -423,6 +431,64 @@ main() {
         list)      list_tests; exit 0 ;;
         typecheck) run_typecheck; exit $? ;;
     esac
+
+    # === e2e 新增 action ===
+    if [[ "$ACTION" == "discover" ]]; then
+      SCENARIOS=()
+      while IFS= read -r line; do
+        id=$(echo "$line" | sed "s/.*test[[:space:]]*('[[:space:]]*//" | sed "s/'[[:space:]]*,.*//" | tr -d ' ')
+        [[ -n "$id" ]] && SCENARIOS+=("{\"id\":\"$id\",\"name\":\"$id\",\"tags\":[]}")
+      done < <(grep -rh "^test(" tests/e2e/ 2>/dev/null || true)
+      if [[ ${#SCENARIOS[@]} -eq 0 ]]; then
+        echo '{"scenarios":[]}'
+      else
+        JSON_SCENARIOS=$(IFS=,; echo "[${SCENARIOS[*]}]")
+        echo "{\"scenarios\":${JSON_SCENARIOS}}"
+      fi
+      exit 0
+    fi
+
+    if [[ "$ACTION" == "static-check" ]]; then
+      echo "==> Running static check (tsc --noEmit)..."
+      cd web && npx tsc --noEmit && cd ..
+      npx tsc --noEmit
+      echo "==> Static check passed."
+      exit 0
+    fi
+
+    if [[ "$ACTION" == "scenario" ]]; then
+      if [[ -z "$SCENARIO_ID" ]]; then
+        echo "--scenario requires a scenario ID" >&2; exit 1
+      fi
+      EVIDENCE_DIR="${EVIDENCE_DIR:-/tmp/e2e-evidence}"
+      mkdir -p "${EVIDENCE_DIR}/${SCENARIO_ID}/artifacts"
+      echo "==> Running scenario: $SCENARIO_ID (evidence → ${EVIDENCE_DIR}/${SCENARIO_ID})"
+      START_MS=$(($(date +%s%N) / 1000000))
+
+      set +e
+      npx playwright test --grep "$SCENARIO_ID" --reporter=json 2>&1 | tee "${EVIDENCE_DIR}/${SCENARIO_ID}/playwright-output.txt"
+      PW_EXIT=$?
+      set -e
+
+      END_MS=$(($(date +%s%N) / 1000000))
+      DURATION=$((END_MS - START_MS))
+      RESULT="pass"
+      [[ $PW_EXIT -ne 0 ]] && RESULT="fail"
+
+      cat > "${EVIDENCE_DIR}/${SCENARIO_ID}/manifest.json" <<EOF
+{
+  "summary": "Playwright scenario: ${SCENARIO_ID}, result: ${RESULT}",
+  "contextHint": "Playwright E2E，查看 playwright-output.txt 和截图",
+  "artifacts": [
+    {"kind":"log","mimeType":"text/plain","path":"artifacts/playwright-output.txt","description":"Playwright 输出"}
+  ]
+}
+EOF
+      cp "${EVIDENCE_DIR}/${SCENARIO_ID}/playwright-output.txt" "${EVIDENCE_DIR}/${SCENARIO_ID}/artifacts/" 2>/dev/null || true
+
+      echo "{\"result\":\"${RESULT}\",\"summary\":\"scenario ${SCENARIO_ID}: ${RESULT}\",\"duration_ms\":${DURATION}}"
+      exit $PW_EXIT
+    fi
 
     header "ChatOps 测试 (vitest)"
     [ -n "$FILTER" ] && info "过滤: $FILTER"
