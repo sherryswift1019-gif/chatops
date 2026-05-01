@@ -33,6 +33,12 @@ export interface E2eSpec {
 export const e2eApi = {
   listTargets: () => axios.get<E2eTargetProject[]>('/admin/e2e-targets').then(r => r.data),
   getTarget: (id: string) => axios.get<E2eTargetProject>(`/admin/e2e-targets/${id}`).then(r => r.data),
+  updateTarget: (
+    id: string,
+    body: Partial<Pick<E2eTargetProject, 'displayName' | 'gitlabRepo' | 'defaultBranch' | 'workingDir' | 'scripts' | 'defaultSandboxKind'>>,
+  ) => axios.put<E2eTargetProject>(`/admin/e2e-targets/${id}`, body).then(r => r.data),
+  getGitlabBaseUrl: () =>
+    axios.get<{ url: string | null }>('/admin/e2e-targets-gitlab-base-url').then(r => r.data),
 
   listSpecs: (projectId = 'chatops') =>
     axios.get<E2eSpec[]>('/admin/e2e-specs', { params: { projectId } }).then(r => r.data),

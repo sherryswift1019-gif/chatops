@@ -1,6 +1,6 @@
 // src/e2e/pipeline-b/nodes/create-summary-mr.ts
 import { resolveGitlabConfig } from '../../../config/gitlab.js'
-import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
+import { getE2eTargetProject, extractGitlabPath } from '../../../db/repositories/e2e-target-projects.js'
 import { updateE2eRunStatus } from '../../../db/repositories/e2e-runs.js'
 import { notifyRunPassed } from '../im-notifier.js'
 import type { PipelineBStateType } from '../types.js'
@@ -18,7 +18,7 @@ export async function createSummaryMrNode(state: PipelineBStateType): Promise<Pa
     return {}
   }
 
-  const encodedRepo = encodeURIComponent(project.gitlabRepo)
+  const encodedRepo = encodeURIComponent(extractGitlabPath(project.gitlabRepo))
   const apiUrl = `${gitlabConfig.url.replace(/\/$/, '')}/api/v4/projects/${encodedRepo}/merge_requests`
 
   const body = {

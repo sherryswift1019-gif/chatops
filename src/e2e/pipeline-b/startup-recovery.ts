@@ -10,7 +10,7 @@ import {
   getSandboxByRunId,
   updateSandboxStatus,
 } from '../../db/repositories/e2e-sandboxes.js'
-import { getE2eTargetProject } from '../../db/repositories/e2e-target-projects.js'
+import { getE2eTargetProject, extractGitlabPath } from '../../db/repositories/e2e-target-projects.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { runScript } from './run-script.js'
 
@@ -46,7 +46,7 @@ async function deleteRemoteBranchBestEffort(
   const { url, token } = await resolveGitlabConfig()
   if (!url || !token) return
 
-  const encodedRepo = encodeURIComponent(gitlabRepo)
+  const encodedRepo = encodeURIComponent(extractGitlabPath(gitlabRepo))
   const encodedBranch = encodeURIComponent(branch)
   const apiUrl = `${url.replace(/\/$/, '')}/api/v4/projects/${encodedRepo}/repository/branches/${encodedBranch}`
 
