@@ -26,7 +26,7 @@ export async function executeCapabilityDirectForE2e(prompt: string, sessionKey: 
     cwd: process.cwd(),
     sessionKey,
     freshSession: true,
-    maxTurns: 5,
-    timeoutMs: 120_000,
+    maxTurns: 20,
+    timeoutMs: 180_000,
   })
 }

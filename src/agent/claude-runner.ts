@@ -900,6 +900,7 @@ ${intentRules}
     }
 
     let textBuffer = ''
+    let assistantBuffer = ''
     let tempPorygon: ReturnType<typeof createPorygon> | null = null
     if (cliPath) {
       tempPorygon = createPorygon({ defaultBackend: 'claude', backends: { claude: { interactive: false, cliPath } } })
@@ -935,14 +936,21 @@ ${intentRules}
           this.saveSession(sessionKey, msg.sessionId as string, tools)
         }
         if (msg.type === 'tool_use') {
-          const toolName = 'name' in msg ? msg.name : 'unknown'
+          // Porygon 字段是 toolName 不是 name
+          const toolName = (msg as { toolName?: string }).toolName ?? 'unknown'
           console.log(`[Runner] Tool called: ${toolName}`)
         }
-        if (msg.type === 'assistant' && 'content' in msg) {
-          textBuffer += String(msg.content)
+        // Porygon 的 assistant / result 消息字段都是 text
+        if (msg.type === 'assistant' && 'text' in msg) {
+          assistantBuffer += String(msg.text)
         } else if (msg.type === 'result' && 'text' in msg) {
           textBuffer += String(msg.text)
         }
+      }
+      // result.text 缺失或为空时回退到 assistantBuffer（多轮 tool_use 撞 maxTurns 时常见）
+      if (!textBuffer && assistantBuffer) {
+        console.log(`[Runner] using assistantBuffer fallback (${assistantBuffer.length} chars, no result.text)`)
+        textBuffer = assistantBuffer
       }
     }
 
