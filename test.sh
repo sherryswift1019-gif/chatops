@@ -469,7 +469,10 @@ main() {
       START_MS=$(($(date +%s%N) / 1000000))
 
       set +e
-      E2E_BASE_URL="${SANDBOX_URL:-${E2E_BASE_URL:-http://localhost:3000}}" npx playwright test \
+      # DooD 容器中 /app/node_modules/.bin/playwright 已就绪，避免 npx 去下载
+      PW_BIN="/app/node_modules/.bin/playwright"
+      [ -f "$PW_BIN" ] || PW_BIN="npx playwright"
+      E2E_BASE_URL="${SANDBOX_URL:-${E2E_BASE_URL:-http://localhost:3000}}" $PW_BIN test \
         --config playwright.e2e.config.ts \
         --grep "$SCENARIO_ID" \
         --reporter=json 2>&1 | tee "${EVIDENCE_DIR}/${SCENARIO_ID}/playwright-output.txt"
