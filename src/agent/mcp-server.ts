@@ -71,9 +71,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   let tools = await filterToolsByRole(getAllTools(), ctx.initiatorRole ?? null, ctx.productLineId)
 
   // 按 capability 白名单过滤（由 runner 通过环境变量传入）
+  // 注意：env 未设置 = 不过滤；env=空字符串 = 显式无工具（caller 传了 tools:[]）
   const allowedList = process.env.CHATOPS_ALLOWED_TOOLS
-  if (allowedList) {
-    const allowed = new Set(allowedList.split(','))
+  if (allowedList !== undefined) {
+    const allowed = new Set(allowedList ? allowedList.split(',') : [])
     tools = tools.filter(t => allowed.has(t.name))
   }
 
