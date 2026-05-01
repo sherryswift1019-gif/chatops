@@ -36,7 +36,7 @@ export async function runBaselineCheckNode(state: PipelineAStateType): Promise<P
   const result = runDockerScript(
     hostPath,
     'test.sh',
-    [`--scenario`, scenarioId, `--evidence-dir=/workspace/${evidenceDirRelative}`],
+    [`--scenario`, scenarioId, `--evidence-dir`, `/workspace/${evidenceDirRelative}`],
     300_000,
     { SANDBOX_URL: sandboxUrl },
     'chatops_default',
