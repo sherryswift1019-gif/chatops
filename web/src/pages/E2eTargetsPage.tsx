@@ -2,12 +2,16 @@
 import { useState, useEffect } from 'react'
 import {
   Card, Descriptions, Tag, Spin, Typography, Button, Modal,
-  Form, Input, Space, message,
+  Form, Input, Space, message, Select, Alert,
 } from 'antd'
-import { EditOutlined } from '@ant-design/icons'
+import { EditOutlined, CheckCircleOutlined, CloseCircleOutlined, ApiOutlined } from '@ant-design/icons'
 import { e2eApi, type E2eTargetProject } from '../api/e2e'
 
 const { Title, Text, Link } = Typography
+
+const SANDBOX_KIND_OPTIONS = [
+  { value: 'docker-compose-local', label: 'Docker Compose（本地）' },
+]
 
 interface EditFormValues {
   displayName: string
@@ -20,6 +24,8 @@ interface EditFormValues {
   scriptFix: string
   defaultSandboxKind: string
 }
+
+type TestStatus = { ok: boolean; message: string } | null
 
 function EditModal({
   open,
@@ -36,6 +42,8 @@ function EditModal({
 }) {
   const [form] = Form.useForm<EditFormValues>()
   const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<TestStatus>(null)
 
   useEffect(() => {
     if (open) {
@@ -50,8 +58,27 @@ function EditModal({
         scriptFix: project.scripts.fix ?? '',
         defaultSandboxKind: project.defaultSandboxKind,
       })
+      setTestResult(null)
     }
   }, [open, project, form])
+
+  const handleTest = async () => {
+    const gitlabRepo = form.getFieldValue('gitlabRepo') as string
+    if (!gitlabRepo?.trim()) {
+      message.warning('请先填写仓库地址')
+      return
+    }
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const result = await e2eApi.testRepo(gitlabRepo.trim())
+      setTestResult(result)
+    } catch {
+      setTestResult({ ok: false, message: '请求失败，请检查网络或服务状态' })
+    } finally {
+      setTesting(false)
+    }
+  }
 
   const handleOk = async () => {
     const values = await form.validateFields()
@@ -82,8 +109,8 @@ function EditModal({
   }
 
   const repoExtra = gitlabBaseUrl
-    ? `系统 GitLab 基础地址：${gitlabBaseUrl}，凭证由系统配置提供，此处填写完整 git 地址`
-    : '凭证由系统 GitLab 配置提供，此处填写完整 git 地址'
+    ? `系统 GitLab 基础地址：${gitlabBaseUrl}，凭证由系统配置提供`
+    : '凭证由系统 GitLab 配置提供'
 
   return (
     <Modal
@@ -92,21 +119,45 @@ function EditModal({
       onOk={handleOk}
       onCancel={onClose}
       confirmLoading={saving}
-      width={560}
+      width={580}
       destroyOnClose
     >
       <Form form={form} layout="vertical" style={{ marginTop: 8 }}>
         <Form.Item name="displayName" label="显示名称" rules={[{ required: true }]}>
           <Input />
         </Form.Item>
+
         <Form.Item
           name="gitlabRepo"
           label="GitLab 仓库地址"
           rules={[{ required: true, message: '请输入仓库地址' }]}
           extra={repoExtra}
         >
-          <Input placeholder="https://gitlab.example.com/group/repo.git" />
+          <Space.Compact style={{ width: '100%' }}>
+            <Input
+              placeholder="https://gitlab.example.com/group/repo.git"
+              onChange={() => setTestResult(null)}
+            />
+            <Button
+              icon={<ApiOutlined />}
+              loading={testing}
+              onClick={handleTest}
+            >
+              测试
+            </Button>
+          </Space.Compact>
         </Form.Item>
+
+        {testResult && (
+          <Alert
+            type={testResult.ok ? 'success' : 'error'}
+            icon={testResult.ok ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
+            message={testResult.message}
+            showIcon
+            style={{ marginTop: -16, marginBottom: 16 }}
+          />
+        )}
+
         <Form.Item name="defaultBranch" label="默认分支" rules={[{ required: true }]}>
           <Input placeholder="main" />
         </Form.Item>
@@ -114,20 +165,20 @@ function EditModal({
           <Input placeholder="." />
         </Form.Item>
         <Form.Item name="defaultSandboxKind" label="沙盒类型" rules={[{ required: true }]}>
-          <Input placeholder="docker-compose-local" />
+          <Select options={SANDBOX_KIND_OPTIONS} />
         </Form.Item>
         <Form.Item label="脚本路径">
           <Space direction="vertical" style={{ width: '100%' }}>
-            <Form.Item name="scriptBuild" label="build.sh" style={{ marginBottom: 0 }} rules={[{ required: true }]}>
+            <Form.Item name="scriptBuild" style={{ marginBottom: 0 }} rules={[{ required: true }]}>
               <Input placeholder="build.sh" addonBefore="build" />
             </Form.Item>
-            <Form.Item name="scriptDeploy" label="deploy.sh" style={{ marginBottom: 0 }} rules={[{ required: true }]}>
+            <Form.Item name="scriptDeploy" style={{ marginBottom: 0 }} rules={[{ required: true }]}>
               <Input placeholder="deploy.sh" addonBefore="deploy" />
             </Form.Item>
-            <Form.Item name="scriptTest" label="test.sh" style={{ marginBottom: 0 }} rules={[{ required: true }]}>
+            <Form.Item name="scriptTest" style={{ marginBottom: 0 }} rules={[{ required: true }]}>
               <Input placeholder="test.sh" addonBefore="test" />
             </Form.Item>
-            <Form.Item name="scriptFix" label="fix.sh（可选）" style={{ marginBottom: 0 }}>
+            <Form.Item name="scriptFix" style={{ marginBottom: 0 }}>
               <Input placeholder="fix.sh（留空则不启用）" addonBefore="fix" />
             </Form.Item>
           </Space>

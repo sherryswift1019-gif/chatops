@@ -39,6 +39,8 @@ export const e2eApi = {
   ) => axios.put<E2eTargetProject>(`/admin/e2e-targets/${id}`, body).then(r => r.data),
   getGitlabBaseUrl: () =>
     axios.get<{ url: string | null }>('/admin/e2e-targets-gitlab-base-url').then(r => r.data),
+  testRepo: (gitlabRepo: string) =>
+    axios.post<{ ok: boolean; message: string }>('/admin/e2e-targets/test-repo', { gitlabRepo }).then(r => r.data),
 
   listSpecs: (projectId = 'chatops') =>
     axios.get<E2eSpec[]>('/admin/e2e-specs', { params: { projectId } }).then(r => r.data),
