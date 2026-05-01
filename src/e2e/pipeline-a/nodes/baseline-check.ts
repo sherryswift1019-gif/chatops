@@ -32,6 +32,13 @@ export async function runBaselineCheckNode(state: PipelineAStateType): Promise<P
 
   console.log(`[PipelineA:baselineCheck] attempt ${state.baselineAttempts + 1}: scenario=${scenarioId} sandboxUrl=${sandboxUrl}`)
 
+  // 先跑 test.sh --setup-env 让 workspace 测试环境就绪（pnpm install 等）
+  // 这是 test.sh 自身职责，pipeline 只负责调用，不需关心具体步骤
+  const setupResult = runDockerScript(hostPath, 'test.sh', ['--setup-env'], 180_000)
+  if (setupResult.status !== 0) {
+    console.warn(`[PipelineA:baselineCheck] setup-env failed (exit ${setupResult.status}):\n${(setupResult.stderr ?? setupResult.stdout ?? '').slice(0, 500)}`)
+  }
+
   // 通过 DooD 在 workspace 里跑 test.sh，加入 chatops_default 网络让 playwright 能访问沙盒容器
   const result = runDockerScript(
     hostPath,

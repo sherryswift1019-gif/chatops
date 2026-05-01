@@ -468,13 +468,9 @@ main() {
       echo "==> Running scenario: $SCENARIO_ID (evidence → ${EVIDENCE_DIR}/${SCENARIO_ID})"
       START_MS=$(($(date +%s%N) / 1000000))
 
-      # ESM import 不支持 NODE_PATH，软链接让 /workspace 找到 @playwright/test
-      if [ ! -e /workspace/node_modules ] && [ -d /app/node_modules ]; then
-        ln -s /app/node_modules /workspace/node_modules
-      fi
-
       set +e
       # DooD 容器中 /app/node_modules/.bin/playwright 已就绪，避免 npx 去下载
+      # 前置条件：先跑 ./test.sh --setup-env 链好 /workspace/node_modules
       PW_BIN="/app/node_modules/.bin/playwright"
       [ -f "$PW_BIN" ] || PW_BIN="npx playwright"
       E2E_BASE_URL="${SANDBOX_URL:-${E2E_BASE_URL:-http://localhost:3000}}" $PW_BIN test \
