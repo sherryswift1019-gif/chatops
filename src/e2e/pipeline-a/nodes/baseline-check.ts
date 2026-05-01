@@ -38,7 +38,7 @@ export async function runBaselineCheckNode(state: PipelineAStateType): Promise<P
     'test.sh',
     [`--scenario`, scenarioId, `--evidence-dir`, `/workspace/${evidenceDirRelative}`],
     300_000,
-    { SANDBOX_URL: sandboxUrl },
+    { SANDBOX_URL: sandboxUrl, NODE_PATH: '/app/node_modules' },
     'chatops_default',
   )
 
