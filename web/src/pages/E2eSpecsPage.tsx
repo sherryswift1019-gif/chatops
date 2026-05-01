@@ -20,6 +20,7 @@ const STATUS_CONFIG: Record<GenerationStatus, { color: string; label: string }> 
 export default function E2eSpecsPage() {
   const [specs, setSpecs] = useState<E2eSpec[]>([])
   const [loading, setLoading] = useState(false)
+  const [syncing, setSyncing] = useState(false)
   const [generating, setGenerating] = useState<Set<string>>(new Set())
 
   const load = useCallback(async () => {
@@ -35,6 +36,23 @@ export default function E2eSpecsPage() {
   }, [])
 
   useEffect(() => { load() }, [load])
+
+  const syncAndLoad = async () => {
+    setSyncing(true)
+    try {
+      const { synced, specs: updated } = await e2eApi.syncSpecs('chatops')
+      setSpecs(updated)
+      if (synced > 0) {
+        message.success(`已同步 ${synced} 条新规约`)
+      } else {
+        message.info('规约已是最新，无新增文件')
+      }
+    } catch {
+      message.error('同步失败，请检查 GitLab 配置')
+    } finally {
+      setSyncing(false)
+    }
+  }
 
   useEffect(() => {
     const hasGenerating = specs.some(s => s.generationStatus === 'generating')
@@ -135,7 +153,7 @@ export default function E2eSpecsPage() {
     <div style={{ padding: 24 }}>
       <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
         <Typography.Title level={4} style={{ margin: 0 }}>测试规约管理</Typography.Title>
-        <Button icon={<ReloadOutlined />} onClick={load} loading={loading}>刷新</Button>
+        <Button icon={<ReloadOutlined />} onClick={syncAndLoad} loading={syncing || loading}>同步规约</Button>
       </Space>
       <Table
         rowKey="id"

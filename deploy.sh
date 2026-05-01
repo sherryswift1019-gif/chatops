@@ -7,7 +7,7 @@ ACTION="${1:-up}"
 
 # E2E sandbox subcommands do not require .env
 case "$ACTION" in
-  provision|teardown|healthcheck) ;;
+  provision|teardown|healthcheck|deploy|redeploy) ;;
   *)
     # Check .env exists
     if [ ! -f .env ]; then
@@ -80,7 +80,7 @@ case "$ACTION" in
     fi
     RUN_ID="${E2E_RUN_ID:-$(date +%s)}"
     SANDBOX_NET="chatops-e2e-sandbox-${RUN_ID}"
-    API_PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
+    API_PORT=$(node -e "const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})")
     echo "==> Provisioning sandbox network: ${SANDBOX_NET}, port: ${API_PORT}"
     docker network create "${SANDBOX_NET}" 2>/dev/null || true
     cat > "${OUT_HANDLE}" <<EOF
@@ -100,7 +100,7 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "teardown: --handle file not found: $HANDLE" >&2; exit 1
     fi
-    SANDBOX_NET=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['network'])" "$HANDLE")
+    SANDBOX_NET=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.network)" "$HANDLE")
     echo "==> Tearing down sandbox network: ${SANDBOX_NET}"
     docker ps -a --filter "network=${SANDBOX_NET}" --format "{{.ID}}" | xargs -r docker rm -f
     docker network rm "${SANDBOX_NET}" 2>/dev/null || true
@@ -112,15 +112,17 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "healthcheck: --handle file not found" >&2; exit 1
     fi
-    API_PORT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['apiPort'])" "$HANDLE")
-    echo "==> Healthcheck on port ${API_PORT}..."
+    API_PORT=$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.apiPort))" "$HANDLE")
+    CONTAINER_NAME="chatops-e2e-${API_PORT}"
+    echo "==> Healthcheck on container ${CONTAINER_NAME}..."
     for i in $(seq 1 30); do
-      if curl -sf "http://localhost:${API_PORT}/health" > /dev/null 2>&1; then
+      STATUS=$(docker inspect --format='{{.State.Health.Status}}' "${CONTAINER_NAME}" 2>/dev/null || echo "not_found")
+      if [ "$STATUS" = "healthy" ]; then
         echo "==> Healthy."; exit 0
       fi
       sleep 2
     done
-    echo "==> Healthcheck failed after 60s" >&2; exit 1
+    echo "==> Healthcheck failed after 60s (status: ${STATUS})" >&2; exit 1
     ;;
 
   deploy)
@@ -128,14 +130,22 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "deploy: --handle file not found" >&2; exit 1
     fi
-    API_PORT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['apiPort'])" "$HANDLE")
-    SANDBOX_NET=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['network'])" "$HANDLE")
+    API_PORT=$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.apiPort))" "$HANDLE")
+    SANDBOX_NET=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.network)" "$HANDLE")
+    CONTAINER_NAME="chatops-e2e-${API_PORT}"
     echo "==> Deploying into sandbox (port ${API_PORT}, net ${SANDBOX_NET})..."
-    E2E_SANDBOX_MODE=true \
-    PORT="${API_PORT}" \
-    DOCKER_NETWORK="${SANDBOX_NET}" \
-    DATABASE_URL="${E2E_SANDBOX_DB_URL:-$DATABASE_URL}" \
-    docker compose -p "e2e-${API_PORT}" up -d --build chatops
+    docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+    docker run -d \
+      --name "${CONTAINER_NAME}" \
+      --network "${SANDBOX_NET}" \
+      -p "${API_PORT}:3000" \
+      -e E2E_SANDBOX_MODE=true \
+      -e PORT=3000 \
+      -e DATABASE_URL="${E2E_SANDBOX_DB_URL:-$DATABASE_URL}" \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v /srv/chatops/test-runs:/data/chatops/test-runs \
+      chatops:latest
+    docker network connect chatops_default "${CONTAINER_NAME}" 2>/dev/null || true
     echo "{\"deployedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"modules\":[\"chatops\"]}"
     ;;
 
@@ -144,9 +154,10 @@ EOF
     if [ -z "$HANDLE" ] || [ ! -f "$HANDLE" ]; then
       echo "redeploy: --handle file not found" >&2; exit 1
     fi
-    API_PORT=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['internalRefs']['apiPort'])" "$HANDLE")
+    API_PORT=$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.apiPort))" "$HANDLE")
+    CONTAINER_NAME="chatops-e2e-${API_PORT}"
     echo "==> Redeploying sandbox (port ${API_PORT})..."
-    E2E_SANDBOX_MODE=true PORT="${API_PORT}" docker compose -p "e2e-${API_PORT}" restart chatops
+    docker restart "${CONTAINER_NAME}"
     echo "{\"redeployedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
     ;;
 

@@ -36,6 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
  && git config --system user.email "chatops@paraview.cn" \
  && git config --system user.name "ChatOps Agent"
 
+# 安装 Playwright Chromium 及系统依赖（用于 E2E baseline 检查）
+RUN npx playwright install chromium --with-deps
+
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 
 RUN chown -R chatops:chatops /app

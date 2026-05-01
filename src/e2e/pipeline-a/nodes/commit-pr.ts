@@ -1,21 +1,23 @@
 // src/e2e/pipeline-a/nodes/commit-pr.ts
 import { spawnSync, execFile } from 'child_process'
 import { writeFileSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { join, dirname } from 'path'
 import { promisify } from 'util'
 import { resolveGitlabConfig } from '../../../config/gitlab.js'
 import { updateE2eSpecStatus } from '../../../db/repositories/e2e-specs.js'
+import { getWorkspacePaths } from './baseline-sandbox.js'
 import type { PipelineAStateType } from '../types.js'
 
 const execFileAsync = promisify(execFile)
 
-function git(args: string[], env: Record<string, string> = {}): { status: number; stdout: string } {
+function git(args: string[], cwd: string, env: Record<string, string> = {}): { status: number; stdout: string; stderr: string } {
   const r = spawnSync('git', args, {
     encoding: 'utf8',
     timeout: 60_000,
+    cwd,
     env: { ...process.env, ...env },
   })
-  return { status: r.status ?? -1, stdout: r.stdout ?? '' }
+  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
 }
 
 export async function commitAndPrNode(state: PipelineAStateType): Promise<Partial<PipelineAStateType>> {
@@ -30,36 +32,42 @@ export async function commitAndPrNode(state: PipelineAStateType): Promise<Partia
   }
 
   const { url: gitlabUrl, token } = await resolveGitlabConfig()
+  const { containerPath } = getWorkspacePaths(spec.targetProjectId)
 
-  // 创建目录并写文件
-  mkdirSync(dirname(spec.scriptPath), { recursive: true })
-  writeFileSync(spec.scriptPath, spec.generatedContent, 'utf8')
+  // 写测试文件到 workspace（target project 克隆目录）
+  const testFilePath = join(containerPath, spec.scriptPath)
+  mkdirSync(dirname(testFilePath), { recursive: true })
+  writeFileSync(testFilePath, spec.generatedContent, 'utf8')
 
   // git checkout -b 创建分支
   const branchName = `e2e-gen/${spec.specId}-${Date.now()}`
-  const checkoutResult = git(['checkout', '-b', branchName])
+  const checkoutResult = git(['checkout', '-b', branchName], containerPath)
   if (checkoutResult.status !== 0) {
+    console.error(`[PipelineA:commitPr] checkout failed: ${checkoutResult.stderr}`)
     await updateE2eSpecStatus(spec.specId, 'baseline_failed')
     return { completedSpecs: [{ specId: spec.specId, status: 'baseline_failed' }] }
   }
 
   // git add
-  const addResult = git(['add', spec.scriptPath])
+  const addResult = git(['add', spec.scriptPath], containerPath)
   if (addResult.status !== 0) {
+    console.error(`[PipelineA:commitPr] add failed: ${addResult.stderr}`)
     await updateE2eSpecStatus(spec.specId, 'baseline_failed')
     return { completedSpecs: [{ specId: spec.specId, status: 'baseline_failed' }] }
   }
 
   // git commit
-  const commitResult = git(['commit', '-m', `feat(e2e): 自动生成测试脚本 — ${spec.title}`])
+  const commitResult = git(['commit', '-m', `feat(e2e): 自动生成测试脚本 — ${spec.title}`], containerPath)
   if (commitResult.status !== 0) {
+    console.error(`[PipelineA:commitPr] commit failed: ${commitResult.stderr}`)
     await updateE2eSpecStatus(spec.specId, 'baseline_failed')
     return { completedSpecs: [{ specId: spec.specId, status: 'baseline_failed' }] }
   }
 
   // git push
-  const pushResult = git(['push', 'origin', branchName])
+  const pushResult = git(['push', 'origin', branchName], containerPath)
   if (pushResult.status !== 0) {
+    console.error(`[PipelineA:commitPr] push failed: ${pushResult.stderr}`)
     await updateE2eSpecStatus(spec.specId, 'baseline_failed')
     return { completedSpecs: [{ specId: spec.specId, status: 'baseline_failed' }] }
   }
@@ -79,6 +87,7 @@ export async function commitAndPrNode(state: PipelineAStateType): Promise<Partia
     {
       encoding: 'utf8',
       timeout: 60_000,
+      cwd: containerPath,
       env: {
         ...process.env,
         GITLAB_TOKEN: token ?? '',
@@ -88,6 +97,7 @@ export async function commitAndPrNode(state: PipelineAStateType): Promise<Partia
   )
 
   if (mrResult.status !== 0) {
+    console.error(`[PipelineA:commitPr] glab mr create failed: ${mrResult.stderr}`)
     await updateE2eSpecStatus(spec.specId, 'baseline_failed')
     return { completedSpecs: [{ specId: spec.specId, status: 'baseline_failed' }] }
   }

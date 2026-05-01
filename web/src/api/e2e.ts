@@ -45,6 +45,9 @@ export const e2eApi = {
   listSpecs: (projectId = 'chatops') =>
     axios.get<E2eSpec[]>('/admin/e2e-specs', { params: { projectId } }).then(r => r.data),
 
+  syncSpecs: (projectId = 'chatops') =>
+    axios.post<{ synced: number; specs: E2eSpec[] }>('/admin/e2e-specs/sync', { targetProjectId: projectId }).then(r => r.data),
+
   createSpec: (data: { targetProjectId: string; specPath: string; title: string }) =>
     axios.post<E2eSpec>('/admin/e2e-specs', data).then(r => r.data),
 
