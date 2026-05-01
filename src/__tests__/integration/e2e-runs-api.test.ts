@@ -4,6 +4,7 @@ import { resetTestDb } from '../helpers/db.js'
 import { buildAdminTestApp } from '../helpers/admin-app.js'
 import { registerE2eRunRoutes } from '../../admin/routes/e2e-runs.js'
 import { createE2eRun, getE2eRun } from '../../db/repositories/e2e-runs.js'
+import { getPool } from '../../db/client.js'
 import type { FastifyInstance } from 'fastify'
 
 vi.mock('../../e2e/pipeline-b/runner.js', () => ({
@@ -46,6 +47,10 @@ describe('GET /e2e-runs', () => {
   })
 
   it('filters by projectId', async () => {
+    await getPool().query(
+      `INSERT INTO e2e_target_projects (id, display_name, gitlab_repo, default_branch, scripts) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
+      ['other-project', 'Other Project', 'devops/other', 'main', JSON.stringify({ build: 'build.sh', deploy: 'deploy.sh', test: 'test.sh' })],
+    )
     await createE2eRun({ targetProjectId: 'chatops', triggerType: 'manual', triggerActor: null, sourceBranch: 'main', iterationBranch: 'e2e/iter-1', scenarioFilter: null })
     await createE2eRun({ targetProjectId: 'other-project', triggerType: 'manual', triggerActor: null, sourceBranch: 'main', iterationBranch: 'e2e/iter-2', scenarioFilter: null })
     const app = await buildApp()
