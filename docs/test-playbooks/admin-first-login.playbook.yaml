@@ -1,0 +1,87 @@
+specPath: docs/test-specs/admin-first-login.md
+specTitle: 首次登录强制改密流程
+scenarios:
+  - id: admin.first-login-change-password
+    name: 默认 admin 账号首次登录必须改密，改密后旧密码失效、新密码生效
+    tags: [smoke, auth, security]
+    setup:
+      hints:
+        - 沙盒新部署：schema-v9.sql 已默认插入 (username='admin',
+          password_hash=crypt('admin'), must_change_password=TRUE)。
+          db_query 验证 must_change_password 初始为 TRUE 是 setup 性质验证，
+          不放 acceptance 避免改密后跑测试看到 FALSE 误判。
+        - 多 step 共享 session 用 curl -b /tmp/cookie.txt -c /tmp/cookie.txt（写入 evidenceDir 子目录更安全）
+        - 新密码必须满足 validatePasswordStrength（src/admin/auth/password.ts）：
+          长度 ≥ 8 + 不能全数字。本场景用 'NewPass123!' 满足。
+    steps:
+      - 步骤 1：用 mcp__playwright__browser_navigate 打开 web_base_url/login，
+        mcp__playwright__browser_snapshot 验证登录页加载（含 username / password 输入框）
+      - 步骤 2：curl POST web_base_url/admin/auth/login，body {"username":"admin","password":"admin"}，
+        cookie jar 写到 evidenceDir/cookies-old.txt，断言 HTTP 200 +
+        response body.mustChangePassword === true
+      - 步骤 3：curl POST web_base_url/admin/auth/change-password 带 cookies-old.txt，
+        body {"oldPassword":"admin","newPassword":"NewPass123!"}，断言 HTTP 200 + body.ok === true
+      - 步骤 4：curl POST web_base_url/admin/auth/login，body {"username":"admin","password":"admin"}（旧密码），
+        断言 HTTP 401（旧密码已失效）
+      - 步骤 5：curl POST web_base_url/admin/auth/login，body {"username":"admin","password":"NewPass123!"}，
+        cookie jar 写到 cookies-new.txt，断言 HTTP 200 + body.mustChangePassword === false
+      - 步骤 6：curl GET web_base_url/admin/auth/me 带 cookies-new.txt，
+        断言 HTTP 200 + body.username === "admin" + body.mustChangePassword === false
+      - 步骤 7：把所有 curl 响应（含 -i -D 头）保存到 evidenceDir/*.txt 作为 artifacts
+    acceptance:
+      # 终态 1：登录页 DOM 真渲染（前端可访问，body 元素可见）
+      - kind: dom_visible
+        selector: body
+        timeout_ms: 10000
+
+      # 终态 2：用新密码登录成功（response.mustChangePassword=false 证明 flag 已清）
+      - kind: api_response
+        request: POST /admin/auth/login
+        expect_status: 200
+        expect_body_contains: '"mustChangePassword":false'
+        timeout_ms: 5000
+
+      # 终态 3：DB 中 must_change_password 已被改密 RPC 清成 FALSE
+      - kind: db_query
+        connection: app_db_dsn
+        sql: SELECT must_change_password FROM admin_users WHERE username='admin'
+        expect:
+          field:
+            col: must_change_password
+            equals: false
+
+      # 终态 4：DB 中 password_hash 已变（不再是初始 crypt('admin') 的哈希值）。
+      # bcrypt 哈希不可比对原文，但同一原文每次 crypt 出不同盐 → 用 length 校验存在 +
+      # 跟空字符串不等。简单校验"非空且长度 ≥ 60"（bcrypt $2a/$2b 标准长度）。
+      - kind: db_query
+        connection: app_db_dsn
+        sql: |
+          SELECT length(password_hash)::int >= 60
+            AND password_hash NOT LIKE '%admin%'
+            AS hash_changed
+          FROM admin_users WHERE username='admin'
+        expect:
+          field:
+            col: hash_changed
+            equals: true
+
+      # 终态 5：last_login_at 被 updateAdminLastLogin 写入（验证 login flow 完整执行）
+      - kind: db_query
+        connection: app_db_dsn
+        sql: SELECT last_login_at IS NOT NULL AS logged_in FROM admin_users WHERE username='admin'
+        expect:
+          field:
+            col: logged_in
+            equals: true
+    on_fail_hints:
+      - 步骤 2 401：admin_users 表里 admin 用户没插入。看 schema-v9.sql 是否真的 applied
+        （src/db/schema-v9.sql + migrate.ts SCHEMA_FILES 列表），或 ON CONFLICT 跳过覆盖
+      - 步骤 3 400 weak_password：新密码不满足强度。看 src/admin/auth/password.ts:validatePasswordStrength
+        实际规则，调整 NewPass123! 满足规则
+      - 步骤 3 401：cookie 没透传。检查 curl -c / -b 是同一文件，
+        chatops 用 fastify-secure-session（Set-Cookie 名 'session'），cookie jar 必须保留
+      - 步骤 4 仍 200：updateAdminPassword 没执行或 password_hash 没真更新。
+        看 admin-users.ts:updateAdminPassword 的 SQL（应同步设 must_change_password=FALSE）
+      - 步骤 5 mustChangePassword 仍 true：updateAdminPassword 漏改 must_change_password 字段
+      - 终态 3 FALSE：验证 DB 已 commit；可能事务隔离导致测试看到旧值
+      - 终态 4 hash_changed=false：updateAdminPassword 调用了但 SQL 哈希算法/字段写入有问题
