@@ -1,0 +1,86 @@
+specPath: docs/test-specs/e2e-specs-generate.md
+specTitle: 测试规约页面 - 触发"生成"按钮 → 后台启动 Pipeline A
+scenarios:
+  - id: e2e-specs.trigger-generate
+    name: 在测试规约列表里点 docs/test-specs/poc-smoke.md 的"生成"按钮 → POST /admin/e2e-specs/:id/generate 202 + 状态进入 generating
+    tags: [smoke, e2e-specs, ui]
+    setup:
+      hints:
+        - 沙盒 fresh DB 没有 system_config.gitlab，无法走 syncSpecs 拉远端 docs/test-specs/*.md。
+          本场景 setup 通过 SQL 直接 INSERT 一条 spec 模拟 sync 完成后的状态，专注测"生成"按钮链路。
+        - admin/admin 默认账号首次登录强制改密 flag，但仅 UI 层提示，admin API 不阻塞。
+          curl 直接用 admin/admin 登录拿 cookie 即可调任意 admin API。
+        - generate API 是 fire-and-forget：返回 202 后 runPipelineA 在后台跑（host claude →
+          GitLab branch → MR），新 sandbox 没 GitLab token → pipeline A 会立即 baseline_failed。
+          本场景只验证"按钮 → API 接受 → status 离开 'pending'"，不等 pipeline A 真跑完。
+    steps:
+      - 步骤 1：用 psql 连 endpoints.app_db_dsn 执行
+          INSERT INTO e2e_specs (target_project_id, spec_path, title, content_hash)
+          VALUES ('chatops', 'docs/test-specs/poc-smoke.md', 'PoC Smoke', 'fixture-hash-poc')
+          RETURNING id;
+        记录 id 备用（注意 BIGSERIAL 返回 bigint，curl URL 用字符串）
+      - 步骤 2：curl POST web_base_url/admin/auth/login，body {"username":"admin","password":"admin"}，
+        cookies.txt 保存。断言 200。
+      - 步骤 3：curl GET web_base_url/admin/e2e-specs?projectId=chatops 带 cookie，
+        断言 response 数组里有一条 specPath='docs/test-specs/poc-smoke.md' 且 generationStatus='pending'
+      - 步骤 4：mcp__playwright__browser_navigate 打开 web_base_url/login，登录页加载后用
+        mcp__playwright__browser_fill_form 填 admin/admin 提交，再 navigate 到 /e2e-specs。
+        （或者 navigate 到 /e2e-specs 直接被重定向到 /login，看实际行为）
+      - 步骤 5：mcp__playwright__browser_snapshot 验证 /e2e-specs 表格里有 docs/test-specs/poc-smoke.md
+        这一行 + 含"生成"或"重生成"按钮
+      - 步骤 6：curl POST web_base_url/admin/e2e-specs/{id}/generate 带 cookie，
+        断言 HTTP 202 + body.message='generation started' + body.specId 等于步骤 1 的 id
+      - 步骤 7：再 curl GET web_base_url/admin/e2e-specs?projectId=chatops 带 cookie，
+        看那条 spec 的 generationStatus —— 应已离开 'pending'，进入
+        'generating'（pipeline A 还在跑）或已 'baseline_failed'（host claude 没 GitLab token 立即挂）。
+        关键：不应仍是 'pending'。
+      - 步骤 8：把 step 3/6/7 的 response（含 -i 头）保存到 evidenceDir/*.txt
+    acceptance:
+      # 终态 1：测试规约页面 DOM 渲染（表格元素可见）
+      - kind: dom_visible
+        selector: table
+        timeout_ms: 10000
+
+      # 终态 2：spec 已注册到 DB
+      - kind: db_query
+        connection: app_db_dsn
+        sql: |
+          SELECT count(*)::int AS n FROM e2e_specs
+          WHERE spec_path='docs/test-specs/poc-smoke.md' AND target_project_id='chatops'
+        expect:
+          field:
+            col: n
+            equals: 1
+
+      # 终态 3：generate API 返回 202 + 含 generation started
+      - kind: api_response
+        request: POST /admin/e2e-specs/:id/generate
+        expect_status: 202
+        expect_body_contains: 'generation started'
+
+      # 终态 4：generate 触发后 status 已离开 'pending'。
+      # generating / pr_open / committed / baseline_failed / blocked_on_baseline_bug 都算"已触发"。
+      # 只要不是 'pending' / 'skipped' 就证明 pipeline A 接管了这条 spec。
+      - kind: db_query
+        connection: app_db_dsn
+        sql: |
+          SELECT generation_status NOT IN ('pending', 'skipped') AS triggered
+          FROM e2e_specs
+          WHERE spec_path='docs/test-specs/poc-smoke.md' AND target_project_id='chatops'
+        expect:
+          field:
+            col: triggered
+            equals: true
+    on_fail_hints:
+      - 步骤 1 INSERT 失败：连 app_db_dsn 用错；endpoints.app_db_dsn 是
+        postgres://chatops:chatops@postgres:5432/e2e-${RUN_ID}（容器视角的 DSN）；
+        psql 在 sandbox 容器里跑用 docker exec containerId
+      - 步骤 2 401：admin 用户没建好；schema-v9.sql INSERT INTO admin_users 是否真 applied
+      - 步骤 4 navigate 到 /e2e-specs 跳到 /login：fastify-secure-session 没 cookie 时跳登录页，
+        用 fill_form 登录后 cookie 自动持久化在 Playwright browser context
+      - 步骤 6 404：spec id 类型/格式问题；BIGSERIAL 是数字，URL path 直接拼 String(id) 即可
+      - 步骤 6 401：admin API 检查 session；确保 cookie jar 同一文件透传
+      - 步骤 7 status 仍 'pending'：runPipelineA 没真启动；看 chatops 容器日志
+        [e2e-specs:generate] Pipeline A error；可能 fire-and-forget 之前就抛错被 catch
+      - 终态 4 triggered=false：pipeline A 启动后又被某 catch 路径强制 reset 回 pending；
+        看 e2e_specs 表的 SQL trigger / pipeline-a 的 status update 调用
