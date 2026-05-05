@@ -78,15 +78,30 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
       return reply.status(400).send({ error: 'targetProjectId required' })
     }
 
-    const { runId, status } = await runPipelineB({
+    // 先 createE2eRun 拿 runId 立即返回；pipeline 在后台跑，避免 HTTP request
+    // 阻塞几十分钟。错误由 runPipelineB 内部的 try/catch 写 e2e_runs.status='aborted'。
+    const { createE2eRun } = await import('../../db/repositories/e2e-runs.js')
+    const created = await createE2eRun({
+      targetProjectId,
+      triggerType: 'api',
+      triggerActor: null,
+      sourceBranch: sourceBranch ?? 'main',
+      iterationBranch: '',
+      scenarioFilter: scenarioFilter ?? null,
+    })
+
+    void runPipelineB({
       targetProjectId,
       sourceBranch: sourceBranch ?? 'main',
       scenarioFilter,
       triggerType: 'api',
       governorOverrides,
+      existingRunId: created.id,
+    }).catch((err) => {
+      console.error(`[admin/e2e-runs] runPipelineB fire-and-forget failed runId=${created.id}:`, err)
     })
 
-    return reply.status(202).send({ runId: runId.toString(), status })
+    return reply.status(202).send({ runId: created.id.toString(), status: 'pending' })
   })
 
   app.post<{ Params: { runId: string }; Body: { reason?: string } }>(
