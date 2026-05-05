@@ -1,4 +1,5 @@
 import type { IMAdapter } from '../../adapters/im/types.js'
+import type { Manifest } from './playbook/manifest.js'
 
 export interface ImNotifyOptions {
   adapter: IMAdapter
@@ -48,4 +49,30 @@ export async function notifyRunAborted(opts: ImNotifyOptions, reason: string): P
 
 export async function notifyGovernorUnfixable(opts: ImNotifyOptions, scenarioId: string): Promise<void> {
   await send(opts, `⚠️ Run #${opts.runId} · ${scenarioId} 无法修复（已重试 3 次），继续其他场景`)
+}
+
+/**
+ * 场景失败后等用户人审决策。推送场景 ID + acceptance 失败摘要 + 三个关键词提示。
+ * 用户回 IM 文本由 await-human-review 节点的 waitForImMessage 拦截 + 解析。
+ */
+export async function notifyAwaitHumanReview(
+  opts: ImNotifyOptions,
+  scenarioId: string,
+  manifest: Manifest,
+): Promise<void> {
+  const failed = manifest.acceptanceResults.filter((r) => r.result === 'fail' || r.result === 'error')
+  const failureLines = failed.slice(0, 3).map((r) => {
+    const reason = r.reason ? `: ${r.reason}` : ''
+    return `   • ${r.kind}#${r.index} ${r.result}${reason}`
+  })
+  const more = failed.length > 3 ? `\n   …还有 ${failed.length - 3} 项` : ''
+  const url = `${adminUrl()}/e2e-runs/${opts.runId}`
+  const lines = [
+    `🛑 Run #${opts.runId} · ${scenarioId} 失败，等待你决策`,
+    ...failureLines,
+    failureLines.length > 0 ? `${more}` : '',
+    `   详情 ▶ ${url}`,
+    `回复 approve(批准修复) / retry(重跑场景) / reject(跳过)`,
+  ].filter(Boolean)
+  await send(opts, lines.join('\n'))
 }

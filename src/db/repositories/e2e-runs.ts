@@ -1,6 +1,6 @@
 import { getPool } from '../client.js'
 
-export type E2eRunStatus = 'pending' | 'running' | 'awaiting_fix' | 'passed' | 'failed' | 'aborted'
+export type E2eRunStatus = 'pending' | 'running' | 'awaiting_fix' | 'awaiting_human_review' | 'passed' | 'failed' | 'aborted'
 
 export interface E2eRun {
   id: bigint

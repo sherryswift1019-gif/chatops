@@ -8,8 +8,10 @@ import {
   notifyRunFailed,
   notifyRunAborted,
   notifyGovernorUnfixable,
+  notifyAwaitHumanReview,
 } from '../../e2e/pipeline-b/im-notifier.js'
 import type { ImNotifyOptions } from '../../e2e/pipeline-b/im-notifier.js'
+import type { Manifest } from '../../e2e/pipeline-b/playbook/manifest.js'
 
 function makeMockAdapter(): IMAdapter {
   return {
@@ -108,6 +110,56 @@ describe('e2e im-notifier', () => {
     expect(content.text).toContain('scenario-payment')
     expect(content.text).toContain('⚠️')
     expect(content.text).toContain('无法修复')
+  })
+
+  it('notifyAwaitHumanReview 含 scenarioId / runId / 失败 acceptance 摘要 / 三个关键词', async () => {
+    const manifest: Manifest = {
+      scenarioId: 'login.success',
+      attemptNumber: 1,
+      result: 'fail',
+      startedAt: '2026-05-05T10:00:00.000Z',
+      finishedAt: '2026-05-05T10:00:30.000Z',
+      durationMs: 30000,
+      claudeTrace: [],
+      acceptanceResults: [
+        { kind: 'url_match', index: 0, result: 'fail', reason: '页面没跳转到 /dashboard' },
+        { kind: 'api_response', index: 1, result: 'fail', reason: 'HTTP 500' },
+      ],
+      artifacts: [],
+    }
+    await notifyAwaitHumanReview(opts, 'login.success', manifest)
+    const [, content] = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(content.text).toContain('login.success')
+    expect(content.text).toContain('42')
+    expect(content.text).toContain('url_match')
+    expect(content.text).toContain('页面没跳转到 /dashboard')
+    expect(content.text).toContain('approve')
+    expect(content.text).toContain('retry')
+    expect(content.text).toContain('reject')
+    expect(content.text).toContain('/e2e-runs/42')
+  })
+
+  it('notifyAwaitHumanReview 截断 >3 个失败 acceptance', async () => {
+    const manifest: Manifest = {
+      scenarioId: 's1',
+      attemptNumber: 1,
+      result: 'fail',
+      startedAt: '2026-05-05T10:00:00.000Z',
+      finishedAt: '2026-05-05T10:00:30.000Z',
+      durationMs: 100,
+      claudeTrace: [],
+      acceptanceResults: [
+        { kind: 'url_match', index: 0, result: 'fail' },
+        { kind: 'dom_visible', index: 1, result: 'fail' },
+        { kind: 'api_response', index: 2, result: 'fail' },
+        { kind: 'log_contains', index: 3, result: 'fail' },
+        { kind: 'db_query', index: 4, result: 'error' },
+      ],
+      artifacts: [],
+    }
+    await notifyAwaitHumanReview(opts, 's1', manifest)
+    const [, content] = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(content.text).toContain('还有 2 项')
   })
 
   it('sendMessage 抛出时函数不向上抛（fire-and-forget 安全）', async () => {

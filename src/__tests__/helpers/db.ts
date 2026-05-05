@@ -232,6 +232,8 @@ const SCHEMA_FILES = [
   // v59: 给 diagnose_and_repair capability 补 run_remote_command 工具，纯 UPDATE catalog，安全加入。
   'schema-v59.sql',
   'schema-v1000.sql',
+  // v1001: e2e_runs status 加 awaiting_human_review；evidence_manifest 容量 32K→64K。
+  'schema-v1001.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

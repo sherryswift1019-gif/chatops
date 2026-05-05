@@ -1,10 +1,15 @@
 // src/e2e/pipeline-b/types.ts
 import { Annotation } from '@langchain/langgraph'
 import type { IMAdapter } from '../../adapters/im/types.js'
+import type { Manifest } from './playbook/manifest.js'
+import type { Playbook } from './playbook/types.js'
+
+export type HumanReviewDecision = 'approve' | 'retry' | 'reject'
 
 export interface ImContext {
   adapter: IMAdapter
   groupId: string
+  platform: string
 }
 
 export interface ScenarioInfo {
@@ -62,6 +67,9 @@ export const PipelineBState = Annotation.Root({
   lastScenarioResult: Annotation<'pass' | 'fail' | 'error' | 'timeout' | null>({ default: () => null, reducer: (_, v) => v }),
   lastFixResult: Annotation<AiDiagnosis | null>({ default: () => null, reducer: (_, v) => v }),
   evidenceDirTemp: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
+  humanReviewDecision: Annotation<HumanReviewDecision | null>({ default: () => null, reducer: (_, v) => v }),
+  currentManifest: Annotation<Manifest | null>({ default: () => null, reducer: (_, v) => v }),
+  playbooks: Annotation<Record<string, Playbook>>({ default: () => ({}), reducer: (_, v) => v }),
   governorState: Annotation<GovernorState>({
     default: () => ({
       perScenarioAttempts: {},

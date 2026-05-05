@@ -77,6 +77,7 @@ const SCHEMA_FILES: ReadonlyArray<readonly [string, string]> = [
   ['v58', 'schema-v58.sql'],
   ['v59', 'schema-v59.sql'],
   ['v1000', 'schema-v1000.sql'],
+  ['v1001', 'schema-v1001.sql'],
 ]
 
 // _migrations: 已 applied 的 schema 版本登记表。

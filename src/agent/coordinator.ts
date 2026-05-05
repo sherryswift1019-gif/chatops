@@ -805,7 +805,7 @@ registerCapabilityHandler('e2e_run', async (opts: TriggerOptions) => {
     triggerType: 'im',
     triggerActor: context.initiatorId,
     existingRunId: run.id,
-    imContext: { adapter: context.adapter, groupId: context.groupId },
+    imContext: { adapter: context.adapter, groupId: context.groupId, platform: context.platform },
   }).catch((err: Error) => {
     notifyRunAborted(notifyOpts, err.message).catch(() => {})
   })
