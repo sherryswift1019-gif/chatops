@@ -1,5 +1,6 @@
 # ChatOps 业务镜像 — 多阶段构建：前端编译 + 后端打包
-# base 镜像已含后端 + 前端 node_modules，业务构建仅 COPY 源码 + build。
+# base 镜像已含：node_modules（前后端）+ 系统依赖（git/curl/gosu）+ Playwright Chromium
+# 业务构建仅 COPY 源码 + build。
 
 ARG BASE_IMAGE=harbor.paraview.cn/chatops/chatops-base:latest
 ARG DOCKER_IMAGE=harbor.paraview.cn/para-pam/docker:27
@@ -23,28 +24,21 @@ FROM ${BASE_IMAGE}
 
 WORKDIR /app
 
-COPY tsconfig.json ./
-COPY src/ src/
-COPY --from=web-build /app/web/dist web/dist
-
-RUN npx tsc --noEmit
-
-# 运行时依赖：git 用于 analyze_bug/fix_bug 的 clone + worktree
-# docker CLI 直接从 docker-cli stage 复制，不走外网 apt 源
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gosu \
- && rm -rf /var/lib/apt/lists/* \
- && git config --system user.email "chatops@paraview.cn" \
- && git config --system user.name "ChatOps Agent"
-
-# 安装 Playwright Chromium 及系统依赖（用于 E2E baseline 检查）
-RUN npx playwright install chromium --with-deps
-
+# 不依赖源码的二进制层：先做，让源码改动不会让其失效
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-
-RUN chown -R chatops:chatops /app
-
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# 源码层：变化频繁，放最后
+COPY tsconfig.json ./
+COPY src/ src/
+# pipeline-a LLM generator 需要 readFileSync(spec.specPath, 'utf8') 读 docs/test-specs/*.md
+# 作为 prompt 上下文。chatops 主进程跑 pipeline A 时 cwd=/app，所以 docs 必须 COPY 进 image。
+COPY docs/ docs/
+COPY --from=web-build /app/web/dist web/dist
+
+RUN npx tsc --noEmit \
+ && chown -R chatops:chatops /app
 
 EXPOSE 3000
 
