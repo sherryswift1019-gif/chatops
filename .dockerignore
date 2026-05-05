@@ -1,8 +1,21 @@
 node_modules
+**/node_modules
 /dist
 web/dist
+web/.vite
+**/*.tsbuildinfo
 .env
 .git
 .superpowers
-docs
+# 仅 docs/test-specs 和 docs/test-playbooks 进 image（pipeline-a LLM
+# generator 读 spec.md 作 prompt + pipeline-b runtime 读 playbook YAML）
+docs/*
+!docs/test-specs
+!docs/test-specs/**
+!docs/test-playbooks
+!docs/test-playbooks/**
 *.md
+logs
+coverage
+.vscode
+.idea
