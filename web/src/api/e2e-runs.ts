@@ -45,18 +45,57 @@ export interface AiDiagnosis {
   failureReason: string
 }
 
+// Pipeline-b artifact: { path, kind, description?, size_bytes? }（src/e2e/pipeline-b/playbook/manifest.ts:artifactSchema）
+// Pipeline-a 兼容字段：mimeType / module（旧 manifest 里有，新 pipeline-b 没有）
 export interface EvidenceArtifact {
-  kind: string
-  mimeType: string
   path: string
-  description: string
+  kind: 'screenshot' | 'log' | 'har' | 'dom_snapshot' | 'sql_result' | 'other' | string
+  description?: string | null
+  size_bytes?: number | null
+  // pipeline-a legacy
+  mimeType?: string
   module?: string
 }
 
+export interface AcceptanceResult {
+  kind: string
+  index: number
+  result: 'pass' | 'fail' | 'skip' | 'error'
+  expected?: unknown
+  actual?: unknown
+  reason?: string | null
+  duration_ms?: number | null
+}
+
+export interface TraceStep {
+  step: number
+  intent: string
+  tool?: string | null
+  args_summary?: string | null
+  verdict: 'ok' | 'warn' | 'error'
+  note?: string | null
+  started_at?: string | null
+  duration_ms?: number | null
+}
+
+// 联合：pipeline-b 形状（result / claudeTrace / acceptanceResults / errorMessage / artifacts / meta）
+//   + pipeline-a legacy（summary / contextHint / aiDiagnosis）。所有字段都 optional 让两套都能解析。
 export interface EvidenceManifest {
-  summary: string
-  contextHint: string
-  artifacts: EvidenceArtifact[]
+  // pipeline-b core
+  scenarioId?: string
+  attemptNumber?: number
+  result?: 'pass' | 'fail' | 'error' | 'timeout'
+  startedAt?: string
+  finishedAt?: string
+  durationMs?: number
+  claudeTrace?: TraceStep[]
+  acceptanceResults?: AcceptanceResult[]
+  artifacts?: EvidenceArtifact[]
+  errorMessage?: string | null
+  meta?: Record<string, unknown> | null
+  // pipeline-a legacy
+  summary?: string
+  contextHint?: string
   aiDiagnosis?: AiDiagnosis
 }
 

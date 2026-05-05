@@ -2,6 +2,7 @@
 import { buildPipelineBGraph } from './graph.js'
 import { teardownSandboxNode } from './nodes/teardown-sandbox.js'
 import {
+  getE2eRun,
   updateE2eRunStatus,
   updateE2eRunGovernorState,
   countQueuedE2eRuns,
@@ -11,6 +12,9 @@ import type { PipelineBStateType, ImContext } from './types.js'
 import { notifyRunAborted } from './im-notifier.js'
 
 const MAX_QUEUED_RUNS = DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns
+
+// Terminal statuses 不应被 catch 路径覆盖（节点已经做出最终决定）
+const TERMINAL_STATUSES = new Set(['passed', 'failed', 'aborted'])
 
 export interface RunPipelineBOptions {
   targetProjectId: string
@@ -81,7 +85,13 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
     const runId = (lastKnownState as PipelineBStateType).runId
     const finalGovernor = (lastKnownState as PipelineBStateType).governorState
     if (runId) {
-      await updateE2eRunStatus(runId, 'aborted', {
+      // 如果某个节点已经写了 terminal status（比如 createSummaryMr 写 'passed'，
+      // 之后 teardown 抛错），catch 路径不应把 status 倒退成 'aborted'。
+      // 只补 abortReason / governorState 让事故可见，不动 status。
+      const existing = await getE2eRun(runId).catch(() => null)
+      const alreadyTerminal = existing && TERMINAL_STATUSES.has(existing.status)
+      const targetStatus = alreadyTerminal ? existing.status : 'aborted'
+      await updateE2eRunStatus(runId, targetStatus, {
         abortReason: String(err),
         governorState: finalGovernor as unknown as Record<string, unknown>,
       }).catch(() => undefined)

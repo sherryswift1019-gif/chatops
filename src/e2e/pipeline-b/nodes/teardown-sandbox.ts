@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import { updateSandboxStatus } from '../../../db/repositories/e2e-sandboxes.js'
 import { runScript } from '../run-script.js'
+import { getWorkspacePaths } from '../../workspace.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function teardownSandboxNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
@@ -21,7 +22,9 @@ export async function teardownSandboxNode(state: PipelineBStateType): Promise<Pa
     return { sandboxHandle: null }
   }
 
-  const workDir = project.workingDir ?? '.'
+  // 跟 setupSandboxNode 对称：用 cloned workspace 的绝对路径，避免在 chatops 容器
+  // cwd 下找不到 deploy.sh（project.workingDir='.' 时 spawn 'deploy.sh' 会 ENOENT）。
+  const workDir = getWorkspacePaths(targetProjectId).containerPath
   const deployScript = join(workDir, state.projectScripts.deploy)
   const handleDir = mkdtempSync(join(tmpdir(), 'e2e-teardown-'))
   const handleFile = join(handleDir, 'handle.json')

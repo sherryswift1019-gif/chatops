@@ -1,7 +1,5 @@
 // src/__tests__/unit/e2e-fix-runner.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { join } from 'path'
-import { homedir } from 'os'
 
 // mock claude-runner
 vi.mock('../../agent/claude-runner.js', () => ({
@@ -10,14 +8,16 @@ vi.mock('../../agent/claude-runner.js', () => ({
   }),
 }))
 
-// mock fs.readFileSync — 让 skill 路径返回假内容
+// mock fs.readFileSync — 让 skill 路径返回假内容（覆盖仓库 fixture 路径 + host fallback 路径）
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()
   return {
     ...actual,
     readFileSync: vi.fn((p: unknown) => {
-      const skillPath = join(homedir(), '.claude', 'skills', 'e2e-fix', 'SKILL.md')
-      if (String(p) === skillPath) return '# E2E Fix Skill\n(mock skill content)'
+      const s = String(p)
+      if (s.endsWith('/skill/SKILL.md') || s.endsWith('/e2e-fix/SKILL.md')) {
+        return '# E2E Fix Skill\n(mock skill content)'
+      }
       return actual.readFileSync(p as string, 'utf8')
     }),
   }

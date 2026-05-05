@@ -11,6 +11,17 @@ vi.mock('../../e2e/pipeline-b/runner.js', () => ({
   runPipelineB: vi.fn().mockResolvedValue({ runId: 1n, status: 'pending' }),
 }))
 
+vi.mock('../../e2e/pipeline-b/playbook/load-from-gitlab.js', () => ({
+  loadScenariosFromGitlab: vi.fn().mockResolvedValue({
+    ref: 'main',
+    playbooks: {},
+    scenarios: [
+      { id: 'login.success', name: '登录成功', tags: ['smoke', 'auth'], specPath: 'docs/test-playbooks/login.yaml' },
+      { id: 'checkout.happy_path', name: '顺利下单', tags: ['smoke'], specPath: 'docs/test-playbooks/checkout.yaml' },
+    ],
+  }),
+}))
+
 async function buildApp(): Promise<FastifyInstance> {
   return buildAdminTestApp(async (app) => {
     await registerE2eRunRoutes(app)
@@ -20,6 +31,15 @@ async function buildApp(): Promise<FastifyInstance> {
 beforeEach(async () => {
   await resetTestDb()
   vi.clearAllMocks()
+  const { loadScenariosFromGitlab } = await import('../../e2e/pipeline-b/playbook/load-from-gitlab.js')
+  vi.mocked(loadScenariosFromGitlab).mockResolvedValue({
+    ref: 'main',
+    playbooks: {},
+    scenarios: [
+      { id: 'login.success', name: '登录成功', tags: ['smoke', 'auth'], specPath: 'docs/test-playbooks/login.yaml' },
+      { id: 'checkout.happy_path', name: '顺利下单', tags: ['smoke'], specPath: 'docs/test-playbooks/checkout.yaml' },
+    ],
+  })
 })
 
 describe('GET /e2e-runs', () => {
@@ -95,6 +115,46 @@ describe('GET /e2e-runs/:runId', () => {
     expect(body.run.targetProjectId).toBe('chatops')
     expect(body.sandbox).toBeNull()
     expect(body.scenarioRuns).toEqual([])
+    await app.close()
+  })
+})
+
+describe('GET /e2e-runs/scenario-options', () => {
+  it('returns 400 when projectId missing', async () => {
+    const app = await buildApp()
+    const r = await app.inject({ method: 'GET', url: '/e2e-runs/scenario-options' })
+    expect(r.statusCode).toBe(400)
+    expect(r.json()).toEqual({ error: 'projectId required' })
+    await app.close()
+  })
+
+  it('loads scenarios and de-duplicated tags for selected ref', async () => {
+    const { loadScenariosFromGitlab } = await import('../../e2e/pipeline-b/playbook/load-from-gitlab.js')
+    const app = await buildApp()
+    const r = await app.inject({ method: 'GET', url: '/e2e-runs/scenario-options?projectId=chatops&ref=feature%2Fsmoke' })
+    expect(r.statusCode).toBe(200)
+    expect(loadScenariosFromGitlab).toHaveBeenCalledWith('chatops', 'feature/smoke')
+    expect(r.json()).toEqual({
+      ref: 'main',
+      allTags: ['auth', 'smoke'],
+      scenarios: [
+        { id: 'login.success', name: '登录成功', tags: ['smoke', 'auth'], specPath: 'docs/test-playbooks/login.yaml' },
+        { id: 'checkout.happy_path', name: '顺利下单', tags: ['smoke'], specPath: 'docs/test-playbooks/checkout.yaml' },
+      ],
+    })
+    await app.close()
+  })
+
+  it('returns 502 when GitLab playbook loading fails', async () => {
+    const { loadScenariosFromGitlab } = await import('../../e2e/pipeline-b/playbook/load-from-gitlab.js')
+    vi.mocked(loadScenariosFromGitlab).mockRejectedValueOnce(new Error('GitLab timeout'))
+    const app = await buildApp()
+    const r = await app.inject({ method: 'GET', url: '/e2e-runs/scenario-options?projectId=chatops' })
+    expect(r.statusCode).toBe(502)
+    expect(r.json()).toEqual({
+      error: 'gitlab_unavailable',
+      message: 'GitLab timeout',
+    })
     await app.close()
   })
 })
@@ -181,6 +241,30 @@ describe('POST /e2e-runs', () => {
     expect(gs.limits!.maxRunHours).toBe(2)
     expect(gs.limits!.maxTotalAttempts).toBe(10)
     expect(gs.limits!.maxPerScenarioAttempts).toBe(3)
+    await app.close()
+  })
+
+  it('persists and starts a smoke-tag filtered run', async () => {
+    const { runPipelineB } = await import('../../e2e/pipeline-b/runner.js')
+    const app = await buildApp()
+    const r = await app.inject({
+      method: 'POST',
+      url: '/e2e-runs',
+      payload: {
+        targetProjectId: 'chatops',
+        sourceBranch: 'main',
+        scenarioFilter: { tags: ['smoke'] },
+      },
+    })
+    expect(r.statusCode).toBe(202)
+    const body = r.json()
+    const run = await getE2eRun(BigInt(body.runId))
+    expect(run?.scenarioFilter).toEqual({ tags: ['smoke'] })
+    expect(runPipelineB).toHaveBeenCalledWith(expect.objectContaining({
+      targetProjectId: 'chatops',
+      sourceBranch: 'main',
+      scenarioFilter: { tags: ['smoke'] },
+    }))
     await app.close()
   })
 })

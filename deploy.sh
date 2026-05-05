@@ -109,15 +109,26 @@ case "$ACTION" in
 
     echo "==> Provisioning sandbox network: ${SANDBOX_NET}, port: ${API_PORT}"
     docker network create "${SANDBOX_NET}" 2>/dev/null || true
+    # endpoints 用容器视角（chatops 容器跑 e2e Claude 子进程，通过 chatops_default 网络
+    # + sandbox 容器名访问，端口是 sandbox 内部 listen 的 3000）。host 视角的 localhost:${API_PORT}
+    # 也保留为 host_web_base_url 供本机直连。
+    SANDBOX_CONTAINER="chatops-e2e-${API_PORT}"
     cat > "${OUT_HANDLE}" <<EOF
 {
   "envId": "test-iter-${RUN_ID}",
   "kind": "docker-compose-local",
-  "endpoints": { "api": "http://localhost:${API_PORT}", "app_db_dsn": "${APP_DB_DSN}" },
+  "endpoints": {
+    "web_base_url": "http://${SANDBOX_CONTAINER}:3000",
+    "api_base_url": "http://${SANDBOX_CONTAINER}:3000",
+    "host_web_base_url": "http://localhost:${API_PORT}",
+    "api": "http://${SANDBOX_CONTAINER}:3000",
+    "app_db_dsn": "${APP_DB_DSN}"
+  },
   "modules": [],
   "internalRefs": {
     "network": "${SANDBOX_NET}",
     "apiPort": ${API_PORT},
+    "containerName": "${SANDBOX_CONTAINER}",
     "runId": "${RUN_ID}",
     "branch": "${BRANCH}",
     "sandboxDbName": "${SANDBOX_DB_NAME}",

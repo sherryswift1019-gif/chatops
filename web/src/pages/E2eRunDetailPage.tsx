@@ -267,6 +267,18 @@ function ScenarioTimeline({
   )
 }
 
+function isImageArtifact(a: EvidenceArtifact): boolean {
+  if (a.kind === 'screenshot') return true
+  if (a.mimeType?.startsWith('image/')) return true
+  return /\.(png|jpe?g|gif|webp|svg)$/i.test(a.path)
+}
+
+function isTextArtifact(a: EvidenceArtifact): boolean {
+  if (a.kind === 'log' || a.kind === 'sql_result' || a.kind === 'dom_snapshot' || a.kind === 'har') return true
+  if (a.mimeType?.startsWith('text/') || a.mimeType === 'application/json') return true
+  return /\.(txt|log|json|xml|ya?ml|md|html?|css|js|ts|sh|csv|tsv)$/i.test(a.path)
+}
+
 function ArtifactViewer({
   artifact,
   evidenceDirUri,
@@ -277,10 +289,12 @@ function ArtifactViewer({
   const [textContent, setTextContent] = useState<string | null>(null)
   const [textLoading, setTextLoading] = useState(false)
   const [tooLarge, setTooLarge] = useState(false)
-  const src = `/admin${evidenceDirUri}/artifacts/${artifact.path}`
+  const src = `${evidenceDirUri}/${artifact.path}`
+  const isImage = isImageArtifact(artifact)
+  const isText = isTextArtifact(artifact)
 
   useEffect(() => {
-    if (!artifact.mimeType.startsWith('text/') && artifact.mimeType !== 'application/json') return
+    if (!isText) return
     setTextLoading(true)
     fetch(src)
       .then(async r => {
@@ -296,22 +310,41 @@ function ArtifactViewer({
       .then(t => { if (t != null) setTextContent(t) })
       .catch(() => {})
       .finally(() => setTextLoading(false))
-  }, [src, artifact.mimeType])
+  }, [src, isText])
 
-  if (artifact.mimeType.startsWith('image/')) {
+  const header = (
+    <Space size={4} style={{ width: '100%' }} wrap>
+      <Text code style={{ fontSize: 11 }}>{artifact.path}</Text>
+      {artifact.kind && <Tag>{artifact.kind}</Tag>}
+      {artifact.size_bytes != null && (
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          {artifact.size_bytes < 1024 ? `${artifact.size_bytes}B`
+            : artifact.size_bytes < 1024 * 1024 ? `${(artifact.size_bytes / 1024).toFixed(1)}KB`
+            : `${(artifact.size_bytes / 1024 / 1024).toFixed(2)}MB`}
+        </Text>
+      )}
+    </Space>
+  )
+
+  if (isImage) {
     return (
       <div style={{ marginBottom: 8 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>{artifact.description}</Text>
-        <br />
-        <Image src={src} style={{ maxWidth: '100%', maxHeight: 320 }} />
+        {header}
+        {artifact.description && (
+          <div><Text type="secondary" style={{ fontSize: 12 }}>{artifact.description}</Text></div>
+        )}
+        <Image src={src} style={{ maxWidth: '100%', maxHeight: 320, marginTop: 4 }} />
       </div>
     )
   }
 
-  if (artifact.mimeType.startsWith('text/') || artifact.mimeType === 'application/json') {
+  if (isText) {
     return (
       <div style={{ marginBottom: 8 }}>
-        <Text type="secondary" style={{ fontSize: 12 }}>{artifact.description}</Text>
+        {header}
+        {artifact.description && (
+          <div><Text type="secondary" style={{ fontSize: 12 }}>{artifact.description}</Text></div>
+        )}
         {textLoading && <Spin size="small" />}
         {tooLarge && (
           <div>
@@ -328,20 +361,22 @@ function ArtifactViewer({
               fontSize: 11,
               maxHeight: 240,
               overflow: 'auto',
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
+              marginTop: 4,
             }}
-          >
-            {textContent}
-          </pre>
+          >{textContent}</pre>
         )}
       </div>
     )
   }
 
+  // 未知 kind / 二进制：仅给下载链接
   return (
     <div style={{ marginBottom: 8 }}>
-      <Link href={src} target="_blank">{artifact.description || artifact.path}</Link>
+      {header}
+      {artifact.description && (
+        <div><Text type="secondary" style={{ fontSize: 12 }}>{artifact.description}</Text></div>
+      )}
+      <Link href={src} target="_blank">点此下载</Link>
     </div>
   )
 }
@@ -406,6 +441,29 @@ function EvidenceDrawer({
     >
       {manifest && (
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          {manifest.result && (
+            <Space>
+              <Text type="secondary" style={{ fontSize: 12 }}>Result</Text>
+              <Tag color={
+                manifest.result === 'pass' ? 'success'
+                : manifest.result === 'fail' || manifest.result === 'error' ? 'error'
+                : manifest.result === 'timeout' ? 'warning' : 'default'
+              }>{manifest.result}</Tag>
+              {manifest.durationMs != null && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  · {(manifest.durationMs / 1000).toFixed(1)}s
+                </Text>
+              )}
+            </Space>
+          )}
+          {manifest.errorMessage && (
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>Error</Text>
+              <Paragraph style={{ marginTop: 4, color: '#cf1322', whiteSpace: 'pre-wrap' }}>
+                {manifest.errorMessage}
+              </Paragraph>
+            </div>
+          )}
           {manifest.summary && (
             <div>
               <Text type="secondary" style={{ fontSize: 12 }}>Summary</Text>
@@ -418,7 +476,31 @@ function EvidenceDrawer({
               <Paragraph style={{ marginTop: 4 }}>{manifest.contextHint}</Paragraph>
             </div>
           )}
-          {manifest.artifacts.length > 0 && (
+          {manifest.acceptanceResults && manifest.acceptanceResults.length > 0 && (
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Acceptance Results（{manifest.acceptanceResults.length} 项）
+              </Text>
+              <div style={{ marginTop: 4 }}>
+                {manifest.acceptanceResults.map((ar, i) => (
+                  <div key={i} style={{ marginBottom: 6 }}>
+                    <Space size={4}>
+                      <Tag color={
+                        ar.result === 'pass' ? 'success'
+                        : ar.result === 'fail' || ar.result === 'error' ? 'error'
+                        : 'default'
+                      }>{ar.result}</Tag>
+                      <Text code style={{ fontSize: 11 }}>{ar.kind}#{ar.index}</Text>
+                    </Space>
+                    {ar.reason && (
+                      <div><Text type="secondary" style={{ fontSize: 11 }}>{ar.reason}</Text></div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {manifest.artifacts && manifest.artifacts.length > 0 && (
             <div>
               <Text type="secondary" style={{ fontSize: 12 }}>Artifacts（{manifest.artifacts.length} 个）</Text>
               <div style={{ marginTop: 8 }}>
@@ -427,12 +509,46 @@ function EvidenceDrawer({
                     <ArtifactViewer key={i} artifact={a} evidenceDirUri={evidenceDirUri} />
                   ) : (
                     <div key={i}>
-                      <Text code>{a.path}</Text> — <Text type="secondary">{a.description}</Text>
+                      <Text code>{a.path}</Text>
+                      {a.description && <> — <Text type="secondary">{a.description}</Text></>}
                     </div>
                   )
                 )}
               </div>
             </div>
+          )}
+          {manifest.claudeTrace && manifest.claudeTrace.length > 0 && (
+            <Collapse
+              size="small"
+              ghost
+              items={[{
+                key: 'trace',
+                label: <Text type="secondary" style={{ fontSize: 12 }}>Claude Trace（{manifest.claudeTrace.length} 步）</Text>,
+                children: (
+                  <div>
+                    {manifest.claudeTrace.map((t, i) => (
+                      <div key={i} style={{ marginBottom: 6, paddingBottom: 6, borderBottom: '1px solid #f0f0f0' }}>
+                        <Space size={4} wrap>
+                          <Tag color={
+                            t.verdict === 'ok' ? 'success'
+                            : t.verdict === 'warn' ? 'warning' : 'error'
+                          }>{t.verdict}</Tag>
+                          <Text style={{ fontSize: 11 }}>#{t.step}</Text>
+                          {t.tool && <Text code style={{ fontSize: 11 }}>{t.tool}</Text>}
+                        </Space>
+                        <div style={{ fontSize: 12, marginTop: 2 }}>{t.intent}</div>
+                        {t.args_summary && (
+                          <div><Text type="secondary" style={{ fontSize: 11 }}>{t.args_summary}</Text></div>
+                        )}
+                        {t.note && (
+                          <div><Text type="secondary" style={{ fontSize: 11, fontStyle: 'italic' }}>{t.note}</Text></div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ),
+              }]}
+            />
           )}
           {manifest.aiDiagnosis && (
             <AiDiagnosisSection diagnosis={manifest.aiDiagnosis} />

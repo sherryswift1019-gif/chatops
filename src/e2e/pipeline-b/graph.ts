@@ -104,7 +104,9 @@ export function buildPipelineBGraph() {
   g.addEdge('redeploy', 'healthcheck')
   g.addEdge('healthcheck', 'run_scenario')
 
-  g.addEdge('mark_unfixable', 'main_switch')
+  // 任何 scenario 进入 unfixable，整个 run 视为 failed（fail-fast）：
+  // 不再回 main_switch，避免后续节点把 status 写成 'passed'。后续 scenario 不再尝试。
+  g.addEdge('mark_unfixable', 'finalize_failed')
 
   g.addEdge('create_summary_mr', 'teardown_sandbox')
   g.addEdge('finalize_failed', 'teardown_sandbox')

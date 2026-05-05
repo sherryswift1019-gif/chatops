@@ -350,8 +350,8 @@ describe('Pipeline B graph routing', () => {
     })
 
     expect(markUnfixableNode).toHaveBeenCalledTimes(1)
-    expect(createSummaryMrNode).toHaveBeenCalledTimes(1)
-    expect(finalizeFailedNode).not.toHaveBeenCalled()
+    expect(finalizeFailedNode).toHaveBeenCalledTimes(1)
+    expect(createSummaryMrNode).not.toHaveBeenCalled()
     expect(teardownSandboxNode).toHaveBeenCalledTimes(1)
   })
 

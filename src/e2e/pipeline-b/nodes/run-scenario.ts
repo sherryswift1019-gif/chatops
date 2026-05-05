@@ -66,19 +66,30 @@ export async function runScenarioNode(state: PipelineBStateType): Promise<Partia
     console.warn(`[PipelineB:runScenario] runE2eScenario 失败: ${result.errorMessage}`)
   }
 
-  // persist 到永久目录（pass / fail 都保留 evidence）
-  const { evidenceDirUri } = await persistEvidenceDir({
-    tempDir: evidenceTempDir,
-    runId,
-    scenarioId: currentScenario.id,
-    attemptNumber,
-  })
+  // persist 到永久目录（pass / fail 都保留 evidence）。
+  // persist 失败不让整个 graph crash —— 比如 evidence root 路径不可写时，
+  // scenario run 仍应正确终结（result='error' / 'fail' 等），不传染上层。
+  let evidenceDirUri: string | null = null
+  try {
+    const persisted = await persistEvidenceDir({
+      tempDir: evidenceTempDir,
+      runId,
+      scenarioId: currentScenario.id,
+      attemptNumber,
+    })
+    evidenceDirUri = persisted.evidenceDirUri
+  } catch (err) {
+    console.warn(
+      `[PipelineB:runScenario] persistEvidenceDir 失败 runId=${runId} scenario=${currentScenario.id} attempt=${attemptNumber}:`,
+      err,
+    )
+  }
 
   // manifest 直写 e2e_scenario_runs.evidence_manifest（pass/fail 路径都写）
   const manifestForDb = result.manifest as unknown as Record<string, unknown> | undefined
   await finishScenarioRun(scenarioRunRecord.id, scenarioResult, {
     durationMs: result.manifest?.durationMs,
-    evidenceDirUri,
+    evidenceDirUri: evidenceDirUri ?? undefined,
     evidenceManifest: manifestForDb,
   })
 

@@ -36,6 +36,7 @@ const { createScenarioRun, finishScenarioRun, getLatestAttemptNumber } = await i
 const { updateE2eRunStatus } = await import('../../db/repositories/e2e-runs.js')
 const { runE2eScenario } = await import('../../agent/e2e-scenario/runner.js')
 const { notifyScenarioFailed } = await import('../../e2e/pipeline-b/im-notifier.js')
+const { persistEvidenceDir } = await import('../../e2e/pipeline-b/evidence/storage.js')
 
 const PLAYBOOK: Playbook = {
   specPath: 'docs/test-playbooks/login.playbook.yaml',
@@ -223,5 +224,27 @@ describe('runScenarioNode (playbook-driven)', () => {
     })
     await runScenarioNode(makeState())
     expect(vi.mocked(updateE2eRunStatus)).toHaveBeenCalledWith(1n, 'running')
+  })
+
+  it('persistEvidenceDir 抛错时不传染 graph，scenarioRun 仍 finishScenarioRun（无 evidenceDirUri）', async () => {
+    vi.mocked(persistEvidenceDir).mockRejectedValueOnce(
+      Object.assign(new Error("EACCES: permission denied, mkdir '/var/chatops'"), { code: 'EACCES' }),
+    )
+    vi.mocked(runE2eScenario).mockResolvedValue({
+      manifest: null,
+      rawOutput: '',
+      errorMessage: 'SKILL.md 未找到: /home/x/.claude/skills/e2e-scenario/SKILL.md',
+    })
+
+    // 关键：runScenarioNode 不应该 reject
+    const out = await runScenarioNode(makeState())
+
+    // scenarioRun 仍正确终结
+    expect(out.lastScenarioResult).toBe('error')
+    expect(vi.mocked(finishScenarioRun)).toHaveBeenCalledWith(
+      100n,
+      'error',
+      expect.objectContaining({ evidenceDirUri: undefined }),
+    )
   })
 })

@@ -258,4 +258,24 @@ describe('parseManifestJson', () => {
     const r = validateManifest({ ...MIN_OK, startedAt: '2026-05-02' })
     expect(r.ok).toBe(false)
   })
+
+  it('LLM 写 null 的 optional 字段被 schema 接受（acceptanceResults.reason / errorMessage / claudeTrace.note）', () => {
+    const withNullables = {
+      ...MIN_OK,
+      result: 'pass',
+      errorMessage: null,
+      claudeTrace: [
+        { step: 0, intent: '打开页面', tool: null, args_summary: null, verdict: 'ok', note: null, started_at: null, duration_ms: null },
+      ],
+      acceptanceResults: [
+        { kind: 'url_match', index: 0, result: 'pass', reason: null, expected: null, actual: null, duration_ms: null },
+      ],
+      artifacts: [
+        { path: 'x.png', kind: 'screenshot', description: null, size_bytes: null },
+      ],
+      meta: null,
+    }
+    const r = validateManifest(withNullables)
+    expect(r.ok).toBe(true)
+  })
 })

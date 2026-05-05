@@ -6,8 +6,9 @@
 //
 // 不修产品代码、不 git commit —— 那是 e2e-fix runner 的事，本 runner 只跑+采证。
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { homedir } from 'os'
+import { fileURLToPath } from 'url'
 import { stringify as yamlStringify } from 'yaml'
 import { ClaudeRunner, type McpServerSpec } from '../claude-runner.js'
 import type { TaskContext } from '../tools/types.js'
@@ -16,7 +17,17 @@ import type { Playbook } from '../../e2e/pipeline-b/playbook/types.js'
 import type { Manifest } from '../../e2e/pipeline-b/playbook/manifest.js'
 import type { SandboxHandle } from '../../e2e/pipeline-b/types.js'
 
-const SKILL_PATH = join(homedir(), '.claude', 'skills', 'e2e-scenario', 'SKILL.md')
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// 仓库 fixture（产品代码的一部分，docker self-contained）优先；
+// 找不到回落 host 用户 ~/.claude/skills（开发者本地 host 跑场景）。
+const REPO_SKILL_PATH = join(__dirname, 'skill', 'SKILL.md')
+const HOST_SKILL_PATH = join(homedir(), '.claude', 'skills', 'e2e-scenario', 'SKILL.md')
+
+export function resolveSkillPath(): string {
+  if (existsSync(REPO_SKILL_PATH)) return REPO_SKILL_PATH
+  return HOST_SKILL_PATH
+}
 
 export interface RunScenarioInput {
   playbook: Playbook
@@ -40,8 +51,10 @@ const SCENARIO_CONTEXT: TaskContext = {
   initiatorRole: null,
 }
 
+// Playwright MCP — base image 装了 playwright managed chromium 而非 Google Chrome；
+// 显式 --browser=chromium 避免 MCP 默认走 channel=chrome 找 /opt/google/chrome/chrome。
 const PLAYWRIGHT_MCP: Record<string, McpServerSpec> = {
-  playwright: { command: 'npx', args: ['-y', '@playwright/mcp@latest'] },
+  playwright: { command: 'npx', args: ['-y', '@playwright/mcp@latest', '--browser=chromium'] },
 }
 
 // 内置工具全开（Bash/Read/Write/Edit/Glob/Grep），仅禁联网 + 子 Agent
@@ -81,18 +94,19 @@ export async function runE2eScenario(input: RunScenarioInput): Promise<RunScenar
       return {
         manifest: null,
         rawOutput: '',
-        errorMessage: `SKILL.md 未找到: ${SKILL_PATH}`,
+        errorMessage: `SKILL.md 未找到: ${resolveSkillPath()}`,
       }
     }
     systemPrompt = _skillOverride
   } else {
+    const skillPath = resolveSkillPath()
     try {
-      systemPrompt = readFileSync(SKILL_PATH, 'utf8')
+      systemPrompt = readFileSync(skillPath, 'utf8')
     } catch {
       return {
         manifest: null,
         rawOutput: '',
-        errorMessage: `SKILL.md 未找到: ${SKILL_PATH}`,
+        errorMessage: `SKILL.md 未找到: ${skillPath}`,
       }
     }
   }

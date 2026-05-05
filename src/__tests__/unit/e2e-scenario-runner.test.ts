@@ -11,11 +11,19 @@
 // SKILL.md 也是注入桩 (__setSkillForTesting)，不依赖 ~/.claude。
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'fs'
+
+// Mock fs.existsSync only — keep other fs functions working for the rest of the test file.
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return { ...actual, existsSync: vi.fn(actual.existsSync) }
+})
+
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   runE2eScenario,
+  resolveSkillPath,
   __setRunnerForTesting,
   __setSkillForTesting,
 } from '../../agent/e2e-scenario/runner.js'
@@ -326,5 +334,28 @@ describe('runE2eScenario', () => {
     })
     expect(r.manifest).toBeNull()
     expect(r.errorMessage).toMatch(/未写出/)
+  })
+})
+
+describe('resolveSkillPath', () => {
+  beforeEach(() => {
+    vi.mocked(existsSync).mockReset()
+  })
+
+  afterEach(() => {
+    vi.mocked(existsSync).mockReset()
+  })
+
+  it('仓库 fixture 存在 → 返回仓库内路径（self-contained docker 部署）', () => {
+    vi.mocked(existsSync).mockReturnValue(true)
+    const path = resolveSkillPath()
+    expect(path).toMatch(/agent\/e2e-scenario\/skill\/SKILL\.md$/)
+    expect(path).not.toContain('.claude/skills')
+  })
+
+  it('仓库 fixture 缺失 → 回落到 host ~/.claude/skills/e2e-scenario/SKILL.md', () => {
+    vi.mocked(existsSync).mockReturnValue(false)
+    const path = resolveSkillPath()
+    expect(path).toMatch(/\.claude\/skills\/e2e-scenario\/SKILL\.md$/)
   })
 })

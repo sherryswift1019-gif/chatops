@@ -1,10 +1,21 @@
-import { readFileSync } from 'fs'
-import { join } from 'path'
+import { readFileSync, existsSync } from 'fs'
+import { join, dirname } from 'path'
 import { homedir } from 'os'
+import { fileURLToPath } from 'url'
 import { ClaudeRunner } from '../claude-runner.js'
 import type { TaskContext } from '../tools/types.js'
 
-const SKILL_PATH = join(homedir(), '.claude', 'skills', 'e2e-fix', 'SKILL.md')
+const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// 仓库 fixture（产品代码的一部分，docker self-contained）优先；
+// 找不到回落 host 用户 ~/.claude/skills（开发者本地 host 跑）。
+const REPO_SKILL_PATH = join(__dirname, 'skill', 'SKILL.md')
+const HOST_SKILL_PATH = join(homedir(), '.claude', 'skills', 'e2e-fix', 'SKILL.md')
+
+export function resolveSkillPath(): string {
+  if (existsSync(REPO_SKILL_PATH)) return REPO_SKILL_PATH
+  return HOST_SKILL_PATH
+}
 
 export interface AiDiagnosis {
   verdict: 'product_bug' | 'test_flakiness' | 'infra_issue' | 'uncertain'
@@ -77,7 +88,7 @@ export async function runE2eFix(input: E2eFixInput): Promise<AiDiagnosis> {
   ].join('\n')
 
   try {
-    const systemPrompt = readFileSync(SKILL_PATH, 'utf8')
+    const systemPrompt = readFileSync(resolveSkillPath(), 'utf8')
     const output = await getRunner().executeCapabilityDirect({
       prompt: userMessage,
       systemPrompt,
