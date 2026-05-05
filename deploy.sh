@@ -81,15 +81,50 @@ case "$ACTION" in
     RUN_ID="${E2E_RUN_ID:-$(date +%s)}"
     SANDBOX_NET="chatops-e2e-sandbox-${RUN_ID}"
     API_PORT=$(node -e "const net=require('net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})")
+
+    # 沙盒 DB：自动建一个名为 e2e-${RUN_ID} 的库（满足 sandbox-sentinel 的 e2e- 前缀），
+    # 跑 chatops migration 把 schema 装进去。host 上没 psql，借 chatops-postgres-1
+    # 容器跑 psql。host migration 用 host:5432 端口（chatops-postgres-1 publish 的）。
+    PG_CONTAINER="${PG_CONTAINER:-chatops-postgres-1}"
+    PG_USER="${PG_USER:-chatops}"
+    PG_PASSWORD="${PG_PASSWORD:-chatops}"
+    PG_HOST_PORT="${PG_HOST_PORT:-5432}"
+    SANDBOX_DB_NAME="${E2E_SANDBOX_DB_NAME:-e2e-${RUN_ID}}"
+    SANDBOX_DB_AUTO_CREATED=false
+    if [ -z "${E2E_SANDBOX_DB_URL:-}" ]; then
+      echo "==> Creating sandbox DB ${SANDBOX_DB_NAME} via ${PG_CONTAINER}..."
+      docker exec -e PGPASSWORD="${PG_PASSWORD}" "${PG_CONTAINER}" \
+        psql -U "${PG_USER}" -d postgres -v ON_ERROR_STOP=1 \
+        -c "CREATE DATABASE \"${SANDBOX_DB_NAME}\""
+      SANDBOX_DB_AUTO_CREATED=true
+      echo "==> Running chatops migration into sandbox DB..."
+      DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_HOST_PORT}/${SANDBOX_DB_NAME}" \
+        pnpm --silent migrate >&2
+    else
+      echo "==> E2E_SANDBOX_DB_URL set, caller is responsible for sandbox DB lifecycle"
+    fi
+
+    # 容器视角的 DSN：host=postgres (docker DNS 别名), db=${SANDBOX_DB_NAME}。
+    APP_DB_DSN="postgres://${PG_USER}:${PG_PASSWORD}@postgres:${PG_HOST_PORT}/${SANDBOX_DB_NAME}"
+
     echo "==> Provisioning sandbox network: ${SANDBOX_NET}, port: ${API_PORT}"
     docker network create "${SANDBOX_NET}" 2>/dev/null || true
     cat > "${OUT_HANDLE}" <<EOF
 {
   "envId": "test-iter-${RUN_ID}",
   "kind": "docker-compose-local",
-  "endpoints": { "api": "http://localhost:${API_PORT}" },
+  "endpoints": { "api": "http://localhost:${API_PORT}", "app_db_dsn": "${APP_DB_DSN}" },
   "modules": [],
-  "internalRefs": { "network": "${SANDBOX_NET}", "apiPort": ${API_PORT}, "runId": "${RUN_ID}", "branch": "${BRANCH}" }
+  "internalRefs": {
+    "network": "${SANDBOX_NET}",
+    "apiPort": ${API_PORT},
+    "runId": "${RUN_ID}",
+    "branch": "${BRANCH}",
+    "sandboxDbName": "${SANDBOX_DB_NAME}",
+    "sandboxDbAutoCreated": ${SANDBOX_DB_AUTO_CREATED},
+    "pgContainer": "${PG_CONTAINER}",
+    "pgUser": "${PG_USER}"
+  }
 }
 EOF
     echo "==> Sandbox provisioned. Handle: ${OUT_HANDLE}"
@@ -101,9 +136,27 @@ EOF
       echo "teardown: --handle file not found: $HANDLE" >&2; exit 1
     fi
     SANDBOX_NET=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.network)" "$HANDLE")
+    SANDBOX_DB_NAME=$(node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs;process.stdout.write(r.sandboxDbName||'')" "$HANDLE")
+    SANDBOX_DB_AUTO_CREATED=$(node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs;process.stdout.write(String(!!r.sandboxDbAutoCreated))" "$HANDLE")
+    PG_CONTAINER=$(node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs;process.stdout.write(r.pgContainer||'chatops-postgres-1')" "$HANDLE")
+    PG_USER=$(node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs;process.stdout.write(r.pgUser||'chatops')" "$HANDLE")
+
     echo "==> Tearing down sandbox network: ${SANDBOX_NET}"
     docker ps -a --filter "network=${SANDBOX_NET}" --format "{{.ID}}" | xargs -r docker rm -f
     docker network rm "${SANDBOX_NET}" 2>/dev/null || true
+
+    if [ "$SANDBOX_DB_AUTO_CREATED" = "true" ] && [ -n "$SANDBOX_DB_NAME" ]; then
+      PG_PASSWORD="${PG_PASSWORD:-chatops}"
+      echo "==> Dropping sandbox DB ${SANDBOX_DB_NAME}..."
+      # 强断掉残留连接（容器已 rm 但 PG 端可能慢半拍释放）再 drop
+      docker exec -e PGPASSWORD="${PG_PASSWORD}" "${PG_CONTAINER}" \
+        psql -U "${PG_USER}" -d postgres \
+        -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${SANDBOX_DB_NAME}'" >/dev/null 2>&1 || true
+      docker exec -e PGPASSWORD="${PG_PASSWORD}" "${PG_CONTAINER}" \
+        psql -U "${PG_USER}" -d postgres \
+        -c "DROP DATABASE IF EXISTS \"${SANDBOX_DB_NAME}\"" || \
+        echo "==> WARN: dropdb 失败，留下孤儿库 ${SANDBOX_DB_NAME}"
+    fi
     echo "==> Teardown complete."
     ;;
 
@@ -132,15 +185,18 @@ EOF
     fi
     API_PORT=$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.apiPort))" "$HANDLE")
     SANDBOX_NET=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.network)" "$HANDLE")
+    HANDLE_DB_DSN=$(node -e "const e=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).endpoints||{};process.stdout.write(e.app_db_dsn||'')" "$HANDLE")
     CONTAINER_NAME="chatops-e2e-${API_PORT}"
 
-    # host 端 DATABASE_URL 通常指 localhost:5432，但容器内 localhost 是容器自己。
-    # deploy 后会把容器接到 chatops_default 网络（见下面 docker network connect），
-    # 该网络上 chatops-postgres-1 的 docker DNS 别名是 'postgres'。
-    # 因此把 DSN 里 localhost/127.0.0.1 换成 postgres。
-    # E2E_SANDBOX_DB_URL 显式指定时优先用，但仍走同一替换（防容易踩坑）。
-    SANDBOX_DB_URL="${E2E_SANDBOX_DB_URL:-$DATABASE_URL}"
-    SANDBOX_DB_URL=$(echo "$SANDBOX_DB_URL" | sed -E 's#@(localhost|127\.0\.0\.1)([:/])#@postgres\2#g')
+    # 优先用 handle.endpoints.app_db_dsn（provision 已建好的 sandbox DB，容器视角）。
+    # 否则 fallback 到 E2E_SANDBOX_DB_URL 或 host DATABASE_URL，并把 host=localhost/127.0.0.1
+    # 替换成 chatops_default 网络上的 docker DNS 别名 'postgres'（兼容老 caller）。
+    if [ -n "$HANDLE_DB_DSN" ]; then
+      SANDBOX_DB_URL="$HANDLE_DB_DSN"
+    else
+      SANDBOX_DB_URL="${E2E_SANDBOX_DB_URL:-$DATABASE_URL}"
+      SANDBOX_DB_URL=$(echo "$SANDBOX_DB_URL" | sed -E 's#@(localhost|127\.0\.0\.1)([:/])#@postgres\2#g')
+    fi
 
     echo "==> Deploying into sandbox (port ${API_PORT}, net ${SANDBOX_NET})..."
     docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
