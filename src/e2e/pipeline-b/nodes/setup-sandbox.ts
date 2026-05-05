@@ -24,9 +24,15 @@ export async function setupSandboxNode(state: PipelineBStateType): Promise<Parti
     {
       timeout: 600_000,
       cwd: workDir,
-      // chatops 容器内调 deploy.sh 时，PG host 不能是 localhost（容器内没 PG）；
-      // 'postgres' 是 chatops_default 网络上的 docker DNS 别名，指向 chatops-postgres-1。
-      env: { PG_HOST: 'postgres' },
+      env: {
+        // chatops 容器内调 deploy.sh 时，PG host 不能是 localhost（容器内没 PG）；
+        // 'postgres' 是 chatops_default 网络上的 docker DNS 别名，指向 chatops-postgres-1。
+        PG_HOST: 'postgres',
+        // 清空 E2E_SANDBOX_DB_URL：chatops 容器 env 默认含此变量（指向 e2e-chatops 库
+        // 给主进程自己用），但 deploy.sh provision 见到它就跳过 CREATE DATABASE + migrate。
+        // 显式置空让 provision 真正建 e2e-${RUN_ID} 动态 DB。
+        E2E_SANDBOX_DB_URL: '',
+      },
     },
   )
 
