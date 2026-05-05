@@ -111,6 +111,17 @@ case "$ACTION" in
         --entrypoint="" \
         chatops:latest \
         node --import tsx/esm src/db/migrate.ts >&2
+
+      # 把 chatops 主 DB 的 system_config 拷到 sandbox DB —— sandbox 启动后需要 gitlab/claude
+      # 等配置才能跑 pipeline A/B（GitLab clone/MR、Claude API 调用）。
+      # fresh sandbox DB schema 已 migrate 完，只拷 data；用 --on-conflict-do-nothing 防已有
+      # 同 key（理论上 fresh DB 没冲突，加 ON CONFLICT 是防御）。
+      echo "==> Copying system_config from chatops main DB to sandbox DB..."
+      docker exec -e PGPASSWORD="${PG_PASSWORD}" "${PG_CONTAINER}" \
+        sh -c "pg_dump -U ${PG_USER} -d chatops -t system_config --data-only --column-inserts | \
+               sed 's/^INSERT INTO public.system_config/INSERT INTO public.system_config/g; s/);$/) ON CONFLICT (key) DO NOTHING;/g' | \
+               psql -U ${PG_USER} -d \"${SANDBOX_DB_NAME}\"" >&2 || \
+        echo "==> WARN: system_config copy failed, sandbox may lack gitlab/claude config" >&2
     else
       echo "==> E2E_SANDBOX_DB_URL set, caller is responsible for sandbox DB lifecycle"
     fi

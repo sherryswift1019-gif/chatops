@@ -63,18 +63,24 @@ scenarios:
         expect_status: 202
         expect_body_contains: 'generation started'
 
-      # 终态 4：generate 触发后 status 已离开 'pending'。
-      # generating / pr_open / committed / baseline_failed / blocked_on_baseline_bug 都算"已触发"。
-      # 只要不是 'pending' / 'skipped' 就证明 pipeline A 接管了这条 spec。
+      # 终态 4：generate 触发后 status 进入 pipeline A "已接管" 状态（不能停留在
+      # 'pending' 或快速回到 'baseline_failed'）。允许：
+      #   - 'generating'：pipeline A 仍在跑（PoC 烟测命中此态最常见）
+      #   - 'pr_open' / 'committed'：pipeline A 真跑完成功（依赖 sandbox 有 GitLab token）
+      # 拒绝：
+      #   - 'pending'：generate API 没真触发（按钮链路坏）
+      #   - 'baseline_failed' / 'blocked_on_baseline_bug'：pipeline A 立即放弃了
+      #     （sandbox 配置缺 GitLab token / claude token / 无法 push 等环境问题）
+      #   - 'skipped'：用户手动跳过，跟本场景无关
       - kind: db_query
         connection: app_db_dsn
         sql: |
-          SELECT generation_status NOT IN ('pending', 'skipped') AS triggered
+          SELECT generation_status IN ('generating', 'pr_open', 'committed') AS truly_running
           FROM e2e_specs
           WHERE spec_path='docs/test-specs/poc-smoke.md' AND target_project_id='chatops'
         expect:
           field:
-            col: triggered
+            col: truly_running
             equals: true
     on_fail_hints:
       - 步骤 1 INSERT 失败：连 app_db_dsn 用错；endpoints.app_db_dsn 是
@@ -87,5 +93,7 @@ scenarios:
       - 步骤 6 401：admin API 检查 session；确保 cookie jar 同一文件透传
       - 步骤 7 status 仍 'pending'：runPipelineA 没真启动；看 chatops 容器日志
         [e2e-specs:generate] Pipeline A error；可能 fire-and-forget 之前就抛错被 catch
-      - 终态 4 triggered=false：pipeline A 启动后又被某 catch 路径强制 reset 回 pending；
-        看 e2e_specs 表的 SQL trigger / pipeline-a 的 status update 调用
+      - 终态 4 truly_running=false 且 generation_status='baseline_failed'：
+        sandbox 缺 system_config（gitlab/claude token）。检查 deploy.sh provision 的
+        "Copying system_config from chatops main DB to sandbox DB" 步骤是否真执行 +
+        chatops 主 DB system_config 表里是否有 gitlab/claude 两个 key
