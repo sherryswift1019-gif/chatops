@@ -267,6 +267,40 @@ describe('POST /e2e-runs', () => {
     }))
     await app.close()
   })
+
+  it('returns 429 when queued runs >= maxQueuedRuns (don\'t leave orphan pending row)', async () => {
+    // 预先建 2 个 running run（达到 maxQueuedRuns 上限 = 2）
+    await createE2eRun({
+      targetProjectId: 'chatops', triggerType: 'manual', triggerActor: null,
+      sourceBranch: 'main', iterationBranch: 'iter-1', scenarioFilter: null,
+    })
+    await createE2eRun({
+      targetProjectId: 'chatops', triggerType: 'manual', triggerActor: null,
+      sourceBranch: 'main', iterationBranch: 'iter-2', scenarioFilter: null,
+    })
+    await getPool().query(`UPDATE e2e_runs SET status='running' WHERE iteration_branch IN ('iter-1','iter-2')`)
+
+    const beforeCount = (await getPool().query<{ n: string }>(`SELECT COUNT(*)::text AS n FROM e2e_runs`)).rows[0].n
+
+    const app = await buildApp()
+    const r = await app.inject({
+      method: 'POST',
+      url: '/e2e-runs',
+      payload: { targetProjectId: 'chatops' },
+    })
+
+    expect(r.statusCode).toBe(429)
+    const body = r.json()
+    expect(body.error).toBe('too_many_queued_runs')
+    expect(body.queued).toBe(2)
+    expect(body.limit).toBe(2)
+
+    // 关键：429 时不应该 createE2eRun 留下孤儿 row
+    const afterCount = (await getPool().query<{ n: string }>(`SELECT COUNT(*)::text AS n FROM e2e_runs`)).rows[0].n
+    expect(afterCount).toBe(beforeCount)
+
+    await app.close()
+  })
 })
 
 describe('POST /e2e-runs/:runId/abort', () => {

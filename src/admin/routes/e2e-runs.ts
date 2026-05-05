@@ -4,12 +4,13 @@ import {
   getE2eRun,
   updateE2eRunStatus,
   listE2eRuns,
+  countQueuedE2eRuns,
 } from '../../db/repositories/e2e-runs.js'
 import { listScenarioRuns } from '../../db/repositories/e2e-scenario-runs.js'
 import { getSandboxByRunId } from '../../db/repositories/e2e-sandboxes.js'
 import { runPipelineB } from '../../e2e/pipeline-b/runner.js'
 import { loadScenariosFromGitlab } from '../../e2e/pipeline-b/playbook/load-from-gitlab.js'
-import { buildInitialGovernorState } from '../../e2e/pipeline-b/governor.js'
+import { buildInitialGovernorState, DEFAULT_GOVERNOR_LIMITS } from '../../e2e/pipeline-b/governor.js'
 import type { E2eRun } from '../../db/repositories/e2e-runs.js'
 import type { E2eScenarioRun } from '../../db/repositories/e2e-scenario-runs.js'
 import type { E2eSandbox } from '../../db/repositories/e2e-sandboxes.js'
@@ -98,6 +99,19 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
       return reply.status(400).send({ error: 'targetProjectId required' })
     }
 
+    // 预检 maxQueuedRuns：runPipelineB 内部也会查，但那时 createE2eRun 已写入 DB row，
+    // 失败后会留下 status='pending' 孤儿。提前在 admin POST 这一层挡住，
+    // 让 caller 收到明确 4xx 而不是 202 + 后台 silent reject。
+    const queuedCount = await countQueuedE2eRuns(targetProjectId)
+    if (queuedCount >= DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns) {
+      return reply.status(429).send({
+        error: 'too_many_queued_runs',
+        message: `当前已有 ${queuedCount} 个 run 在等待，请稍后再试或 abort 现有 run（上限 ${DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns}）`,
+        queued: queuedCount,
+        limit: DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns,
+      })
+    }
+
     // 先 createE2eRun 拿 runId 立即返回；pipeline 在后台跑，避免 HTTP request
     // 阻塞几十分钟。错误由 runPipelineB 内部的 try/catch 写 e2e_runs.status='aborted'。
     // governorState 含 limits + 零计数器，详情页一开始就能展示静态 limits；runner 跑完
@@ -123,6 +137,13 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
       existingRunId: created.id,
     }).catch((err) => {
       console.error(`[admin/e2e-runs] runPipelineB fire-and-forget failed runId=${created.id}:`, err)
+      // 兜底：runPipelineB 没机会自己写 status='aborted' 时（极少数 init 阶段抛错），
+      // 别让 createE2eRun 写的 row 留 'pending' 孤儿。runner.ts 内部 catch 会处理多数情况，
+      // 这里是 last-resort 防御。
+      updateE2eRunStatus(created.id, 'aborted', {
+        abortReason: err instanceof Error ? err.message : String(err),
+        finishedAt: new Date(),
+      }).catch(() => undefined)
     })
 
     return reply.status(202).send({ runId: created.id.toString(), status: 'pending' })
