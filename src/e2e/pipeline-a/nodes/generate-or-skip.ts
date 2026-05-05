@@ -32,6 +32,11 @@ export async function generateOrSkipNode(state: PipelineAStateType): Promise<Par
   }
 
   const generated = await runE2eLlmGenerator(spec.specPath, spec.title)
+  // 诊断日志：LLM 输出长度 + 头 200 字符（避免日志爆炸）。
+  // 用于排查 LLM 不输出合法 YAML 的根因（空字符串 / 围栏 / 解释文本等）。
+  console.log(
+    `[PipelineA:generateOrSkip] LLM raw len=${generated.length}; head=${JSON.stringify(generated.slice(0, 200))}`,
+  )
   const updatedSpec = { ...spec, scriptPath: outScriptPath, generatedContent: generated }
   const updatedSpecs = [...state.specs]
   updatedSpecs[state.currentSpecIndex] = updatedSpec
