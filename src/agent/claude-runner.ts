@@ -35,6 +35,16 @@ export interface DockerExecOptions {
   user?: string
 }
 
+export interface McpServerSpec {
+  command: string
+  args: string[]
+  env?: Record<string, string>
+}
+
+const DEFAULT_DISALLOWED_TOOLS_DIRECT = [
+  'Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent',
+]
+
 export function buildDockerExecClaudeArgs(
   claudeArgs: string[],
   dockerExec: DockerExecOptions | undefined,
@@ -876,6 +886,19 @@ ${intentRules}
     maxTurns?: number
     timeoutMs?: number
     dockerExec?: DockerExecOptions
+    /**
+     * 覆盖默认 Claude 内置工具黑名单（默认见 DEFAULT_DISALLOWED_TOOLS_DIRECT）。
+     * 传入则替换默认值，不 merge。空数组 = 不禁任何内置工具。
+     * 注意：这里的字符串是 Claude CLI 的 tool 名（'Bash'/'Read' 等内置 +
+     * 'mcp__server__tool' 形式的 MCP 工具），跟 opts.tools（ChatOps 平台 MCP 工具）是两套概念。
+     */
+    disallowedTools?: string[]
+    /**
+     * 在内置 chatops-tools MCP server 之外额外注册的 MCP server。
+     * 例 host 跑 e2e-scenario 时挂 Playwright MCP：
+     *   { playwright: { command: 'npx', args: ['-y', '@playwright/mcp@latest'] } }
+     */
+    extraMcpServers?: Record<string, McpServerSpec>
   }): Promise<string> {
     const { prompt, systemPrompt, context, tools, cwd, sessionKey, freshSession, maxTurns, timeoutMs, dockerExec } = opts
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
@@ -924,8 +947,9 @@ ${intentRules}
             ...claudeEnv,
           },
         },
+        ...(opts.extraMcpServers ?? {}),
       },
-      disallowedTools: ['Bash', 'Read', 'Edit', 'Write', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'Agent'],
+      disallowedTools: opts.disallowedTools ?? DEFAULT_DISALLOWED_TOOLS_DIRECT,
       envVars: claudeEnv,
       maxTurns: maxTurns ?? 200,
     })
