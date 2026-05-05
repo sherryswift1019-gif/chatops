@@ -133,6 +133,15 @@ EOF
     API_PORT=$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.apiPort))" "$HANDLE")
     SANDBOX_NET=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.network)" "$HANDLE")
     CONTAINER_NAME="chatops-e2e-${API_PORT}"
+
+    # host 端 DATABASE_URL 通常指 localhost:5432，但容器内 localhost 是容器自己。
+    # deploy 后会把容器接到 chatops_default 网络（见下面 docker network connect），
+    # 该网络上 chatops-postgres-1 的 docker DNS 别名是 'postgres'。
+    # 因此把 DSN 里 localhost/127.0.0.1 换成 postgres。
+    # E2E_SANDBOX_DB_URL 显式指定时优先用，但仍走同一替换（防容易踩坑）。
+    SANDBOX_DB_URL="${E2E_SANDBOX_DB_URL:-$DATABASE_URL}"
+    SANDBOX_DB_URL=$(echo "$SANDBOX_DB_URL" | sed -E 's#@(localhost|127\.0\.0\.1)([:/])#@postgres\2#g')
+
     echo "==> Deploying into sandbox (port ${API_PORT}, net ${SANDBOX_NET})..."
     docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
     docker run -d \
@@ -141,7 +150,7 @@ EOF
       -p "${API_PORT}:3000" \
       -e E2E_SANDBOX_MODE=true \
       -e PORT=3000 \
-      -e DATABASE_URL="${E2E_SANDBOX_DB_URL:-$DATABASE_URL}" \
+      -e DATABASE_URL="${SANDBOX_DB_URL}" \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -v /srv/chatops/test-runs:/data/chatops/test-runs \
       chatops:latest
