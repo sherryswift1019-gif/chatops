@@ -1,0 +1,23 @@
+specPath: docs/test-specs/poc-smoke.md
+specTitle: PoC Smoke 测试（沙盒可达性烟测，不验业务）
+scenarios:
+  - id: poc.smoke
+    name: 沙盒部署后可达性烟测
+    tags: [poc, smoke]
+    setup:
+      hints:
+        - 沙盒已部署完毕，所有 endpoints 在 sandboxHandle 里给出
+    steps:
+      - 用 mcp__playwright__browser_navigate 打开 endpoints.web_base_url
+      - 用 mcp__playwright__browser_snapshot 拿页面 accessibility tree 验证 body 渲染
+      - 用 curl GET endpoints.web_base_url/health 验证 API 返回 200
+    acceptance:
+      - kind: dom_visible
+        selector: body
+        timeout_ms: 10000
+      - kind: api_response
+        request: GET /health
+        expect_status: 200
+    on_fail_hints:
+      - 若 navigate 超时，检查 web_base_url 是否从 host 可达（沙盒可能只暴露在 docker network）
+      - 若 /health 返回 5xx，看 docker logs <containerId> 找应用启动错误
