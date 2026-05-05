@@ -8,12 +8,17 @@ scenarios:
       hints:
         - 沙盒 fresh DB 没有 system_config.gitlab，无法走 syncSpecs 拉远端 docs/test-specs/*.md。
           本场景 setup 通过 SQL 直接 INSERT 一条 spec 模拟 sync 完成后的状态，专注测"生成"按钮链路。
-        - admin/admin 默认账号首次登录强制改密 flag，但仅 UI 层提示，admin API 不阻塞。
-          curl 直接用 admin/admin 登录拿 cookie 即可调任意 admin API。
+        - admin/admin 默认账号 must_change_password=TRUE，session-plugin 会对所有非
+          /auth/change-password 的 admin API 返回 403 "must_change_password"。本场景 setup
+          用 SQL 直接 UPDATE admin_users SET must_change_password=FALSE 绕开（首次改密流程
+          已由 admin.first-login-change-password scenario 单独覆盖，本场景专注 generate 按钮）。
         - generate API 是 fire-and-forget：返回 202 后 runPipelineA 在后台跑（host claude →
           GitLab branch → MR），新 sandbox 没 GitLab token → pipeline A 会立即 baseline_failed。
           本场景只验证"按钮 → API 接受 → status 离开 'pending'"，不等 pipeline A 真跑完。
     steps:
+      - 步骤 0：用 psql 连 endpoints.app_db_dsn 执行
+          UPDATE admin_users SET must_change_password = FALSE WHERE username='admin';
+        让 admin session 不被改密中间件拦截
       - 步骤 1：用 psql 连 endpoints.app_db_dsn 执行
           INSERT INTO e2e_specs (target_project_id, spec_path, title, content_hash)
           VALUES ('chatops', 'docs/test-specs/poc-smoke.md', 'PoC Smoke', 'fixture-hash-poc')
