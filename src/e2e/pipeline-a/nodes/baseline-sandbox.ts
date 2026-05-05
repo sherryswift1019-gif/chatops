@@ -1,46 +1,13 @@
-import { spawnSync, execSync } from 'child_process'
-import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs'
-import { join, dirname } from 'path'
-import { getE2eTargetProject, extractGitlabPath } from '../../../db/repositories/e2e-target-projects.js'
+import { spawnSync } from 'child_process'
+import { writeFileSync, readFileSync } from 'fs'
+import { join } from 'path'
+import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import { createSandbox, updateSandboxStatus } from '../../../db/repositories/e2e-sandboxes.js'
 import { updateE2eSpecStatus } from '../../../db/repositories/e2e-specs.js'
-import { resolveGitlabConfig } from '../../../config/gitlab.js'
+import { getWorkspacePaths, ensureWorkspaceCloned } from '../../workspace.js'
 import type { PipelineAStateType, BaselineSandboxHandle } from '../types.js'
 
-export function getWorkspacePaths(targetProjectId: string): { containerPath: string; hostPath: string } {
-  const testDataDir = process.env.TEST_DATA_DIR ?? '/data/chatops/test-runs'
-  const hostTestDataDir = process.env.HOST_TEST_DATA_DIR ?? '/srv/chatops/test-runs'
-  return {
-    containerPath: join(testDataDir, 'workspaces', targetProjectId),
-    hostPath: join(hostTestDataDir, 'workspaces', targetProjectId),
-  }
-}
-
-async function ensureWorkspaceCloned(
-  project: { id: string; gitlabRepo: string; defaultBranch: string },
-  branch: string,
-): Promise<void> {
-  const { containerPath } = getWorkspacePaths(project.id)
-  const cfg = await resolveGitlabConfig()
-  if (!cfg.url || !cfg.token) throw new Error('GitLab config missing (url or token)')
-
-  const repoPath = extractGitlabPath(project.gitlabRepo)
-  const base = new URL(cfg.url.replace(/\/$/, ''))
-  const authUrl = `${base.protocol}//oauth2:${cfg.token}@${base.host}/${repoPath}.git`
-
-  if (!existsSync(containerPath)) {
-    mkdirSync(dirname(containerPath), { recursive: true })
-    execSync(`git clone --branch ${branch} --depth 1 ${authUrl} ${containerPath}`, {
-      stdio: 'pipe',
-      timeout: 120_000,
-    })
-  } else {
-    execSync(
-      `git -C ${containerPath} fetch origin ${branch} && git -C ${containerPath} reset --hard origin/${branch}`,
-      { stdio: 'pipe', timeout: 60_000 },
-    )
-  }
-}
+export { getWorkspacePaths } from '../../workspace.js'
 
 export function runDockerScript(
   hostPath: string,

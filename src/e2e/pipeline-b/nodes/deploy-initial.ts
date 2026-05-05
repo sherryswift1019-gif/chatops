@@ -4,6 +4,7 @@ import { writeFileSync, mkdtempSync } from 'fs'
 import { tmpdir } from 'os'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import { runScript } from '../run-script.js'
+import { getWorkspacePaths } from '../../workspace.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function deployInitialNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
@@ -12,7 +13,7 @@ export async function deployInitialNode(state: PipelineBStateType): Promise<Part
   const project = await getE2eTargetProject(state.targetProjectId)
   if (!project) throw new Error(`e2e_target_projects: "${state.targetProjectId}" not found`)
 
-  const workDir = project.workingDir ?? '.'
+  const workDir = getWorkspacePaths(state.targetProjectId).containerPath
   const buildScript = join(workDir, state.projectScripts.build)
   const deployScript = join(workDir, state.projectScripts.deploy)
 

@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import { updateSandboxStatus } from '../../../db/repositories/e2e-sandboxes.js'
 import { runScript } from '../run-script.js'
+import { getWorkspacePaths } from '../../workspace.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function redeployNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
@@ -13,7 +14,7 @@ export async function redeployNode(state: PipelineBStateType): Promise<Partial<P
   const project = await getE2eTargetProject(state.targetProjectId)
   if (!project) throw new Error(`e2e_target_projects: "${state.targetProjectId}" not found`)
 
-  const workDir = project.workingDir ?? '.'
+  const workDir = getWorkspacePaths(state.targetProjectId).containerPath
   const deployScript = join(workDir, state.projectScripts.deploy)
   const handleDir = mkdtempSync(join(tmpdir(), 'e2e-redeploy-'))
   const handleFile = join(handleDir, 'handle.json')

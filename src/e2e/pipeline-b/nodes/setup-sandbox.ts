@@ -6,13 +6,14 @@ import { getE2eTargetProject } from '../../../db/repositories/e2e-target-project
 import { createSandbox, updateSandboxStatus } from '../../../db/repositories/e2e-sandboxes.js'
 import { updateE2eRunStatus } from '../../../db/repositories/e2e-runs.js'
 import { runScript } from '../run-script.js'
+import { getWorkspacePaths } from '../../workspace.js'
 import type { PipelineBStateType, SandboxHandle } from '../types.js'
 
 export async function setupSandboxNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
   const project = await getE2eTargetProject(state.targetProjectId)
   if (!project) throw new Error(`e2e_target_projects: "${state.targetProjectId}" not found`)
 
-  const workDir = project.workingDir ?? '.'
+  const workDir = getWorkspacePaths(state.targetProjectId).containerPath
   const deployScript = join(workDir, state.projectScripts.deploy)
   const handleDir = mkdtempSync(join(tmpdir(), 'e2e-handle-'))
   const handleFile = join(handleDir, 'handle.json')
