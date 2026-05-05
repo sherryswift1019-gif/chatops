@@ -1,52 +1,14 @@
 // src/e2e/pipeline-b/nodes/collect-evidence.ts
-import { readFile, writeFile } from 'fs/promises'
-import { join } from 'path'
-import { maskTextArtifacts } from '../evidence/masker.js'
-import { persistEvidenceDir } from '../evidence/storage.js'
-import { finishScenarioRun } from '../../../db/repositories/e2e-scenario-runs.js'
-import type { EvidenceManifest } from '../evidence/types.js'
+//
+// @deprecated 在 playbook-driven 模式下，evidence 持久化 + manifest 写库由 run-scenario
+// 节点直接完成，本节点只做 noop 占位以维持当前 graph 拓扑。下一 commit（await_human_review
+// 改造）会从 graph 拓扑里移除该节点。
+import type { PipelineBStateType } from '../types.js'
 
 export interface CollectEvidenceInput {
-  context: {
-    scenarioRunId: bigint
-    evidenceDirTemp: string
-    runId: bigint
-    scenarioId: string
-    attemptNumber: number
-  }
+  context: unknown
 }
 
-export interface CollectEvidenceOutput {
-  evidencePersisted: boolean
-  evidenceManifest: EvidenceManifest
-}
-
-export async function collectEvidenceNode(state: CollectEvidenceInput): Promise<CollectEvidenceOutput> {
-  const { scenarioRunId, evidenceDirTemp, runId, scenarioId, attemptNumber } = state.context
-
-  const scenarioTempDir = join(evidenceDirTemp, scenarioId)
-  const manifestPath = join(scenarioTempDir, 'manifest.json')
-  const raw = await readFile(manifestPath, 'utf8')
-  const manifest = JSON.parse(raw) as EvidenceManifest
-
-  await maskTextArtifacts(scenarioTempDir, manifest)
-
-  const { persistedDir, evidenceDirUri } = await persistEvidenceDir({
-    tempDir: scenarioTempDir,
-    runId,
-    scenarioId,
-    attemptNumber,
-  })
-
-  const maskedManifestPath = join(persistedDir, 'manifest.json')
-  await writeFile(maskedManifestPath, JSON.stringify(manifest, null, 2), 'utf8')
-
-  await finishScenarioRun(scenarioRunId, 'fail', {
-    evidenceManifest: manifest as unknown as Record<string, unknown>,
-    evidenceDirUri,
-  })
-
-  console.log(`[collectEvidence] run=${runId} scenario=${scenarioId} attempt=${attemptNumber} persisted → ${persistedDir}`)
-
-  return { evidencePersisted: true, evidenceManifest: manifest }
+export async function collectEvidenceNode(_input: CollectEvidenceInput): Promise<Partial<PipelineBStateType>> {
+  return {}
 }

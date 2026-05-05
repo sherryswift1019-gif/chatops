@@ -155,7 +155,7 @@ beforeEach(() => {
   vi.mocked(discoverNode).mockResolvedValue({})
   vi.mocked(pickNextScenarioNode).mockResolvedValue({})
   vi.mocked(runScenarioNode).mockResolvedValue({})
-  vi.mocked(collectEvidenceNode).mockResolvedValue({ evidencePersisted: true, evidenceManifest: {} as any })
+  vi.mocked(collectEvidenceNode).mockResolvedValue({})
   vi.mocked(resetIterationBranchNode).mockResolvedValue({})
   vi.mocked(e2eFixAgentNode).mockResolvedValue({ lastFixResult: {} as any })
   vi.mocked(redeployNode).mockResolvedValue({})
@@ -258,7 +258,7 @@ describe('Pipeline B graph routing', () => {
       })
 
     // collect_evidence returns nothing special (graph wraps it)
-    vi.mocked(collectEvidenceNode).mockResolvedValue({ evidencePersisted: true, evidenceManifest: {} as any })
+    vi.mocked(collectEvidenceNode).mockResolvedValue({})
     vi.mocked(resetIterationBranchNode).mockResolvedValue({})
 
     // fix agent: success
@@ -318,7 +318,7 @@ describe('Pipeline B graph routing', () => {
       governorState: { ...governor, totalAttempts: 1, perScenarioAttempts: { [SCENARIO_A.id]: 1 } },
     })
 
-    vi.mocked(collectEvidenceNode).mockResolvedValue({ evidencePersisted: true, evidenceManifest: {} as any })
+    vi.mocked(collectEvidenceNode).mockResolvedValue({})
     vi.mocked(resetIterationBranchNode).mockResolvedValue({})
 
     // fix agent: failure

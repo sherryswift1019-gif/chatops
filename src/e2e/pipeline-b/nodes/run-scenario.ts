@@ -1,33 +1,45 @@
 // src/e2e/pipeline-b/nodes/run-scenario.ts
+//
+// playbook-driven run-scenario：从 state.playbooks 反查 scenario 所属 playbook，
+// 调 host 的 runE2eScenario（host Claude → Playwright MCP → docker exec → 写 manifest）。
+// 跑完直接 finishScenarioRun + persistEvidenceDir，state.currentManifest 给后续节点用。
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
 import { join } from 'path'
-import { mkdirSync } from 'fs'
-import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
 import {
   createScenarioRun,
   finishScenarioRun,
   getLatestAttemptNumber,
 } from '../../../db/repositories/e2e-scenario-runs.js'
 import { updateE2eRunStatus } from '../../../db/repositories/e2e-runs.js'
-import { runScript } from '../run-script.js'
+import { runE2eScenario } from '../../../agent/e2e-scenario/runner.js'
+import { persistEvidenceDir } from '../evidence/storage.js'
 import { notifyScenarioFailed } from '../im-notifier.js'
+import type { Playbook } from '../playbook/types.js'
 import type { PipelineBStateType } from '../types.js'
 
+function findPlaybookForScenario(
+  playbooks: Record<string, Playbook>,
+  scenarioId: string,
+): Playbook | null {
+  for (const pb of Object.values(playbooks)) {
+    if (pb.scenarios.some((s) => s.id === scenarioId)) return pb
+  }
+  return null
+}
+
 export async function runScenarioNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
-  const { currentScenario, runId, targetProjectId, governorState } = state
+  const { currentScenario, runId, governorState, playbooks, sandboxHandle } = state
   if (!currentScenario) throw new Error('run-scenario: currentScenario is null')
+  if (!sandboxHandle) throw new Error('run-scenario: sandboxHandle is null')
 
-  const project = await getE2eTargetProject(targetProjectId)
-  if (!project) throw new Error(`e2e_target_projects: "${targetProjectId}" not found`)
-
-  const workDir = project.workingDir ?? '.'
-  const testScript = join(workDir, state.projectScripts.test)
+  const playbook = findPlaybookForScenario(playbooks, currentScenario.id)
+  if (!playbook) {
+    throw new Error(`run-scenario: scenario "${currentScenario.id}" 在 state.playbooks 中找不到所属 playbook`)
+  }
 
   const attemptNumber = (await getLatestAttemptNumber(runId, currentScenario.id)) + 1
-
-  const evidenceRoot = process.env.E2E_EVIDENCE_ROOT ?? '/var/chatops/e2e-evidence'
-  const safeScenarioId = currentScenario.id.replace(/[^a-zA-Z0-9_\-]/g, '_')
-  const evidenceDir = join(evidenceRoot, String(runId), safeScenarioId, String(attemptNumber))
-  mkdirSync(evidenceDir, { recursive: true })
+  const evidenceTempDir = mkdtempSync(join(tmpdir(), `e2e-scenario-${currentScenario.id}-`))
 
   const scenarioRunRecord = await createScenarioRun({
     e2eRunId: runId,
@@ -35,30 +47,39 @@ export async function runScenarioNode(state: PipelineBStateType): Promise<Partia
     scenarioName: currentScenario.name,
     attemptNumber,
   })
-
   await updateE2eRunStatus(runId, 'running')
 
-  const timeoutSec = Math.max(60, (governorState.limits.maxRunHours * 3600) / Math.max(1, state.pendingScenarios.length))
-  const result = await runScript(
-    testScript,
-    ['--scenario', currentScenario.id, `--evidence-dir=${evidenceDir}`, `--timeout=${Math.floor(timeoutSec)}`],
-    { timeout: (timeoutSec + 30) * 1000, cwd: workDir },
-  )
+  console.log(`[PipelineB:runScenario] runId=${runId} scenario=${currentScenario.id} attempt=${attemptNumber} 启动 host Claude`)
+  const result = await runE2eScenario({
+    playbook,
+    scenarioId: currentScenario.id,
+    evidenceDir: evidenceTempDir,
+    sandboxHandle,
+    attemptNumber,
+  })
 
+  // host Claude 跑挂了或 manifest 不合法 → 落 error result，仍走 fail 路径
   let scenarioResult: 'pass' | 'fail' | 'error' | 'timeout' = 'error'
-  if (result.exitCode === 0) {
-    scenarioResult = 'pass'
-  } else if (result.exitCode === 1) {
-    scenarioResult = (result.parsed?.result as string) === 'timeout' ? 'timeout' : 'fail'
-  } else if (result.exitCode === -1) {
-    scenarioResult = 'timeout'
+  if (result.manifest) {
+    scenarioResult = result.manifest.result
+  } else if (result.errorMessage) {
+    console.warn(`[PipelineB:runScenario] runE2eScenario 失败: ${result.errorMessage}`)
   }
 
-  const durationMs = typeof result.parsed?.duration_ms === 'number' ? result.parsed.duration_ms : undefined
+  // persist 到永久目录（pass / fail 都保留 evidence）
+  const { evidenceDirUri } = await persistEvidenceDir({
+    tempDir: evidenceTempDir,
+    runId,
+    scenarioId: currentScenario.id,
+    attemptNumber,
+  })
 
+  // manifest 直写 e2e_scenario_runs.evidence_manifest（pass/fail 路径都写）
+  const manifestForDb = result.manifest as unknown as Record<string, unknown> | undefined
   await finishScenarioRun(scenarioRunRecord.id, scenarioResult, {
-    durationMs,
-    evidenceDirUri: evidenceDir,
+    durationMs: result.manifest?.durationMs,
+    evidenceDirUri,
+    evidenceManifest: manifestForDb,
   })
 
   const newGovernorState = {
@@ -78,10 +99,12 @@ export async function runScenarioNode(state: PipelineBStateType): Promise<Partia
       currentScenario.id,
     ).catch(() => {})
   }
+
   return {
     lastScenarioResult: scenarioResult,
     currentScenarioRunId: scenarioRunRecord.id,
-    evidenceDirTemp: evidenceDir,
+    evidenceDirTemp: evidenceDirUri, // 用 URI 而不是 temp dir（已 persist），collect-evidence 节点用得到
+    currentManifest: result.manifest,
     governorState: newGovernorState,
   }
 }
