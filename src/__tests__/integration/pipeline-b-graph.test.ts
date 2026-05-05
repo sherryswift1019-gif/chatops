@@ -33,8 +33,8 @@ vi.mock('../../e2e/pipeline-b/nodes/run-scenario.js', () => ({
   runScenarioNode: vi.fn(),
 }))
 
-vi.mock('../../e2e/pipeline-b/nodes/collect-evidence.js', () => ({
-  collectEvidenceNode: vi.fn(),
+vi.mock('../../e2e/pipeline-b/nodes/await-human-review.js', () => ({
+  awaitHumanReviewNode: vi.fn(),
 }))
 
 vi.mock('../../e2e/pipeline-b/nodes/reset-iteration-branch.js', () => ({
@@ -84,7 +84,7 @@ import { deployInitialNode } from '../../e2e/pipeline-b/nodes/deploy-initial.js'
 import { discoverNode } from '../../e2e/pipeline-b/nodes/discover.js'
 import { pickNextScenarioNode } from '../../e2e/pipeline-b/nodes/pick-next-scenario.js'
 import { runScenarioNode } from '../../e2e/pipeline-b/nodes/run-scenario.js'
-import { collectEvidenceNode } from '../../e2e/pipeline-b/nodes/collect-evidence.js'
+import { awaitHumanReviewNode } from '../../e2e/pipeline-b/nodes/await-human-review.js'
 import { resetIterationBranchNode } from '../../e2e/pipeline-b/nodes/reset-iteration-branch.js'
 import { e2eFixAgentNode } from '../../e2e/pipeline-b/nodes/e2e-fix-agent.js'
 import { redeployNode } from '../../e2e/pipeline-b/nodes/redeploy.js'
@@ -155,7 +155,7 @@ beforeEach(() => {
   vi.mocked(discoverNode).mockResolvedValue({})
   vi.mocked(pickNextScenarioNode).mockResolvedValue({})
   vi.mocked(runScenarioNode).mockResolvedValue({})
-  vi.mocked(collectEvidenceNode).mockResolvedValue({})
+  vi.mocked(awaitHumanReviewNode).mockResolvedValue({})
   vi.mocked(resetIterationBranchNode).mockResolvedValue({})
   vi.mocked(e2eFixAgentNode).mockResolvedValue({ lastFixResult: {} as any })
   vi.mocked(redeployNode).mockResolvedValue({})
@@ -257,8 +257,8 @@ describe('Pipeline B graph routing', () => {
         governorState: { ...governor, totalAttempts: 2, perScenarioAttempts: { [SCENARIO_A.id]: 2 } },
       })
 
-    // collect_evidence returns nothing special (graph wraps it)
-    vi.mocked(collectEvidenceNode).mockResolvedValue({})
+    // await_human_review: 模拟用户回 approve（同意进 fix-agent）
+    vi.mocked(awaitHumanReviewNode).mockResolvedValue({ humanReviewDecision: 'approve' })
     vi.mocked(resetIterationBranchNode).mockResolvedValue({})
 
     // fix agent: success
@@ -318,7 +318,7 @@ describe('Pipeline B graph routing', () => {
       governorState: { ...governor, totalAttempts: 1, perScenarioAttempts: { [SCENARIO_A.id]: 1 } },
     })
 
-    vi.mocked(collectEvidenceNode).mockResolvedValue({})
+    vi.mocked(awaitHumanReviewNode).mockResolvedValue({})
     vi.mocked(resetIterationBranchNode).mockResolvedValue({})
 
     // fix agent: failure

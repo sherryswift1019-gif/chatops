@@ -23,12 +23,24 @@ function buildPrompt(paramSchema: Record<string, unknown>, imPrompt?: string | n
   return `请提供以下参数：${parts.join('，')}。\n示例：\`${example}\``
 }
 
-function waitForImMessage(platform: string, groupId: string): Promise<string> {
+/**
+ * 注册一个 (platform, groupId) 上的等待者，挂在那等下一条 IM 消息。
+ * session-manager 收到该群消息会通过 im-router.findParamCollectWaiter 命中这里 resolve。
+ *
+ * 多消费方共用：im-param-collector / pipeline-b/await-human-review 等。
+ *
+ * @param timeoutMs 超时（默认 300s）。pipeline-b 人审 gate 会传 24h。
+ */
+export function waitForImMessage(
+  platform: string,
+  groupId: string,
+  timeoutMs: number = COLLECTION_TIMEOUT_MS,
+): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const timer = setTimeout(() => {
       unregisterParamCollectWaiter(platform, groupId)
-      reject(new Error('IM 参数采集超时（300s）'))
-    }, COLLECTION_TIMEOUT_MS)
+      reject(new Error(`IM 等待消息超时（${timeoutMs}ms）`))
+    }, timeoutMs)
 
     registerParamCollectWaiter({
       platform, groupId,

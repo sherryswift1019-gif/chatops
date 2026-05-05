@@ -8,7 +8,7 @@ import { deployInitialNode } from './nodes/deploy-initial.js'
 import { discoverNode } from './nodes/discover.js'
 import { pickNextScenarioNode } from './nodes/pick-next-scenario.js'
 import { runScenarioNode } from './nodes/run-scenario.js'
-import { collectEvidenceNode } from './nodes/collect-evidence.js'
+import { awaitHumanReviewNode } from './nodes/await-human-review.js'
 import { resetIterationBranchNode } from './nodes/reset-iteration-branch.js'
 import { e2eFixAgentNode } from './nodes/e2e-fix-agent.js'
 import { redeployNode } from './nodes/redeploy.js'
@@ -29,6 +29,10 @@ function scenarioResultRoute(state: PipelineBStateType): string {
   return state.lastScenarioResult === 'pass' ? 'pass' : 'fail'
 }
 
+function humanReviewRoute(state: PipelineBStateType): string {
+  return state.humanReviewDecision ?? 'reject'
+}
+
 function fixResultRoute(state: PipelineBStateType): string {
   return state.lastFixResult?.success === true ? 'success' : 'failure'
 }
@@ -42,17 +46,7 @@ export function buildPipelineBGraph() {
     .addNode('main_switch', async (state: PipelineBStateType) => state)
     .addNode('pick_next_scenario', pickNextScenarioNode)
     .addNode('run_scenario', runScenarioNode)
-    .addNode('collect_evidence', async (state: PipelineBStateType) =>
-      collectEvidenceNode({
-        context: {
-          scenarioRunId: state.currentScenarioRunId!,
-          evidenceDirTemp: state.evidenceDirTemp!,
-          runId: state.runId,
-          scenarioId: state.currentScenario!.id,
-          attemptNumber: state.governorState.perScenarioAttempts[state.currentScenario!.id] ?? 1,
-        },
-      })
-    )
+    .addNode('await_human_review', awaitHumanReviewNode)
     .addNode('reset_iteration_branch', resetIterationBranchNode)
     .addNode('e2e_fix_agent', async (state: PipelineBStateType) =>
       e2eFixAgentNode({
@@ -88,12 +82,18 @@ export function buildPipelineBGraph() {
 
   g.addConditionalEdges('run_scenario', scenarioResultRoute, {
     pass: 'mark_green',
-    fail: 'collect_evidence',
+    fail: 'await_human_review',
   })
 
   g.addEdge('mark_green', 'main_switch')
 
-  g.addEdge('collect_evidence', 'reset_iteration_branch')
+  // 人审 gate：approve→进 fix；retry→不修、把 scenario 丢回 pick_next；reject→标 unfixable
+  g.addConditionalEdges('await_human_review', humanReviewRoute, {
+    approve: 'reset_iteration_branch',
+    retry: 'pick_next_scenario',
+    reject: 'mark_unfixable',
+  })
+
   g.addEdge('reset_iteration_branch', 'e2e_fix_agent')
 
   g.addConditionalEdges('e2e_fix_agent', fixResultRoute, {
