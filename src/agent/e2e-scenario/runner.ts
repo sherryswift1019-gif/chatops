@@ -56,11 +56,20 @@ const SCENARIO_CONTEXT: TaskContext = {
 // 它的 --browser=chromium 在新版 playwright 实际指 chrome-for-testing 也未装。
 // 用 --executable-path 显式指向 base image 已装的 chromium binary，绕开版本问题。
 // 路径来自 Dockerfile.base 的 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright + chromium 子目录。
+//
+// --no-sandbox: 容器内无 user namespaces（Ubuntu 24+ 默认禁），chromium zygote 启动会
+//   FATAL: No usable sandbox。
+// --headless: 容器内无 display server，必须 headless。
 const CHROMIUM_BIN = '/ms-playwright/chromium-1217/chrome-linux/chrome'
 const PLAYWRIGHT_MCP: Record<string, McpServerSpec> = {
   playwright: {
     command: 'npx',
-    args: ['-y', '@playwright/mcp@latest', `--executable-path=${CHROMIUM_BIN}`],
+    args: [
+      '-y', '@playwright/mcp@latest',
+      `--executable-path=${CHROMIUM_BIN}`,
+      '--no-sandbox',
+      '--headless',
+    ],
   },
 }
 
