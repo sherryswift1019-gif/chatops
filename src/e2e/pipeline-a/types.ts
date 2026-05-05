@@ -17,6 +17,8 @@ export interface BaselineSandboxHandle {
   endpoints: Record<string, string>
   internalRefs: Record<string, unknown>
   sandboxId: bigint
+  containerId?: string
+  workdir?: string
 }
 
 export type DiagnosisVerdict = 'script_bug' | 'product_bug'

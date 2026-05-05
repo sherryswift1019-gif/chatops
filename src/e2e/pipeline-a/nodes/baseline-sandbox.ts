@@ -122,12 +122,29 @@ export async function setupBaselineSandboxNode(state: PipelineAStateType): Promi
 
   await updateSandboxStatus(sandboxRecord.id, 'ready', { readyAt: new Date() })
 
+  // chatops deploy.sh:135 把容器命名为 chatops-e2e-${apiPort}（同 pipeline-b 的派生规则）。
+  // handle JSON 不带 containerId / workdir，这里派生后塞进 BaselineSandboxHandle，
+  // 让下游 baseline-check 用 runE2eScenario(host Claude → docker exec)。
+  const apiPortRaw = (handleJson.internalRefs as Record<string, unknown>)?.apiPort
+  const apiPort = typeof apiPortRaw === 'number' ? apiPortRaw : undefined
+  const derivedContainerId =
+    typeof handleJson.containerId === 'string'
+      ? handleJson.containerId
+      : apiPort != null ? `chatops-e2e-${apiPort}` : undefined
+
+  // 同时把 endpoints.api alias 成 web_base_url（runE2eScenario / SKILL.md 默认从这里起 Playwright）
+  const rawEndpoints = (handleJson.endpoints as Record<string, string>) ?? {}
+  const endpoints: Record<string, string> = { ...rawEndpoints }
+  if (!endpoints.web_base_url && endpoints.api) endpoints.web_base_url = endpoints.api
+
   const sandboxHandle: BaselineSandboxHandle = {
     envId: (handleJson.envId as string) ?? 'unknown',
     kind: (handleJson.kind as string) ?? 'docker-compose-local',
-    endpoints: (handleJson.endpoints as Record<string, string>) ?? {},
+    endpoints,
     internalRefs: (handleJson.internalRefs as Record<string, unknown>) ?? {},
     sandboxId: sandboxRecord.id,
+    containerId: derivedContainerId,
+    workdir: (handleJson.workdir as string | undefined) ?? '/app',
   }
 
   return { sandboxHandle }

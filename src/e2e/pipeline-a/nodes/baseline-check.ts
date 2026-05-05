@@ -1,77 +1,92 @@
-import { mkdirSync, writeFileSync } from 'fs'
-import { join, dirname } from 'path'
-import { getE2eTargetProject } from '../../../db/repositories/e2e-target-projects.js'
-import { getWorkspacePaths, runDockerScript } from './baseline-sandbox.js'
+// src/e2e/pipeline-a/nodes/baseline-check.ts
+//
+// playbook-driven baseline-check：把生成的 playbook YAML 解析后，在 baseline sandbox
+// 上调 runE2eScenario 跑每个 scenario。所有 scenario 全 pass 才算 baseline 通过。
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { runE2eScenario } from '../../../agent/e2e-scenario/runner.js'
+import { parsePlaybookYaml } from '../../pipeline-b/playbook/parse.js'
+import type { SandboxHandle } from '../../pipeline-b/types.js'
 import type { PipelineAStateType, BaselineResult } from '../types.js'
 
 export async function runBaselineCheckNode(state: PipelineAStateType): Promise<Partial<PipelineAStateType>> {
   const spec = state.specs[state.currentSpecIndex]
   if (!spec) return {}
-
-  const project = await getE2eTargetProject(spec.targetProjectId)
-  if (!project) throw new Error(`project not found: ${spec.targetProjectId}`)
-
-  const scenarioId = spec.specPath.split('/').pop()!.replace('.md', '')
-  const { containerPath, hostPath } = getWorkspacePaths(spec.targetProjectId)
-
-  // 把生成的测试文件写到 workspace（target project 克隆目录），DooD 执行时可读
-  if (spec.scriptPath && spec.generatedContent) {
-    const testFilePath = join(containerPath, spec.scriptPath)
-    mkdirSync(dirname(testFilePath), { recursive: true })
-    writeFileSync(testFilePath, spec.generatedContent, 'utf8')
-    console.log(`[PipelineA:baselineCheck] wrote test to ${testFilePath}`)
+  if (!spec.generatedContent) {
+    return {
+      lastBaselineResult: {
+        specId: spec.specId,
+        passed: false,
+        evidenceSummary: 'baseline-check: spec.generatedContent 为空',
+      },
+      baselineAttempts: state.baselineAttempts + 1,
+    }
+  }
+  if (!state.sandboxHandle) {
+    throw new Error('baseline-check: sandboxHandle is null')
   }
 
-  // evidence 落在 workspace 里，DooD 内路径为 /workspace/e2e-evidence/...
-  const evidenceDirRelative = `e2e-evidence/baseline-${spec.specId}-attempt-${state.baselineAttempts + 1}`
-  const evidenceDirInContainer = join(containerPath, evidenceDirRelative)
-  mkdirSync(evidenceDirInContainer, { recursive: true })
-
-  const apiPort = (state.sandboxHandle?.internalRefs?.apiPort as number | undefined) ?? 3000
-  const sandboxUrl = `http://chatops-e2e-${apiPort}:3000`
-
-  console.log(`[PipelineA:baselineCheck] attempt ${state.baselineAttempts + 1}: scenario=${scenarioId} sandboxUrl=${sandboxUrl}`)
-
-  // 先跑 test.sh --setup-env 让 workspace 测试环境就绪（pnpm install 等）
-  // 这是 test.sh 自身职责，pipeline 只负责调用，不需关心具体步骤
-  const setupResult = runDockerScript(hostPath, 'test.sh', ['--setup-env'], 180_000)
-  if (setupResult.status !== 0) {
-    console.warn(`[PipelineA:baselineCheck] setup-env failed (exit ${setupResult.status}):\n${(setupResult.stderr ?? setupResult.stdout ?? '').slice(0, 500)}`)
+  const parsed = parsePlaybookYaml(spec.generatedContent)
+  if (!parsed.ok) {
+    const issues = parsed.issues?.map((i) => `${i.path}: ${i.message}`).join('; ') ?? ''
+    const summary = `baseline-check: playbook YAML 校验失败 - ${parsed.error}${issues ? ` (${issues})` : ''}`
+    return {
+      lastBaselineResult: { specId: spec.specId, passed: false, evidenceSummary: summary },
+      baselineAttempts: state.baselineAttempts + 1,
+    }
   }
 
-  // 通过 DooD 在 workspace 里跑 test.sh，加入 chatops_default 网络让 playwright 能访问沙盒容器
-  const result = runDockerScript(
-    hostPath,
-    'test.sh',
-    [`--scenario`, scenarioId, `--evidence-dir`, `/workspace/${evidenceDirRelative}`],
-    300_000,
-    { SANDBOX_URL: sandboxUrl, NODE_PATH: '/app/node_modules' },
-    'chatops_default',
-  )
-
-  const passed = result.status === 0
-  const lastLine = (result.stdout ?? '').trim().split('\n').pop() ?? ''
-  let summary = `Baseline check ${passed ? 'PASSED' : 'FAILED'} for ${scenarioId}`
-  try {
-    summary = JSON.parse(lastLine)?.summary ?? summary
-  } catch {
-    /* ignore */
+  const playbook = parsed.value
+  const sandboxHandle: SandboxHandle = {
+    envId: state.sandboxHandle.envId,
+    kind: state.sandboxHandle.kind,
+    endpoints: state.sandboxHandle.endpoints,
+    internalRefs: state.sandboxHandle.internalRefs,
+    containerId: state.sandboxHandle.containerId,
+    workdir: state.sandboxHandle.workdir,
   }
 
-  const baselineResult: BaselineResult = {
-    specId: spec.specId,
-    passed,
-    evidenceDir: evidenceDirInContainer,
-    evidenceSummary: summary,
+  const evidenceRoot = mkdtempSync(join(tmpdir(), `pipeline-a-baseline-${spec.specId}-`))
+  let allPassed = true
+  const failedSummaries: string[] = []
+
+  for (const scenario of playbook.scenarios) {
+    const evidenceDir = join(evidenceRoot, scenario.id)
+    const result = await runE2eScenario({
+      playbook,
+      scenarioId: scenario.id,
+      evidenceDir,
+      sandboxHandle,
+      attemptNumber: state.baselineAttempts + 1,
+    })
+
+    const sceneResult = result.manifest?.result ?? 'error'
+    console.log(
+      `[PipelineA:baselineCheck] specId=${spec.specId} scenario=${scenario.id} result=${sceneResult}`,
+    )
+
+    if (sceneResult !== 'pass') {
+      allPassed = false
+      const reason = result.errorMessage
+        ?? result.manifest?.errorMessage
+        ?? result.manifest?.acceptanceResults.find((a) => a.result !== 'pass')?.reason
+        ?? sceneResult
+      failedSummaries.push(`${scenario.id}: ${reason}`)
+    }
   }
 
-  console.log(`[PipelineA:baselineCheck] attempt ${state.baselineAttempts + 1}: ${passed ? 'PASS' : 'FAIL'} - ${summary}`)
-  if (!passed) {
-    console.log(`[PipelineA:baselineCheck] stderr: ${(result.stderr ?? '').slice(0, 500)}`)
-    console.log(`[PipelineA:baselineCheck] stdout last: ${lastLine}`)
-  }
+  const summary = allPassed
+    ? `Baseline PASSED: ${playbook.scenarios.length} scenario 全过`
+    : `Baseline FAILED: ${failedSummaries.join(' | ')}`
+
   return {
-    lastBaselineResult: baselineResult,
+    lastBaselineResult: {
+      specId: spec.specId,
+      passed: allPassed,
+      evidenceDir: evidenceRoot,
+      evidenceSummary: summary,
+    },
     baselineAttempts: state.baselineAttempts + 1,
   }
 }

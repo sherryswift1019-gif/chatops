@@ -13,7 +13,8 @@ export async function generateOrSkipNode(state: PipelineAStateType): Promise<Par
   if (!project) throw new Error(`project not found: ${spec.targetProjectId}`)
 
   const parts = spec.specPath.split('/')
-  const outScriptPath = `tests/e2e/${parts.slice(-2).join('/').replace('.md', '.spec.ts')}`
+  const baseName = parts[parts.length - 1].replace(/\.md$/, '')
+  const outScriptPath = `docs/test-playbooks/${baseName}.playbook.yaml`
 
   if (project.capabilities.generate) {
     const testScript = join(project.workingDir, project.scripts.test)

@@ -1,37 +1,70 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { Manifest } from '../../e2e/pipeline-b/playbook/manifest.js'
 
-vi.mock('child_process', () => ({ spawnSync: vi.fn() }))
-vi.mock('fs', () => ({ mkdirSync: vi.fn() }))
-vi.mock('../../db/repositories/e2e-target-projects.js', () => ({
-  getE2eTargetProject: vi.fn(),
+vi.mock('../../agent/e2e-scenario/runner.js', () => ({
+  runE2eScenario: vi.fn(),
 }))
 
-import { spawnSync } from 'child_process'
-import { mkdirSync } from 'fs'
-import { getE2eTargetProject } from '../../db/repositories/e2e-target-projects.js'
-import { runBaselineCheckNode } from '../../e2e/pipeline-a/nodes/baseline-check.js'
+const { runE2eScenario } = await import('../../agent/e2e-scenario/runner.js')
+const { runBaselineCheckNode } = await import('../../e2e/pipeline-a/nodes/baseline-check.js')
 
-const mockProject = {
-  id: 'chatops',
-  displayName: 'ChatOps',
-  workingDir: '/app',
-  scripts: { build: 'build.sh', deploy: 'deploy.sh', test: 'test.sh' },
-  capabilities: {},
-  gitlabRepo: '',
-  defaultBranch: 'main',
-  defaultSandboxKind: 'docker-compose-local',
-  createdAt: new Date(),
+const VALID_PLAYBOOK_YAML = `
+specPath: docs/test-specs/s.md
+scenarios:
+  - id: s.smoke
+    name: Smoke
+    tags: [smoke]
+    acceptance:
+      - kind: url_match
+        value: /
+  - id: s.full
+    name: Full
+    tags: []
+    acceptance:
+      - kind: api_response
+        request: GET /healthz
+        expect_status: 200
+`
+
+const PASS_MANIFEST: Manifest = {
+  scenarioId: 's.smoke',
+  attemptNumber: 1,
+  result: 'pass',
+  startedAt: '2026-05-05T10:00:00.000Z',
+  finishedAt: '2026-05-05T10:00:30.000Z',
+  durationMs: 30000,
+  claudeTrace: [],
+  acceptanceResults: [{ kind: 'url_match', index: 0, result: 'pass' }],
+  artifacts: [],
 }
 
 const baseState = {
-  specs: [{ specId: 1n, specPath: 'docs/specs/feature-a/s.md', title: 'S', contentHash: 'x', targetProjectId: 'chatops', scriptPath: 'tests/e2e/feature-a/s.spec.ts' }],
+  specs: [
+    {
+      specId: 1n,
+      specPath: 'docs/test-specs/s.md',
+      title: 'S',
+      contentHash: 'x',
+      targetProjectId: 'chatops',
+      scriptPath: 'docs/test-playbooks/s.playbook.yaml',
+      generatedContent: VALID_PLAYBOOK_YAML,
+    },
+  ],
   currentSpecIndex: 0,
   staticCheckAttempts: 0,
   maxStaticCheckAttempts: 2,
   baseBranch: 'main',
   targetProjectId: 'chatops',
   specPaths: [],
-  sandboxHandle: null,
+  sandboxHandle: {
+    envId: 'env-1',
+    kind: 'docker-compose-local',
+    endpoints: { web_base_url: 'http://localhost:3000' },
+    internalRefs: {},
+    sandboxId: 1n,
+    containerId: 'sandbox-abc',
+    workdir: '/app',
+  },
   baselineAttempts: 0,
   lastBaselineResult: null,
   completedSpecs: [],
@@ -41,51 +74,68 @@ const baseState = {
   diagnosisVerdict: null,
 }
 
-describe('runBaselineCheckNode', () => {
-  it('测试脚本成功 (status=0) → lastBaselineResult.passed=true，baselineAttempts 递增', async () => {
-    vi.mocked(getE2eTargetProject).mockResolvedValue(mockProject as any)
-    vi.mocked(spawnSync).mockReturnValue({ status: 0, stdout: '', stderr: '' } as any)
+describe('runBaselineCheckNode (playbook-driven)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
+  it('所有 scenario 全 pass → lastBaselineResult.passed=true', async () => {
+    vi.mocked(runE2eScenario).mockResolvedValue({
+      manifest: PASS_MANIFEST,
+      rawOutput: '',
+      errorMessage: null,
+    })
     const result = await runBaselineCheckNode(baseState as any)
-
     expect(result.lastBaselineResult?.passed).toBe(true)
     expect(result.baselineAttempts).toBe(1)
+    // 2 个 scenario → runE2eScenario 调 2 次
+    expect(vi.mocked(runE2eScenario)).toHaveBeenCalledTimes(2)
   })
 
-  it('测试脚本失败 (status=1) → lastBaselineResult.passed=false，baselineAttempts 递增', async () => {
-    vi.mocked(getE2eTargetProject).mockResolvedValue(mockProject as any)
-    vi.mocked(spawnSync).mockReturnValue({ status: 1, stdout: '', stderr: '' } as any)
-
+  it('某个 scenario fail → lastBaselineResult.passed=false，summary 含失败 scenario id', async () => {
+    const failManifest = { ...PASS_MANIFEST, result: 'fail' as const, acceptanceResults: [
+      { kind: 'url_match', index: 0, result: 'fail' as const, reason: '页面没加载' },
+    ]}
+    vi.mocked(runE2eScenario)
+      .mockResolvedValueOnce({ manifest: PASS_MANIFEST, rawOutput: '', errorMessage: null })
+      .mockResolvedValueOnce({ manifest: failManifest, rawOutput: '', errorMessage: null })
     const result = await runBaselineCheckNode(baseState as any)
-
     expect(result.lastBaselineResult?.passed).toBe(false)
-    expect(result.baselineAttempts).toBe(1)
+    expect(result.lastBaselineResult?.evidenceSummary).toContain('s.full')
   })
 
-  it('stdout 最后一行是有效 JSON with summary → evidenceSummary 使用 JSON 里的 summary', async () => {
-    vi.mocked(getE2eTargetProject).mockResolvedValue(mockProject as any)
-    vi.mocked(spawnSync).mockReturnValue({
-      status: 0,
-      stdout: 'some output\n{"summary": "All 3 steps passed successfully"}',
-      stderr: '',
-    } as any)
-
+  it('runE2eScenario 抛错 → 视为 fail，summary 含错误信息', async () => {
+    vi.mocked(runE2eScenario).mockResolvedValue({
+      manifest: null,
+      rawOutput: '',
+      errorMessage: 'Claude timeout',
+    })
     const result = await runBaselineCheckNode(baseState as any)
-
-    expect(result.lastBaselineResult?.evidenceSummary).toBe('All 3 steps passed successfully')
+    expect(result.lastBaselineResult?.passed).toBe(false)
+    expect(result.lastBaselineResult?.evidenceSummary).toContain('Claude timeout')
   })
 
-  it('stdout 最后一行非 JSON → evidenceSummary 使用默认格式', async () => {
-    vi.mocked(getE2eTargetProject).mockResolvedValue(mockProject as any)
-    vi.mocked(spawnSync).mockReturnValue({
-      status: 1,
-      stdout: 'some output\nnot json at all',
-      stderr: '',
-    } as any)
+  it('generatedContent 为空 → 直接 fail，不调 runE2eScenario', async () => {
+    const state = { ...baseState, specs: [{ ...baseState.specs[0], generatedContent: undefined }] }
+    const result = await runBaselineCheckNode(state as any)
+    expect(result.lastBaselineResult?.passed).toBe(false)
+    expect(result.lastBaselineResult?.evidenceSummary).toContain('generatedContent 为空')
+    expect(vi.mocked(runE2eScenario)).not.toHaveBeenCalled()
+  })
 
-    const result = await runBaselineCheckNode(baseState as any)
+  it('playbook YAML 校验失败 → 直接 fail，不调 runE2eScenario', async () => {
+    const state = {
+      ...baseState,
+      specs: [{ ...baseState.specs[0], generatedContent: 'specPath: x.md\nscenarios: []' }],
+    }
+    const result = await runBaselineCheckNode(state as any)
+    expect(result.lastBaselineResult?.passed).toBe(false)
+    expect(result.lastBaselineResult?.evidenceSummary).toContain('校验失败')
+    expect(vi.mocked(runE2eScenario)).not.toHaveBeenCalled()
+  })
 
-    const scenarioId = 's'
-    expect(result.lastBaselineResult?.evidenceSummary).toBe(`Baseline check FAILED for ${scenarioId}`)
+  it('sandboxHandle 为 null → 抛错', async () => {
+    const state = { ...baseState, sandboxHandle: null }
+    await expect(runBaselineCheckNode(state as any)).rejects.toThrow(/sandboxHandle is null/)
   })
 })

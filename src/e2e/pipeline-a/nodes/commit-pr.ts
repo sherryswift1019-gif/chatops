@@ -40,7 +40,7 @@ export async function commitAndPrNode(state: PipelineAStateType): Promise<Partia
   writeFileSync(testFilePath, spec.generatedContent, 'utf8')
 
   // git checkout -b 创建分支
-  const branchName = `e2e-gen/${spec.specId}-${Date.now()}`
+  const branchName = `e2e-playbook/${spec.specId}-${Date.now()}`
   const checkoutResult = git(['checkout', '-b', branchName], containerPath)
   if (checkoutResult.status !== 0) {
     console.error(`[PipelineA:commitPr] checkout failed: ${checkoutResult.stderr}`)
@@ -57,7 +57,7 @@ export async function commitAndPrNode(state: PipelineAStateType): Promise<Partia
   }
 
   // git commit
-  const commitResult = git(['commit', '-m', `feat(e2e): 自动生成测试脚本 — ${spec.title}`], containerPath)
+  const commitResult = git(['commit', '-m', `feat(e2e-playbook): 自动生成 playbook — ${spec.title}`], containerPath)
   if (commitResult.status !== 0) {
     console.error(`[PipelineA:commitPr] commit failed: ${commitResult.stderr}`)
     await updateE2eSpecStatus(spec.specId, 'baseline_failed')
@@ -78,8 +78,8 @@ export async function commitAndPrNode(state: PipelineAStateType): Promise<Partia
     [
       'mr',
       'create',
-      `--title=feat(e2e): 自动生成测试脚本 — ${spec.title}`,
-      `--description=由 Pipeline A 自动生成，已过 baseline self-correct 验证`,
+      `--title=feat(e2e-playbook): 自动生成 playbook — ${spec.title}`,
+      `--description=由 Pipeline A 自动生成 playbook YAML，已过 baseline self-correct 验证`,
       `--source-branch=${branchName}`,
       `--target-branch=${state.baseBranch}`,
       '--yes',

@@ -92,14 +92,13 @@ describe('generateOrSkipNode', () => {
     expect(result.staticCheckAttempts).toBe(0)
   })
 
-  it('outScriptPath 格式验证：login.md → feature-a/login.spec.ts', async () => {
+  it('outScriptPath 格式：login.md → docs/test-playbooks/login.playbook.yaml', async () => {
     vi.mocked(getE2eTargetProject).mockResolvedValue(makeProject(false) as any)
 
     const result = await generateOrSkipNode(baseState as any)
 
     const scriptPath = result.specs![0].scriptPath!
-    expect(scriptPath).toContain('feature-a/login.spec.ts')
-    expect(scriptPath).toMatch(/^tests\/e2e\//)
+    expect(scriptPath).toBe('docs/test-playbooks/login.playbook.yaml')
   })
 
   it('currentSpecIndex 越界 → 返回 {}', async () => {
