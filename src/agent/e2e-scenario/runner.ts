@@ -51,10 +51,17 @@ const SCENARIO_CONTEXT: TaskContext = {
   initiatorRole: null,
 }
 
-// Playwright MCP — base image 装了 playwright managed chromium 而非 Google Chrome；
-// 显式 --browser=chromium 避免 MCP 默认走 channel=chrome 找 /opt/google/chrome/chrome。
+// Playwright MCP — base image 装的是 playwright managed chromium（chromium-XXXX），
+// @playwright/mcp@latest 默认 channel=chrome 找 /opt/google/chrome/chrome 找不到；
+// 它的 --browser=chromium 在新版 playwright 实际指 chrome-for-testing 也未装。
+// 用 --executable-path 显式指向 base image 已装的 chromium binary，绕开版本问题。
+// 路径来自 Dockerfile.base 的 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright + chromium 子目录。
+const CHROMIUM_BIN = '/ms-playwright/chromium-1217/chrome-linux/chrome'
 const PLAYWRIGHT_MCP: Record<string, McpServerSpec> = {
-  playwright: { command: 'npx', args: ['-y', '@playwright/mcp@latest', '--browser=chromium'] },
+  playwright: {
+    command: 'npx',
+    args: ['-y', '@playwright/mcp@latest', `--executable-path=${CHROMIUM_BIN}`],
+  },
 }
 
 // 内置工具全开（Bash/Read/Write/Edit/Glob/Grep），仅禁联网 + 子 Agent

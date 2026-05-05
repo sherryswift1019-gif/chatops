@@ -84,11 +84,15 @@ case "$ACTION" in
 
     # 沙盒 DB：自动建一个名为 e2e-${RUN_ID} 的库（满足 sandbox-sentinel 的 e2e- 前缀），
     # 跑 chatops migration 把 schema 装进去。host 上没 psql，借 chatops-postgres-1
-    # 容器跑 psql。host migration 用 host:5432 端口（chatops-postgres-1 publish 的）。
+    # 容器跑 psql。host migration：
+    #   - host caller: PG_HOST 未设 → fallback 'localhost'，连 chatops-postgres-1 publish 的端口
+    #   - chatops 容器内 caller (setup-sandbox 调时): PG_HOST=postgres → chatops_default 网络上
+    #     postgres 别名直连
     PG_CONTAINER="${PG_CONTAINER:-chatops-postgres-1}"
     PG_USER="${PG_USER:-chatops}"
     PG_PASSWORD="${PG_PASSWORD:-chatops}"
     PG_HOST_PORT="${PG_HOST_PORT:-5432}"
+    MIGRATE_PG_HOST="${PG_HOST:-localhost}"
     SANDBOX_DB_NAME="${E2E_SANDBOX_DB_NAME:-e2e-${RUN_ID}}"
     SANDBOX_DB_AUTO_CREATED=false
     if [ -z "${E2E_SANDBOX_DB_URL:-}" ]; then
@@ -98,7 +102,7 @@ case "$ACTION" in
         -c "CREATE DATABASE \"${SANDBOX_DB_NAME}\""
       SANDBOX_DB_AUTO_CREATED=true
       echo "==> Running chatops migration into sandbox DB..."
-      DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_HOST_PORT}/${SANDBOX_DB_NAME}" \
+      DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@${MIGRATE_PG_HOST}:${PG_HOST_PORT}/${SANDBOX_DB_NAME}" \
         pnpm --silent migrate >&2
     else
       echo "==> E2E_SANDBOX_DB_URL set, caller is responsible for sandbox DB lifecycle"

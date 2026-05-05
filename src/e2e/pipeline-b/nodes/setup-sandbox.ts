@@ -21,7 +21,13 @@ export async function setupSandboxNode(state: PipelineBStateType): Promise<Parti
   const result = await runScript(
     deployScript,
     ['provision', `--branch=${state.sourceBranch}`, `--out-handle=${handleFile}`],
-    { timeout: 600_000, cwd: workDir },
+    {
+      timeout: 600_000,
+      cwd: workDir,
+      // chatops 容器内调 deploy.sh 时，PG host 不能是 localhost（容器内没 PG）；
+      // 'postgres' 是 chatops_default 网络上的 docker DNS 别名，指向 chatops-postgres-1。
+      env: { PG_HOST: 'postgres' },
+    },
   )
 
   if (result.exitCode !== 0) {
