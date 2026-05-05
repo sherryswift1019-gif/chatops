@@ -17,6 +17,17 @@ vi.mock('../../e2e/pipeline-b/run-script.js', () => ({
 
 vi.mock('../../db/repositories/e2e-target-projects.js', () => ({
   getE2eTargetProject: vi.fn(),
+  // 52c2ce7 起 create-summary-mr.ts 引入 extractGitlabPath；保持与真实实现一致的纯函数
+  // 行为（URL → 去 leading slash + .git 后缀；非 URL → 仅去 .git 后缀），便于未来如有
+  // 用例断言生成的 GitLab API URL 也能匹配。
+  extractGitlabPath: (gitlabRepo: string): string => {
+    try {
+      const url = new URL(gitlabRepo)
+      return url.pathname.replace(/^\//, '').replace(/\.git$/, '')
+    } catch {
+      return gitlabRepo.replace(/\.git$/, '')
+    }
+  },
 }))
 
 vi.mock('../../db/repositories/e2e-runs.js', () => ({

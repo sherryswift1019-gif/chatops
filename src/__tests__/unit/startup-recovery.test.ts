@@ -11,9 +11,13 @@ vi.mock('../../db/repositories/e2e-sandboxes.js', () => ({
   updateSandboxStatus: vi.fn(),
 }))
 
-vi.mock('../../db/repositories/e2e-target-projects.js', () => ({
-  getE2eTargetProject: vi.fn(),
-}))
+vi.mock('../../db/repositories/e2e-target-projects.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../db/repositories/e2e-target-projects.js')>()
+  return {
+    ...actual,
+    getE2eTargetProject: vi.fn(),
+  }
+})
 
 vi.mock('../../config/gitlab.js', () => ({
   resolveGitlabConfig: vi.fn(),

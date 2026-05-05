@@ -10,7 +10,7 @@ import {
 // 与 v44 (switch 行)。
 // 本测试仅验证 repository 行为。
 describe('pipeline-node-types repository', () => {
-  it('lists all 12 seeded node types (5 phase-0 + 6 phase-3 + switch)', async () => {
+  it('lists all 13 seeded node types (4 phase-0 + 6 phase-3 simple + fan_out + switch + invoke_target_script)', async () => {
     const types = await listNodeTypes()
     const keys = types.map(t => t.key).sort()
     expect(keys).toEqual([
@@ -20,6 +20,7 @@ describe('pipeline-node-types repository', () => {
       'fan_out',
       'file_read',
       'http',
+      'invoke_target_script',
       'llm_agent',
       'script',
       'sql_query',
@@ -40,9 +41,11 @@ describe('pipeline-node-types repository', () => {
     expect(t!.category).toBe('general')
   })
 
-  it('listEnabledNodeTypeKeys returns enabled-only set (5 phase-0 + T9-T14 + switch = 12)', async () => {
+  it('listEnabledNodeTypeKeys returns enabled-only set (4 phase-0 + 6 phase-3 simple + fan_out + switch + invoke_target_script = 13)', async () => {
     const keys = await listEnabledNodeTypeKeys()
-    // phase-0 5 + phase-3 6 (http/dm/db_update/sql_query/file_read/template_render/fan_out) + switch
+    // phase-0 4 (script/approval/llm_agent/wait_webhook; im_input removed in v54)
+    // + phase-3 6 simple (http/dm/db_update/sql_query/file_read/template_render)
+    // + phase-3 fan_out + v44 switch + v1000 invoke_target_script
     expect(keys.has('script')).toBe(true)
     expect(keys.has('approval')).toBe(true)
     expect(keys.has('llm_agent')).toBe(true)
@@ -57,6 +60,8 @@ describe('pipeline-node-types repository', () => {
     // T15 fan_out 现已启用
     expect(keys.has('fan_out')).toBe(true)
     expect(keys.has('switch')).toBe(true)
-    expect(keys.size).toBe(12)
+    // v1000 E2E 自动化测试模块新增
+    expect(keys.has('invoke_target_script')).toBe(true)
+    expect(keys.size).toBe(13)
   })
 })
