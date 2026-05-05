@@ -102,8 +102,15 @@ case "$ACTION" in
         -c "CREATE DATABASE \"${SANDBOX_DB_NAME}\""
       SANDBOX_DB_AUTO_CREATED=true
       echo "==> Running chatops migration into sandbox DB..."
-      DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@${MIGRATE_PG_HOST}:${PG_HOST_PORT}/${SANDBOX_DB_NAME}" \
-        pnpm --silent migrate >&2
+      # 用 chatops:latest 镜像跑一次性 migrate 容器：自带源码 + node_modules + tsx，
+      # 不依赖 caller 环境（host 或 chatops 容器内）。容器接到 chatops_default 网络
+      # 用 'postgres' DNS 别名连 PG。
+      docker run --rm \
+        --network chatops_default \
+        -e DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@postgres:${PG_HOST_PORT}/${SANDBOX_DB_NAME}" \
+        --entrypoint="" \
+        chatops:latest \
+        node --import tsx/esm src/db/migrate.ts >&2
     else
       echo "==> E2E_SANDBOX_DB_URL set, caller is responsible for sandbox DB lifecycle"
     fi
