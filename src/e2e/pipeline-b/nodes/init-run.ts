@@ -20,6 +20,7 @@ export async function initRunNode(state: PipelineBStateType): Promise<Partial<Pi
       sourceBranch: state.sourceBranch,
       iterationBranch: '',
       scenarioFilter: state.scenarioFilter,
+      governorState: state.governorState as unknown as Record<string, unknown>,
     })
     runId = created.id
     console.log(`[PipelineB:initRun] cold-start: created e2e_runs row id=${runId}`)

@@ -142,6 +142,47 @@ describe('POST /e2e-runs', () => {
     expect(runPipelineB).toHaveBeenCalledWith(expect.objectContaining({ sourceBranch: 'main' }))
     await app.close()
   })
+
+  it('persists default governorState (含 limits) into DB', async () => {
+    const app = await buildApp()
+    const r = await app.inject({
+      method: 'POST',
+      url: '/e2e-runs',
+      payload: { targetProjectId: 'chatops' },
+    })
+    expect(r.statusCode).toBe(202)
+    const body = r.json()
+    const run = await getE2eRun(BigInt(body.runId))
+    expect(run).not.toBeNull()
+    const gs = run!.governorState as { limits?: Record<string, number>; totalAttempts?: number; runStartedAt?: number }
+    expect(gs.limits).toBeDefined()
+    expect(gs.limits!.maxTotalAttempts).toBe(30)
+    expect(gs.limits!.maxRunHours).toBe(4)
+    expect(gs.limits!.maxPerScenarioAttempts).toBe(3)
+    expect(gs.totalAttempts).toBe(0)
+    expect(typeof gs.runStartedAt).toBe('number')
+    await app.close()
+  })
+
+  it('persists governorOverrides into DB.governor_state.limits', async () => {
+    const app = await buildApp()
+    const r = await app.inject({
+      method: 'POST',
+      url: '/e2e-runs',
+      payload: {
+        targetProjectId: 'chatops',
+        governorOverrides: { maxRunHours: 2, maxTotalAttempts: 10 },
+      },
+    })
+    expect(r.statusCode).toBe(202)
+    const body = r.json()
+    const run = await getE2eRun(BigInt(body.runId))
+    const gs = run!.governorState as { limits?: Record<string, number> }
+    expect(gs.limits!.maxRunHours).toBe(2)
+    expect(gs.limits!.maxTotalAttempts).toBe(10)
+    expect(gs.limits!.maxPerScenarioAttempts).toBe(3)
+    await app.close()
+  })
 })
 
 describe('POST /e2e-runs/:runId/abort', () => {

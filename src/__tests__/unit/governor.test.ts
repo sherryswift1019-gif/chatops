@@ -1,6 +1,11 @@
 // src/__tests__/unit/governor.test.ts
 import { describe, it, expect } from 'vitest'
-import { governorCheck, isScenarioOverBudget } from '../../e2e/pipeline-b/governor.js'
+import {
+  governorCheck,
+  isScenarioOverBudget,
+  buildInitialGovernorState,
+  DEFAULT_GOVERNOR_LIMITS,
+} from '../../e2e/pipeline-b/governor.js'
 import type { GovernorState } from '../../e2e/pipeline-b/types.js'
 
 function makeGovernorState(overrides: Partial<GovernorState> = {}): GovernorState {
@@ -100,5 +105,37 @@ describe('isScenarioOverBudget', () => {
       },
     })
     expect(isScenarioOverBudget('s1', state)).toBe(true)
+  })
+})
+
+describe('buildInitialGovernorState', () => {
+  it('无 overrides → 默认 limits + 零计数器', () => {
+    const before = Date.now()
+    const state = buildInitialGovernorState()
+    const after = Date.now()
+
+    expect(state.limits.maxTotalAttempts).toBe(30)
+    expect(state.limits.maxRunHours).toBe(4)
+    expect(state.limits.maxPerScenarioAttempts).toBe(3)
+    expect(state.limits.maxQueuedRuns).toBe(2)
+    expect(state.totalAttempts).toBe(0)
+    expect(state.totalElapsedMs).toBe(0)
+    expect(state.perScenarioAttempts).toEqual({})
+    expect(state.runStartedAt).toBeGreaterThanOrEqual(before)
+    expect(state.runStartedAt).toBeLessThanOrEqual(after)
+  })
+
+  it('overrides 单字段 → 仅该字段被覆盖，其余保持默认', () => {
+    const state = buildInitialGovernorState({ maxRunHours: 1 })
+    expect(state.limits.maxRunHours).toBe(1)
+    expect(state.limits.maxTotalAttempts).toBe(30)
+    expect(state.limits.maxPerScenarioAttempts).toBe(3)
+  })
+
+  it('DEFAULT_GOVERNOR_LIMITS 导出可被外部直接读取', () => {
+    expect(DEFAULT_GOVERNOR_LIMITS.maxTotalAttempts).toBe(30)
+    expect(DEFAULT_GOVERNOR_LIMITS.maxRunHours).toBe(4)
+    expect(DEFAULT_GOVERNOR_LIMITS.maxPerScenarioAttempts).toBe(3)
+    expect(DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns).toBe(2)
   })
 })

@@ -1,17 +1,16 @@
 // src/e2e/pipeline-b/runner.ts
 import { buildPipelineBGraph } from './graph.js'
 import { teardownSandboxNode } from './nodes/teardown-sandbox.js'
-import { updateE2eRunStatus, countQueuedE2eRuns } from '../../db/repositories/e2e-runs.js'
-import type { PipelineBStateType, GovernorState, ImContext } from './types.js'
+import {
+  updateE2eRunStatus,
+  updateE2eRunGovernorState,
+  countQueuedE2eRuns,
+} from '../../db/repositories/e2e-runs.js'
+import { buildInitialGovernorState, DEFAULT_GOVERNOR_LIMITS } from './governor.js'
+import type { PipelineBStateType, ImContext } from './types.js'
 import { notifyRunAborted } from './im-notifier.js'
 
-const MAX_QUEUED_RUNS = 2
-const DEFAULT_GOVERNOR_LIMITS = {
-  maxPerScenarioAttempts: 3,
-  maxRunHours: 4,
-  maxTotalAttempts: 30,
-  maxQueuedRuns: MAX_QUEUED_RUNS,
-}
+const MAX_QUEUED_RUNS = DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns
 
 export interface RunPipelineBOptions {
   targetProjectId: string
@@ -36,18 +35,7 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
     )
   }
 
-  const limits = {
-    ...DEFAULT_GOVERNOR_LIMITS,
-    ...opts.governorOverrides,
-  }
-
-  const governorState: GovernorState = {
-    runStartedAt: Date.now(),
-    totalAttempts: 0,
-    totalElapsedMs: 0,
-    perScenarioAttempts: {},
-    limits,
-  }
+  const governorState = buildInitialGovernorState(opts.governorOverrides)
 
   const initialState: Partial<PipelineBStateType> = {
     runId: 0n,
@@ -80,11 +68,23 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
     lastKnownState = result
     const pending = result.pendingScenarios ?? []
     finalStatus = pending.length === 0 ? 'passed' : 'failed'
+    // 把最终内存版本 governorState（含真实 counters）写回 DB，让详情页反映 run 结束时的进度。
+    // status 已由内层节点（finalize-failed / create-summary-mr）写入，此处只更新 governorState。
+    if (result.runId) {
+      await updateE2eRunGovernorState(
+        result.runId,
+        result.governorState as unknown as Record<string, unknown>,
+      ).catch((e) => console.warn('[runner] persist governorState failed:', e))
+    }
     return { runId: result.runId, status: finalStatus }
   } catch (err) {
     const runId = (lastKnownState as PipelineBStateType).runId
+    const finalGovernor = (lastKnownState as PipelineBStateType).governorState
     if (runId) {
-      await updateE2eRunStatus(runId, 'aborted', { abortReason: String(err) }).catch(() => undefined)
+      await updateE2eRunStatus(runId, 'aborted', {
+        abortReason: String(err),
+        governorState: finalGovernor as unknown as Record<string, unknown>,
+      }).catch(() => undefined)
     }
     await teardownSandboxNode(lastKnownState as PipelineBStateType).catch(() => undefined)
     if (opts.imContext) {

@@ -10,13 +10,13 @@ export interface E2eRunDTO {
   iterationBranch: string
   status: 'pending' | 'running' | 'awaiting_fix' | 'passed' | 'failed' | 'aborted'
   governorState: {
-    perScenarioAttempts: Record<string, number>
-    totalAttempts: number
-    runStartedAt: number
-    limits: {
-      maxPerScenarioAttempts: number
-      maxRunHours: number
-      maxTotalAttempts: number
+    perScenarioAttempts?: Record<string, number>
+    totalAttempts?: number
+    runStartedAt?: number
+    limits?: {
+      maxPerScenarioAttempts?: number
+      maxRunHours?: number
+      maxTotalAttempts?: number
     }
   }
   summaryMrUrl: string | null
@@ -93,6 +93,19 @@ export interface CreateRunBody {
   }
 }
 
+export interface ScenarioOption {
+  id: string
+  name: string
+  tags: string[]
+  specPath: string
+}
+
+export interface ScenarioOptionsResponse {
+  scenarios: ScenarioOption[]
+  allTags: string[]
+  ref: string
+}
+
 export const e2eRunsApi = {
   list: (params: { projectId?: string; limit?: number; offset?: number }) =>
     client.get<{ runs: E2eRunDTO[]; total: number }>('/e2e-runs', { params }).then(r => r.data),
@@ -105,4 +118,9 @@ export const e2eRunsApi = {
 
   abort: (runId: string, reason?: string) =>
     client.post<{ ok: true }>(`/e2e-runs/${runId}/abort`, { reason }).then(r => r.data),
+
+  listScenarioOptions: (projectId: string, ref?: string) =>
+    client.get<ScenarioOptionsResponse>('/e2e-runs/scenario-options', {
+      params: { projectId, ...(ref ? { ref } : {}) },
+    }).then(r => r.data),
 }

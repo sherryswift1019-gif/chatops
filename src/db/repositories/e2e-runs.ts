@@ -37,12 +37,22 @@ function mapRow(r: Record<string, unknown>): E2eRun {
 }
 
 export async function createE2eRun(
-  data: Pick<E2eRun, 'targetProjectId' | 'triggerType' | 'triggerActor' | 'sourceBranch' | 'iterationBranch' | 'scenarioFilter'>,
+  data: Pick<E2eRun, 'targetProjectId' | 'triggerType' | 'triggerActor' | 'sourceBranch' | 'iterationBranch' | 'scenarioFilter'> & {
+    governorState?: Record<string, unknown>
+  },
 ): Promise<E2eRun> {
   const { rows } = await getPool().query(
-    `INSERT INTO e2e_runs (target_project_id, trigger_type, trigger_actor, source_branch, iteration_branch, scenario_filter)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [data.targetProjectId, data.triggerType, data.triggerActor, data.sourceBranch, data.iterationBranch, data.scenarioFilter ? JSON.stringify(data.scenarioFilter) : null],
+    `INSERT INTO e2e_runs (target_project_id, trigger_type, trigger_actor, source_branch, iteration_branch, scenario_filter, governor_state)
+     VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::jsonb, '{}'::jsonb)) RETURNING *`,
+    [
+      data.targetProjectId,
+      data.triggerType,
+      data.triggerActor,
+      data.sourceBranch,
+      data.iterationBranch,
+      data.scenarioFilter ? JSON.stringify(data.scenarioFilter) : null,
+      data.governorState ? JSON.stringify(data.governorState) : null,
+    ],
   )
   return mapRow(rows[0])
 }
@@ -66,6 +76,16 @@ export async function updateE2eRunStatus(
        governor_state = COALESCE($6::jsonb, governor_state)
      WHERE id = $1`,
     [id, status, extra?.finishedAt ?? null, extra?.abortReason ?? null, extra?.summaryMrUrl ?? null, extra?.governorState ? JSON.stringify(extra.governorState) : null],
+  )
+}
+
+export async function updateE2eRunGovernorState(
+  id: bigint,
+  governorState: Record<string, unknown>,
+): Promise<void> {
+  await getPool().query(
+    `UPDATE e2e_runs SET governor_state = $2::jsonb WHERE id = $1`,
+    [id, JSON.stringify(governorState)],
   )
 }
 

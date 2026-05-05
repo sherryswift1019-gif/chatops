@@ -8,6 +8,8 @@ import {
 import { listScenarioRuns } from '../../db/repositories/e2e-scenario-runs.js'
 import { getSandboxByRunId } from '../../db/repositories/e2e-sandboxes.js'
 import { runPipelineB } from '../../e2e/pipeline-b/runner.js'
+import { loadScenariosFromGitlab } from '../../e2e/pipeline-b/playbook/load-from-gitlab.js'
+import { buildInitialGovernorState } from '../../e2e/pipeline-b/governor.js'
 import type { E2eRun } from '../../db/repositories/e2e-runs.js'
 import type { E2eScenarioRun } from '../../db/repositories/e2e-scenario-runs.js'
 import type { E2eSandbox } from '../../db/repositories/e2e-sandboxes.js'
@@ -51,6 +53,24 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
     },
   )
 
+  app.get<{ Querystring: { projectId?: string; ref?: string } }>(
+    '/e2e-runs/scenario-options',
+    async (req, reply) => {
+      const { projectId, ref } = req.query
+      if (!projectId) return reply.status(400).send({ error: 'projectId required' })
+      try {
+        const loaded = await loadScenariosFromGitlab(projectId, ref)
+        const allTags = [...new Set(loaded.scenarios.flatMap((s) => s.tags))].sort()
+        return reply.send({ scenarios: loaded.scenarios, allTags, ref: loaded.ref })
+      } catch (err) {
+        return reply.status(502).send({
+          error: 'gitlab_unavailable',
+          message: err instanceof Error ? err.message : String(err),
+        })
+      }
+    },
+  )
+
   app.get<{ Params: { runId: string } }>('/e2e-runs/:runId', async (req, reply) => {
     const run = await getE2eRun(BigInt(req.params.runId))
     if (!run) return reply.status(404).send({ error: 'run not found' })
@@ -80,6 +100,9 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
 
     // 先 createE2eRun 拿 runId 立即返回；pipeline 在后台跑，避免 HTTP request
     // 阻塞几十分钟。错误由 runPipelineB 内部的 try/catch 写 e2e_runs.status='aborted'。
+    // governorState 含 limits + 零计数器，详情页一开始就能展示静态 limits；runner 跑完
+    // 会用最终内存版本（带最终 counters）覆盖回 DB。
+    const governorState = buildInitialGovernorState(governorOverrides)
     const { createE2eRun } = await import('../../db/repositories/e2e-runs.js')
     const created = await createE2eRun({
       targetProjectId,
@@ -88,6 +111,7 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
       sourceBranch: sourceBranch ?? 'main',
       iterationBranch: '',
       scenarioFilter: scenarioFilter ?? null,
+      governorState: governorState as unknown as Record<string, unknown>,
     })
 
     void runPipelineB({

@@ -45,6 +45,11 @@ export const e2eApi = {
   listSpecs: (projectId = 'chatops') =>
     axios.get<E2eSpec[]>('/admin/e2e-specs', { params: { projectId } }).then(r => r.data),
 
+  listBranches: (projectId: string) =>
+    axios.get<{ branches: string[]; defaultBranch: string }>(
+      `/admin/e2e-targets/${projectId}/branches`,
+    ).then(r => r.data),
+
   syncSpecs: (projectId = 'chatops') =>
     axios.post<{ synced: number; specs: E2eSpec[] }>('/admin/e2e-specs/sync', { targetProjectId: projectId }).then(r => r.data),
 
@@ -56,4 +61,7 @@ export const e2eApi = {
 
   skipSpec: (id: string) =>
     axios.put<E2eSpec>(`/admin/e2e-specs/${id}`, { skip: true }).then(r => r.data),
+
+  unskipSpec: (id: string) =>
+    axios.put<E2eSpec>(`/admin/e2e-specs/${id}`, { generationStatus: 'pending' }).then(r => r.data),
 }

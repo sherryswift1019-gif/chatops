@@ -1,7 +1,7 @@
 // web/src/pages/E2eSpecsPage.tsx
 import { useState, useEffect, useCallback } from 'react'
-import { Table, Tag, Button, Space, message, Typography, Tooltip, Badge } from 'antd'
-import { ReloadOutlined, ThunderboltOutlined, StopOutlined } from '@ant-design/icons'
+import { Card, Table, Tag, Button, Space, message, Typography, Tooltip, Badge } from 'antd'
+import { ReloadOutlined, ThunderboltOutlined, StopOutlined, RollbackOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { e2eApi, type E2eSpec, type GenerationStatus } from '../api/e2e'
 
@@ -83,6 +83,15 @@ export default function E2eSpecsPage() {
     }
   }
 
+  const handleUnskip = async (spec: E2eSpec) => {
+    try {
+      await e2eApi.unskipSpec(spec.id)
+      await load()
+    } catch {
+      message.error('操作失败')
+    }
+  }
+
   const columns: ColumnsType<E2eSpec> = [
     {
       title: '规约路径',
@@ -143,6 +152,13 @@ export default function E2eSpecsPage() {
                 </Button>
               </Tooltip>
             )}
+            {spec.generationStatus === 'skipped' && (
+              <Tooltip title="恢复为待生成状态">
+                <Button size="small" icon={<RollbackOutlined />} onClick={() => handleUnskip(spec)}>
+                  取消跳过
+                </Button>
+              </Tooltip>
+            )}
           </Space>
         )
       },
@@ -150,11 +166,14 @@ export default function E2eSpecsPage() {
   ]
 
   return (
-    <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Typography.Title level={4} style={{ margin: 0 }}>测试规约管理</Typography.Title>
-        <Button icon={<ReloadOutlined />} onClick={syncAndLoad} loading={syncing || loading}>同步规约</Button>
-      </Space>
+    <Card
+      title="测试规约管理"
+      extra={
+        <Button icon={<ReloadOutlined />} onClick={syncAndLoad} loading={syncing || loading}>
+          同步规约
+        </Button>
+      }
+    >
       <Table
         rowKey="id"
         columns={columns}
@@ -163,6 +182,6 @@ export default function E2eSpecsPage() {
         pagination={{ pageSize: 20 }}
         locale={{ emptyText: '暂无测试规约。在仓库 docs/test-specs/ 目录下创建 markdown spec 文件后，通过 API 或 IM 触发注册。' }}
       />
-    </div>
+    </Card>
   )
 }

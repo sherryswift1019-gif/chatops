@@ -1,13 +1,13 @@
 // web/src/pages/E2eRunsPage.tsx
 import { useState, useEffect, useCallback } from 'react'
 import {
-  Table, Tag, Button, Space, Modal, Form, Select, Input,
+  Card, Table, Tag, Button, Space, Modal, Form, Select,
   InputNumber, Collapse, Radio, message, Typography, Popconfirm,
 } from 'antd'
-import { PlusOutlined, ReloadOutlined, StopOutlined } from '@ant-design/icons'
+import { PlusOutlined, ReloadOutlined, StopOutlined, ExclamationCircleTwoTone } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
-import { e2eRunsApi, type E2eRunDTO } from '../api/e2e-runs'
+import { e2eRunsApi, type E2eRunDTO, type ScenarioOption } from '../api/e2e-runs'
 import { e2eApi, type E2eTargetProject } from '../api/e2e'
 
 const { Link, Text } = Typography
@@ -32,11 +32,85 @@ interface CreateFormValues {
   targetProjectId: string
   sourceBranch: string
   filterMode: ScenarioFilterMode
-  filterTags: string
-  filterIds: string
+  filterTags: string[]
+  filterIds: string[]
   maxPerScenarioAttempts?: number
   maxRunHours?: number
   maxTotalAttempts?: number
+}
+
+function buildBranchOptions(branches: string[], currentValue: string | undefined, defaultBranch: string | null) {
+  const set = new Set(branches)
+  const options = branches.map((b) => ({
+    value: b,
+    label: b === defaultBranch
+      ? <span>{b} <Tag color="blue" style={{ marginLeft: 4 }}>default</Tag></span>
+      : <span>{b}</span>,
+  }))
+  if (currentValue && !set.has(currentValue)) {
+    options.unshift({
+      value: currentValue,
+      label: (
+        <span>
+          <ExclamationCircleTwoTone twoToneColor="#faad14" /> {currentValue}（不在当前仓库）
+        </span>
+      ),
+    })
+  }
+  return options
+}
+
+function buildTagOptions(allTags: string[], currentValues: string[] | undefined) {
+  const set = new Set(allTags)
+  const options: Array<{ value: string; label: React.ReactNode }> = allTags.map((t) => ({
+    value: t,
+    label: <span>{t}</span>,
+  }))
+  for (const v of currentValues ?? []) {
+    if (!set.has(v)) {
+      options.push({
+        value: v,
+        label: (
+          <span>
+            <ExclamationCircleTwoTone twoToneColor="#faad14" /> {v}（不在当前分支 playbook）
+          </span>
+        ),
+      })
+    }
+  }
+  return options
+}
+
+function buildScenarioOptions(scenarios: ScenarioOption[], currentValues: string[] | undefined) {
+  const known = new Map(scenarios.map((s) => [s.id, s]))
+  const options: Array<{ value: string; label: React.ReactNode; searchText: string }> = scenarios.map((s) => ({
+    value: s.id,
+    label: (
+      <span>
+        {s.name} <span style={{ color: '#999', fontSize: 11 }}>({s.id})</span>
+        {s.tags.length > 0 && (
+          <span style={{ marginLeft: 6 }}>
+            {s.tags.map((t) => <Tag key={t} style={{ marginRight: 2 }}>{t}</Tag>)}
+          </span>
+        )}
+      </span>
+    ),
+    searchText: `${s.id} ${s.name} ${s.tags.join(' ')}`.toLowerCase(),
+  }))
+  for (const v of currentValues ?? []) {
+    if (!known.has(v)) {
+      options.push({
+        value: v,
+        label: (
+          <span>
+            <ExclamationCircleTwoTone twoToneColor="#faad14" /> {v}（不在当前分支 playbook）
+          </span>
+        ),
+        searchText: v.toLowerCase(),
+      })
+    }
+  }
+  return options
 }
 
 function CreateRunModal({
@@ -53,6 +127,70 @@ function CreateRunModal({
   const [form] = Form.useForm<CreateFormValues>()
   const [loading, setLoading] = useState(false)
   const filterMode = Form.useWatch('filterMode', form) as ScenarioFilterMode | undefined
+  const targetProjectId = Form.useWatch('targetProjectId', form) as string | undefined
+  const sourceBranch = Form.useWatch('sourceBranch', form) as string | undefined
+  const filterTags = Form.useWatch('filterTags', form) as string[] | undefined
+  const filterIds = Form.useWatch('filterIds', form) as string[] | undefined
+
+  const [branches, setBranches] = useState<string[]>([])
+  const [defaultBranch, setDefaultBranch] = useState<string | null>(null)
+  const [branchesLoading, setBranchesLoading] = useState(false)
+
+  const [scenarios, setScenarios] = useState<ScenarioOption[]>([])
+  const [allTags, setAllTags] = useState<string[]>([])
+  const [scenarioOptsLoading, setScenarioOptsLoading] = useState(false)
+
+  // targetProjectId 变化 → 加载分支清单 + 重置 sourceBranch
+  useEffect(() => {
+    if (!targetProjectId) {
+      setBranches([])
+      setDefaultBranch(null)
+      return
+    }
+    let canceled = false
+    setBranchesLoading(true)
+    e2eApi.listBranches(targetProjectId).then((res) => {
+      if (canceled) return
+      setBranches(res.branches)
+      setDefaultBranch(res.defaultBranch)
+      const cur = form.getFieldValue('sourceBranch') as string | undefined
+      if (!cur || !res.branches.includes(cur)) {
+        form.setFieldValue('sourceBranch', res.defaultBranch)
+      }
+      // 切项目时清空场景过滤选择（旧值多半不在新仓库）
+      form.setFieldsValue({ filterIds: [], filterTags: [] })
+    }).catch(() => {
+      if (canceled) return
+      message.error('加载分支列表失败')
+      setBranches([])
+    }).finally(() => {
+      if (!canceled) setBranchesLoading(false)
+    })
+    return () => { canceled = true }
+  }, [targetProjectId, form])
+
+  // (targetProjectId, sourceBranch) 变化 → 加载 scenarios + tags
+  useEffect(() => {
+    if (!targetProjectId || !sourceBranch) {
+      setScenarios([])
+      setAllTags([])
+      return
+    }
+    let canceled = false
+    setScenarioOptsLoading(true)
+    e2eRunsApi.listScenarioOptions(targetProjectId, sourceBranch).then((res) => {
+      if (canceled) return
+      setScenarios(res.scenarios)
+      setAllTags(res.allTags)
+    }).catch(() => {
+      if (canceled) return
+      setScenarios([])
+      setAllTags([])
+    }).finally(() => {
+      if (!canceled) setScenarioOptsLoading(false)
+    })
+    return () => { canceled = true }
+  }, [targetProjectId, sourceBranch])
 
   const handleOk = async () => {
     const values = await form.validateFields()
@@ -78,13 +216,13 @@ function CreateRunModal({
       onOk={handleOk}
       onCancel={onClose}
       confirmLoading={loading}
-      width={520}
+      width={560}
       destroyOnClose
     >
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ sourceBranch: 'main', filterMode: 'all' }}
+        initialValues={{ filterMode: 'all', filterTags: [], filterIds: [] }}
       >
         <Form.Item name="targetProjectId" label="被测项目" rules={[{ required: true }]}>
           <Select
@@ -96,8 +234,18 @@ function CreateRunModal({
             }
           />
         </Form.Item>
-        <Form.Item name="sourceBranch" label="源分支" rules={[{ required: true }]}>
-          <Input placeholder="main" />
+        <Form.Item name="sourceBranch" label="源分支" rules={[{ required: true, message: '请选择源分支' }]}>
+          <Select
+            showSearch
+            loading={branchesLoading}
+            placeholder={targetProjectId ? '选择分支' : '请先选择被测项目'}
+            disabled={!targetProjectId}
+            options={buildBranchOptions(branches, sourceBranch, defaultBranch)}
+            filterOption={(input, opt) =>
+              String((opt as { value?: string } | undefined)?.value ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+            notFoundContent={branchesLoading ? '加载中…' : '无可用分支'}
+          />
         </Form.Item>
         <Form.Item name="filterMode" label="场景过滤">
           <Radio.Group>
@@ -110,20 +258,38 @@ function CreateRunModal({
           <Form.Item
             name="filterTags"
             label="Tag 列表"
-            extra="多个 tag 用英文逗号分隔"
-            rules={[{ required: true, message: '请输入至少一个 tag' }]}
+            rules={[{ required: true, type: 'array', min: 1, message: '请至少选一个 tag' }]}
           >
-            <Input placeholder="smoke,login" />
+            <Select
+              mode="multiple"
+              showSearch
+              loading={scenarioOptsLoading}
+              placeholder="选择 tag"
+              options={buildTagOptions(allTags, filterTags)}
+              filterOption={(input, opt) =>
+                String((opt as { value?: string } | undefined)?.value ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              notFoundContent={scenarioOptsLoading ? '加载中…' : '该分支 playbook 无 tag'}
+            />
           </Form.Item>
         )}
         {filterMode === 'id' && (
           <Form.Item
             name="filterIds"
-            label="场景 ID 列表"
-            extra="多个 ID 用英文逗号分隔"
-            rules={[{ required: true, message: '请输入至少一个场景 ID' }]}
+            label="场景列表"
+            rules={[{ required: true, type: 'array', min: 1, message: '请至少选一个场景' }]}
           >
-            <Input placeholder="login-success,checkout-flow" />
+            <Select
+              mode="multiple"
+              showSearch
+              loading={scenarioOptsLoading}
+              placeholder="选择场景"
+              options={buildScenarioOptions(scenarios, filterIds)}
+              filterOption={(input, opt) =>
+                String((opt as { searchText?: string } | undefined)?.searchText ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              notFoundContent={scenarioOptsLoading ? '加载中…' : '该分支无 scenario'}
+            />
           </Form.Item>
         )}
         <Collapse
@@ -157,11 +323,11 @@ function buildCreateBody(values: CreateFormValues) {
     targetProjectId: values.targetProjectId,
     sourceBranch: values.sourceBranch,
   }
-  if (values.filterMode === 'tag' && values.filterTags) {
-    body.scenarioFilter = { tags: values.filterTags.split(',').map(s => s.trim()).filter(Boolean) }
+  if (values.filterMode === 'tag' && values.filterTags?.length) {
+    body.scenarioFilter = { tags: values.filterTags }
   }
-  if (values.filterMode === 'id' && values.filterIds) {
-    body.scenarioFilter = { ids: values.filterIds.split(',').map(s => s.trim()).filter(Boolean) }
+  if (values.filterMode === 'id' && values.filterIds?.length) {
+    body.scenarioFilter = { ids: values.filterIds }
   }
   const overrides: NonNullable<typeof body.governorOverrides> = {}
   if (values.maxPerScenarioAttempts != null) overrides.maxPerScenarioAttempts = values.maxPerScenarioAttempts
@@ -300,16 +466,17 @@ export default function E2eRunsPage() {
   ]
 
   return (
-    <div style={{ padding: 24 }}>
-      <Space style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
-        <Typography.Title level={4} style={{ margin: 0 }}>E2E 测试 Runs</Typography.Title>
+    <Card
+      title="E2E 测试 Runs"
+      extra={
         <Space>
           <Button icon={<ReloadOutlined />} onClick={() => load()} loading={loading}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
             新建 Run
           </Button>
         </Space>
-      </Space>
+      }
+    >
       <Table
         rowKey="id"
         columns={columns}
@@ -330,6 +497,6 @@ export default function E2eRunsPage() {
         onClose={() => setCreateOpen(false)}
         onCreated={() => load(1)}
       />
-    </div>
+    </Card>
   )
 }

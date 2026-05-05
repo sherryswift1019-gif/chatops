@@ -64,84 +64,44 @@ function formatElapsed(startMs: number): string {
 
 const ACTIVE_STATUSES = new Set<E2eRunDTO['status']>(['running', 'awaiting_fix', 'pending'])
 
-function RunHeader({
-  run,
-  projectName,
-  onAbort,
-  onRefresh,
-  aborting,
-}: {
-  run: E2eRunDTO
-  projectName: string
-  onAbort: () => void
-  onRefresh: () => void
-  aborting: boolean
-}) {
-  const statusCfg = RUN_STATUS_CONFIG[run.status] ?? { color: 'default', label: run.status }
+function RunSummary({ run }: { run: E2eRunDTO }) {
   const gs = run.governorState
-  const elapsed = formatElapsed(gs.runStartedAt)
+  const limits = gs?.limits
+  const totalAttempts = gs?.totalAttempts ?? 0
+  const elapsed = gs?.runStartedAt ? formatElapsed(gs.runStartedAt) : '—'
 
   return (
-    <Card style={{ marginBottom: 16 }}>
-      <Space direction="vertical" style={{ width: '100%' }} size={8}>
-        <Space wrap>
-          <Title level={5} style={{ margin: 0 }}>
-            Run #{run.id} · {projectName}
-          </Title>
-          <Tag color={statusCfg.color}>{statusCfg.label}</Tag>
-        </Space>
-        <Space wrap>
-          <Text type="secondary">
-            尝试 {gs.totalAttempts}/{gs.limits.maxTotalAttempts} ·
-            用时 {elapsed} / {gs.limits.maxRunHours}h ·
-            单场景重试 ≤ {gs.limits.maxPerScenarioAttempts}
-          </Text>
-        </Space>
-        <Space wrap>
-          <Text type="secondary">源分支：</Text>
-          <Text code>{run.sourceBranch}</Text>
-          <Text type="secondary">迭代分支：</Text>
-          {run.iterationBranch ? (
-            <Link
-              href={`https://gitlab.example.com/-/tree/${run.iterationBranch}`}
-              target="_blank"
-            >
-              <Text code>{run.iterationBranch}</Text>
-            </Link>
-          ) : <Text type="secondary">—</Text>}
-        </Space>
-        {run.summaryMrUrl && (
-          <Space>
-            <Text type="secondary">汇总 MR：</Text>
-            <Link href={run.summaryMrUrl} target="_blank">查看 MR</Link>
-          </Space>
-        )}
-        {run.abortReason && (
-          <Text type="danger">中止原因：{run.abortReason}</Text>
-        )}
-        <Space>
-          <Button icon={<ReloadOutlined />} size="small" onClick={onRefresh}>刷新</Button>
-          {ACTIVE_STATUSES.has(run.status) && (
-            <Popconfirm
-              title="确认中止此 Run？"
-              onConfirm={onAbort}
-              okText="中止"
-              cancelText="取消"
-              okButtonProps={{ danger: true }}
-            >
-              <Button
-                size="small"
-                danger
-                icon={<StopOutlined />}
-                loading={aborting}
-              >
-                中止
-              </Button>
-            </Popconfirm>
-          )}
-        </Space>
+    <Space direction="vertical" style={{ width: '100%' }} size={8}>
+      <Space wrap>
+        <Text type="secondary">
+          尝试 {totalAttempts}/{limits?.maxTotalAttempts ?? '—'} ·
+          用时 {elapsed} / {limits?.maxRunHours ?? '—'}h ·
+          单场景重试 ≤ {limits?.maxPerScenarioAttempts ?? '—'}
+        </Text>
       </Space>
-    </Card>
+      <Space wrap>
+        <Text type="secondary">源分支：</Text>
+        <Text code>{run.sourceBranch}</Text>
+        <Text type="secondary">迭代分支：</Text>
+        {run.iterationBranch ? (
+          <Link
+            href={`https://gitlab.example.com/-/tree/${run.iterationBranch}`}
+            target="_blank"
+          >
+            <Text code>{run.iterationBranch}</Text>
+          </Link>
+        ) : <Text type="secondary">—</Text>}
+      </Space>
+      {run.summaryMrUrl && (
+        <Space>
+          <Text type="secondary">汇总 MR：</Text>
+          <Link href={run.summaryMrUrl} target="_blank">查看 MR</Link>
+        </Space>
+      )}
+      {run.abortReason && (
+        <Text type="danger">中止原因：{run.abortReason}</Text>
+      )}
+    </Space>
   )
 }
 
@@ -150,7 +110,7 @@ function SandboxCard({ sandbox }: { sandbox: E2eSandboxDTO }) {
   const { handle } = sandbox
 
   return (
-    <Card title="沙盒" size="small" style={{ marginBottom: 16 }}>
+    <Card type="inner" title="沙盒" size="small" style={{ marginBottom: 16 }}>
       <Descriptions column={2} size="small">
         <Descriptions.Item label="类型">{sandbox.kind}</Descriptions.Item>
         <Descriptions.Item label="状态">
@@ -225,7 +185,7 @@ function ScenarioTimeline({
 
   if (groups.size === 0) {
     return (
-      <Card title="场景时间线" size="small">
+      <Card type="inner" title="场景时间线" size="small">
         <Text type="secondary">暂无场景执行记录</Text>
       </Card>
     )
@@ -301,7 +261,7 @@ function ScenarioTimeline({
   })
 
   return (
-    <Card title="场景时间线" size="small">
+    <Card type="inner" title="场景时间线" size="small">
       <Collapse items={collapseItems} defaultActiveKey={Array.from(groups.keys())} />
     </Card>
   )
@@ -532,23 +492,49 @@ export default function E2eRunDetailPage() {
   if (loading) return <Spin style={{ display: 'block', margin: '64px auto' }} />
   if (!run) return <Text type="danger" style={{ padding: 24, display: 'block' }}>Run 不存在</Text>
 
+  const statusCfg = RUN_STATUS_CONFIG[run.status] ?? { color: 'default', label: run.status }
+
   return (
-    <div style={{ padding: 24, maxWidth: 960 }}>
-      <Button
-        type="text"
-        icon={<ArrowLeftOutlined />}
-        onClick={() => navigate('/e2e-runs')}
-        style={{ marginBottom: 12, paddingLeft: 0 }}
-      >
-        返回列表
-      </Button>
-      <RunHeader
-        run={run}
-        projectName={run.targetProjectId}
-        onAbort={handleAbort}
-        onRefresh={fetchDetail}
-        aborting={aborting}
-      />
+    <Card
+      title={
+        <Space>
+          <Button
+            type="text"
+            icon={<ArrowLeftOutlined />}
+            onClick={() => navigate('/e2e-runs')}
+            style={{ padding: '0 4px' }}
+          >
+            返回列表
+          </Button>
+          <Divider type="vertical" />
+          <Title level={5} style={{ margin: 0 }}>
+            Run #{run.id} · {run.targetProjectId}
+          </Title>
+          <Tag color={statusCfg.color}>{statusCfg.label}</Tag>
+        </Space>
+      }
+      extra={
+        <Space>
+          <Button icon={<ReloadOutlined />} size="small" onClick={fetchDetail}>刷新</Button>
+          {ACTIVE_STATUSES.has(run.status) && (
+            <Popconfirm
+              title="确认中止此 Run？"
+              onConfirm={handleAbort}
+              okText="中止"
+              cancelText="取消"
+              okButtonProps={{ danger: true }}
+            >
+              <Button size="small" danger icon={<StopOutlined />} loading={aborting}>
+                中止
+              </Button>
+            </Popconfirm>
+          )}
+        </Space>
+      }
+    >
+      <div style={{ marginBottom: 16 }}>
+        <RunSummary run={run} />
+      </div>
       {sandbox && <SandboxCard sandbox={sandbox} />}
       <ScenarioTimeline
         scenarioRuns={scenarioRuns}
@@ -558,6 +544,6 @@ export default function E2eRunDetailPage() {
         scenarioRun={evidenceSr}
         onClose={() => setEvidenceSr(null)}
       />
-    </div>
+    </Card>
   )
 }

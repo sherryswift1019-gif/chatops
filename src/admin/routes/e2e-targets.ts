@@ -6,6 +6,7 @@ import {
   extractGitlabPath,
 } from '../../db/repositories/e2e-target-projects.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
+import { listProjectBranches } from '../../agent/tools/list-gitlab-branches.js'
 
 export async function registerE2eTargetRoutes(app: FastifyInstance): Promise<void> {
   app.get('/e2e-targets', async (_req, reply) => {
@@ -16,6 +17,14 @@ export async function registerE2eTargetRoutes(app: FastifyInstance): Promise<voi
     const project = await getE2eTargetProject(req.params.id)
     if (!project) return reply.status(404).send({ error: 'not found' })
     return reply.send(project)
+  })
+
+  app.get<{ Params: { id: string } }>('/e2e-targets/:id/branches', async (req, reply) => {
+    const project = await getE2eTargetProject(req.params.id)
+    if (!project) return reply.status(404).send({ error: 'not found' })
+    const path = extractGitlabPath(project.gitlabRepo)
+    const branches = await listProjectBranches(path)
+    return reply.send({ branches, defaultBranch: project.defaultBranch })
   })
 
   app.get('/e2e-targets-gitlab-base-url', async (_req, reply) => {
