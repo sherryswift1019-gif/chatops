@@ -234,6 +234,8 @@ const SCHEMA_FILES = [
   'schema-v1000.sql',
   // v1001: e2e_runs status 加 awaiting_human_review；evidence_manifest 容量 32K→64K。
   'schema-v1001.sql',
+  // v1002: 修复 v1000 早期提交 INSERT 列错位导致 invoke_target_script.enabled=FALSE。
+  'schema-v1002.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
