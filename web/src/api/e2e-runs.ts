@@ -93,6 +93,9 @@ export interface EvidenceManifest {
   artifacts?: EvidenceArtifact[]
   errorMessage?: string | null
   meta?: Record<string, unknown> | null
+  // host Claude 跑挂 / 没写 manifest.json 时由 run-scenario.ts 兜底写入；
+  // 此时 acceptanceResults / claudeTrace / artifacts 都缺失
+  scenarioRunnerError?: string
   // pipeline-a legacy
   summary?: string
   contextHint?: string

@@ -20,7 +20,7 @@ vi.mock('../../pipeline/im-param-collector.js', () => ({
 
 vi.mock('../im-notifier.js', () => ({
   notifyAwaitHumanReview: vi.fn().mockResolvedValue(undefined),
-}), { virtual: true })
+}))
 
 import { awaitHumanReviewNode } from '../../e2e/pipeline-b/nodes/await-human-review.js'
 import { waitForImMessage } from '../../pipeline/im-param-collector.js'

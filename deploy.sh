@@ -130,7 +130,12 @@ case "$ACTION" in
     APP_DB_DSN="postgres://${PG_USER}:${PG_PASSWORD}@postgres:${PG_HOST_PORT}/${SANDBOX_DB_NAME}"
 
     echo "==> Provisioning sandbox network: ${SANDBOX_NET}, port: ${API_PORT}"
-    docker network create "${SANDBOX_NET}" 2>/dev/null || true
+    # 给网络打 chatops.e2e.role/runId label —— defense-in-depth：
+    # 即使代码兜底 teardown 漏了这条 sandbox，外部按 label 扫描也能识别清理。
+    docker network create \
+        --label "chatops.e2e.role=sandbox-net" \
+        --label "chatops.e2e.runId=${RUN_ID}" \
+        "${SANDBOX_NET}" 2>/dev/null || true
     # endpoints 用容器视角（chatops 容器跑 e2e Claude 子进程，通过 chatops_default 网络
     # + sandbox 容器名访问，端口是 sandbox 内部 listen 的 3000）。host 视角的 localhost:${API_PORT}
     # 也保留为 host_web_base_url 供本机直连。
@@ -219,6 +224,7 @@ EOF
     API_PORT=$(node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.apiPort))" "$HANDLE")
     SANDBOX_NET=$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs.network)" "$HANDLE")
     HANDLE_DB_DSN=$(node -e "const e=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).endpoints||{};process.stdout.write(e.app_db_dsn||'')" "$HANDLE")
+    HANDLE_RUN_ID=$(node -e "const r=JSON.parse(require('fs').readFileSync(process.argv[1],'utf8')).internalRefs;process.stdout.write(String(r.runId||''))" "$HANDLE")
     CONTAINER_NAME="chatops-e2e-${API_PORT}"
 
     # 优先用 handle.endpoints.app_db_dsn（provision 已建好的 sandbox DB，容器视角）。
@@ -233,8 +239,12 @@ EOF
 
     echo "==> Deploying into sandbox (port ${API_PORT}, net ${SANDBOX_NET})..."
     docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+    # 给容器打 chatops.e2e.role/runId label —— defense-in-depth：
+    # 即使代码兜底 teardown 漏了这条 sandbox，外部按 label 扫描也能识别清理。
     docker run -d \
       --name "${CONTAINER_NAME}" \
+      --label "chatops.e2e.role=sandbox" \
+      --label "chatops.e2e.runId=${HANDLE_RUN_ID:-unknown}" \
       --network "${SANDBOX_NET}" \
       -p "${API_PORT}:3000" \
       -e E2E_SANDBOX_MODE=true \

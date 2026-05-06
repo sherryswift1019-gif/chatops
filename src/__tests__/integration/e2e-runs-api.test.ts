@@ -115,6 +115,46 @@ describe('GET /e2e-runs/:runId', () => {
     expect(body.run.targetProjectId).toBe('chatops')
     expect(body.sandbox).toBeNull()
     expect(body.scenarioRuns).toEqual([])
+    expect(body.playbookDraft).toBeNull()
+    await app.close()
+  })
+
+  it('returns playbookDraft=null when run has no linked draft', async () => {
+    const run = await createE2eRun({ targetProjectId: 'chatops', triggerType: 'api', triggerActor: null, sourceBranch: 'main', iterationBranch: '', scenarioFilter: null })
+    const app = await buildApp()
+    const r = await app.inject({ method: 'GET', url: `/e2e-runs/${run.id.toString()}` })
+    expect(r.statusCode).toBe(200)
+    const body = r.json()
+    expect(body.playbookDraft).toBeNull()
+    await app.close()
+  })
+
+  it('returns playbookDraft summary with mrUrl when run has linked draft', async () => {
+    const run = await createE2eRun({ targetProjectId: 'chatops', triggerType: 'manual_draft', triggerActor: null, sourceBranch: 'main', iterationBranch: '', scenarioFilter: null })
+    const draftIns = await getPool().query<{ id: string }>(
+      `INSERT INTO e2e_playbook_drafts (target_project_id, scenario_input, yaml_content, status, e2e_run_id, mr_url, committed_path)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [
+        'chatops',
+        '测试登录页',
+        'scenarios: []',
+        'approved',
+        run.id,
+        'http://code.paraview.cn/foo/-/merge_requests/42',
+        'docs/test-playbooks/draft-1.playbook.yaml',
+      ],
+    )
+    const draftId = draftIns.rows[0].id
+    const app = await buildApp()
+    const r = await app.inject({ method: 'GET', url: `/e2e-runs/${run.id.toString()}` })
+    expect(r.statusCode).toBe(200)
+    const body = r.json()
+    expect(body.playbookDraft).toEqual({
+      id: draftId.toString(),
+      status: 'approved',
+      mrUrl: 'http://code.paraview.cn/foo/-/merge_requests/42',
+      committedPath: 'docs/test-playbooks/draft-1.playbook.yaml',
+    })
     await app.close()
   })
 })

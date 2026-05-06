@@ -110,9 +110,13 @@ describe('awaitHumanReviewNode', () => {
     expect(vi.mocked(updateE2eRunStatus)).not.toHaveBeenCalled()
   })
 
-  it('没 currentManifest → reject', async () => {
+  it('没 currentManifest 但 imContext 存在 → 仍走 IM 等待（不立即 reject），通知里跳过 manifest 摘要', async () => {
+    vi.mocked(waitForImMessage).mockResolvedValue('approve')
     const out = await awaitHumanReviewNode(makeState({ currentManifest: null }))
-    expect(out.humanReviewDecision).toBe('reject')
+    expect(out.humanReviewDecision).toBe('approve')
+    expect(vi.mocked(waitForImMessage)).toHaveBeenCalledOnce()
+    // manifest 缺失时 notifyAwaitHumanReview 不调用（避免传 null）
+    expect(vi.mocked(notifyAwaitHumanReview)).not.toHaveBeenCalled()
   })
 
   it('没 currentScenario → reject', async () => {

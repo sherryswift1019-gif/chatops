@@ -91,7 +91,7 @@ export async function updateE2eRunGovernorState(
 
 export async function listInflightE2eRuns(): Promise<E2eRun[]> {
   const { rows } = await getPool().query(
-    `SELECT * FROM e2e_runs WHERE status IN ('running','awaiting_fix') ORDER BY started_at`,
+    `SELECT * FROM e2e_runs WHERE status IN ('running','awaiting_fix','awaiting_human_review') ORDER BY started_at`,
   )
   return rows.map(mapRow)
 }

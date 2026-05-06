@@ -41,15 +41,20 @@ export async function awaitHumanReviewNode(
 ): Promise<Partial<PipelineBStateType>> {
   const { imContext, currentManifest, currentScenario, currentScenarioRunId, runId } = state
 
-  // 没 manifest / 没 scenario → 兜底 reject（理论不会发生，run_scenario fail 后才进本节点）
-  if (!currentManifest || !currentScenario) {
+  // 缺 scenario → 兜底 reject（理论不会发生，run_scenario fail 后才进本节点）
+  if (!currentScenario) {
     console.log(
-      `[PipelineB:awaitHumanReview] runId=${runId} 缺 manifest/scenario → 默认 reject`,
+      `[PipelineB:awaitHumanReview] runId=${runId} 缺 scenario → 默认 reject`,
     )
     return { humanReviewDecision: 'reject' }
   }
 
-  // 无 imContext + 无 scenarioRunId → web waiter 没有锚点，兜底 reject
+  // 注意：currentManifest 可能是 null（host Claude 跑挂或没写 manifest.json）。
+  // 历史代码在此情况直接 reject，会写出"human reviewer rejected"的误导文案。
+  // 实际 manifest 缺失只影响 IM 通知里能展示的失败摘要，不影响人审决策能力——
+  // 让用户自己看 scenarioRunnerError 决定 approve/retry/reject 才正确。
+
+  // 无 imContext + 无 scenarioRunId → 既无 IM 也无 web waiter 锚点，兜底 reject
   if (!imContext && !currentScenarioRunId) {
     console.log(
       `[PipelineB:awaitHumanReview] runId=${runId} 无 imContext/scenarioRunId → 默认 reject`,
@@ -67,7 +72,10 @@ export async function awaitHumanReviewNode(
         groupId: imContext.groupId,
         runId,
       }
-      await notifyAwaitHumanReview(notifyOpts, currentScenario.id, currentManifest)
+      // manifest 缺失时 IM 通知里少一段失败摘要，但不阻塞决策
+      if (currentManifest) {
+        await notifyAwaitHumanReview(notifyOpts, currentScenario.id, currentManifest)
+      }
       const text = await waitForImMessage(
         imContext.platform,
         imContext.groupId,

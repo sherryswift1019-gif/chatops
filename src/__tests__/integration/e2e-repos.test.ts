@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { resetTestDb, getTestPool } from '../helpers/db.js'
 import { listE2eTargetProjects, getE2eTargetProject } from '../../db/repositories/e2e-target-projects.js'
 import { upsertE2eSpec, updateE2eSpecStatus, listE2eSpecs } from '../../db/repositories/e2e-specs.js'
-import { createE2eRun, getE2eRun, updateE2eRunStatus } from '../../db/repositories/e2e-runs.js'
+import { createE2eRun, getE2eRun, updateE2eRunStatus, listInflightE2eRuns } from '../../db/repositories/e2e-runs.js'
 import { createScenarioRun, finishScenarioRun, getLatestAttemptNumber, mergeEvidenceManifest, listScenarioRuns } from '../../db/repositories/e2e-scenario-runs.js'
 import { createSandbox, updateSandboxStatus, getSandboxByRunId } from '../../db/repositories/e2e-sandboxes.js'
 
@@ -46,6 +46,39 @@ describe('e2e-runs + scenario-runs repo', () => {
 
     const nextAttempt = await getLatestAttemptNumber(run.id, 'login-success')
     expect(nextAttempt).toBe(1)
+  })
+
+  // 守门 startup-recovery 契约：web-review-waiter 是纯内存的，进程重启后丢失，
+  // recoverInflightE2eRuns 必须把 awaiting_human_review 也当 inflight 收掉，
+  // 否则 DB 状态会卡住但内存 waiter 已没，导致前端看不到审核按钮（详情页
+  // ReviewDecisionPanel 完全依赖 awaitingReview，而该字段只看内存 waiter）。
+  it('listInflightE2eRuns 包含 running / awaiting_fix / awaiting_human_review', async () => {
+    const mkRun = (branch: string) =>
+      createE2eRun({
+        targetProjectId: 'chatops',
+        triggerType: 'manual',
+        triggerActor: 'test',
+        sourceBranch: 'main',
+        iterationBranch: branch,
+        scenarioFilter: null,
+      })
+
+    const running = await mkRun('test-iter/inflight-running')
+    const awaitingFix = await mkRun('test-iter/inflight-fix')
+    const awaitingReview = await mkRun('test-iter/inflight-review')
+    const passed = await mkRun('test-iter/done-passed')
+
+    await updateE2eRunStatus(running.id, 'running')
+    await updateE2eRunStatus(awaitingFix.id, 'awaiting_fix')
+    await updateE2eRunStatus(awaitingReview.id, 'awaiting_human_review')
+    await updateE2eRunStatus(passed.id, 'passed')
+
+    const inflight = await listInflightE2eRuns()
+    const sortBigInt = (a: bigint, b: bigint) => (a < b ? -1 : a > b ? 1 : 0)
+    const ids = inflight.map((r) => r.id).sort(sortBigInt)
+    const expected = [running.id, awaitingFix.id, awaitingReview.id].sort(sortBigInt)
+
+    expect(ids).toEqual(expected)
   })
 })
 
