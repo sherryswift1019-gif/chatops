@@ -88,6 +88,7 @@ export const PipelineBState = Annotation.Root({
   summaryMrUrl: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
   errorMessage: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
   imContext: Annotation<ImContext | null>({ default: () => null, reducer: (_, v) => v }),
+  playbookDraftId: Annotation<bigint | undefined>({ default: () => undefined, reducer: (_, v) => v }),
 })
 
 export type PipelineBStateType = typeof PipelineBState.State

@@ -130,6 +130,7 @@ export interface CreateRunBody {
     maxRunHours?: number
     maxTotalAttempts?: number
   }
+  playbookDraftId?: string
 }
 
 export interface ScenarioOption {

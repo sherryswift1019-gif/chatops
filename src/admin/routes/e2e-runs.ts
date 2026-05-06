@@ -11,6 +11,8 @@ import { getSandboxByRunId } from '../../db/repositories/e2e-sandboxes.js'
 import { runPipelineB } from '../../e2e/pipeline-b/runner.js'
 import { loadScenariosFromGitlab } from '../../e2e/pipeline-b/playbook/load-from-gitlab.js'
 import { buildInitialGovernorState, DEFAULT_GOVERNOR_LIMITS } from '../../e2e/pipeline-b/governor.js'
+import { getDraft, approveDraft } from '../../db/repositories/e2e-playbook-drafts.js'
+import { parsePlaybookYaml } from '../../e2e/pipeline-b/playbook/parse.js'
 import type { E2eRun } from '../../db/repositories/e2e-runs.js'
 import type { E2eScenarioRun } from '../../db/repositories/e2e-scenario-runs.js'
 import type { E2eSandbox } from '../../db/repositories/e2e-sandboxes.js'
@@ -90,11 +92,12 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
     Body: {
       targetProjectId: string
       sourceBranch?: string
+      playbookDraftId?: number | string
       scenarioFilter?: { ids?: string[]; tags?: string[] }
       governorOverrides?: { maxPerScenarioAttempts?: number; maxRunHours?: number; maxTotalAttempts?: number }
     }
   }>('/e2e-runs', async (req, reply) => {
-    const { targetProjectId, sourceBranch, scenarioFilter, governorOverrides } = req.body
+    const { targetProjectId, sourceBranch, playbookDraftId, scenarioFilter, governorOverrides } = req.body
     if (!targetProjectId) {
       return reply.status(400).send({ error: 'targetProjectId required' })
     }
@@ -112,6 +115,66 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
       })
     }
 
+    // playbookDraftId 路径：校验 draft → 创 run → approveDraft → fire-and-forget
+    if (playbookDraftId !== undefined && playbookDraftId !== null) {
+      const draftBigInt = BigInt(playbookDraftId)
+      const draft = await getDraft(draftBigInt)
+      if (!draft) {
+        return reply.status(404).send({ error: 'playbook draft not found' })
+      }
+      if (draft.status !== 'reviewing') {
+        return reply.status(422).send({
+          error: 'draft_not_ready',
+          message: `playbook draft status is '${draft.status}', must be 'reviewing' to run`,
+        })
+      }
+      if (!draft.yamlContent?.trim()) {
+        return reply.status(422).send({ error: 'draft has no yaml content' })
+      }
+
+      const parseResult = parsePlaybookYaml(draft.yamlContent)
+      if (!parseResult.ok) {
+        return reply.status(422).send({
+          error: 'invalid_playbook_yaml',
+          message: parseResult.error,
+          issues: parseResult.issues,
+        })
+      }
+
+      const governorState = buildInitialGovernorState(governorOverrides)
+      const { createE2eRun } = await import('../../db/repositories/e2e-runs.js')
+      const created = await createE2eRun({
+        targetProjectId,
+        triggerType: 'manual_draft',
+        triggerActor: null,
+        sourceBranch: sourceBranch ?? 'main',
+        iterationBranch: '',
+        scenarioFilter: scenarioFilter ?? null,
+        governorState: governorState as unknown as Record<string, unknown>,
+      })
+
+      await approveDraft(draftBigInt, created.id)
+
+      void runPipelineB({
+        targetProjectId,
+        sourceBranch: sourceBranch ?? 'main',
+        scenarioFilter,
+        playbookDraftId: draftBigInt,
+        triggerType: 'api',
+        governorOverrides,
+        existingRunId: created.id,
+      }).catch((err) => {
+        console.error(`[admin/e2e-runs] runPipelineB (draft) fire-and-forget failed runId=${created.id}:`, err)
+        updateE2eRunStatus(created.id, 'aborted', {
+          abortReason: err instanceof Error ? err.message : String(err),
+          finishedAt: new Date(),
+        }).catch(() => undefined)
+      })
+
+      return reply.status(202).send({ runId: created.id.toString(), status: 'pending' })
+    }
+
+    // 原老路径（无 playbookDraftId）
     // 先 createE2eRun 拿 runId 立即返回；pipeline 在后台跑，避免 HTTP request
     // 阻塞几十分钟。错误由 runPipelineB 内部的 try/catch 写 e2e_runs.status='aborted'。
     // governorState 含 limits + 零计数器，详情页一开始就能展示静态 limits；runner 跑完

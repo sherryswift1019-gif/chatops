@@ -45,6 +45,7 @@ vi.mock('../../db/repositories/e2e-scenario-runs.js', () => ({
   createScenarioRun: vi.fn(),
   finishScenarioRun: vi.fn(),
   getLatestAttemptNumber: vi.fn(),
+  mergeEvidenceManifest: vi.fn(),
 }))
 
 vi.mock('../../config/gitlab.js', () => ({
@@ -67,7 +68,7 @@ import { runScript } from '../../e2e/pipeline-b/run-script.js'
 import { getE2eTargetProject } from '../../db/repositories/e2e-target-projects.js'
 import { createSandbox, updateSandboxStatus } from '../../db/repositories/e2e-sandboxes.js'
 import { updateE2eRunStatus } from '../../db/repositories/e2e-runs.js'
-import { createScenarioRun, finishScenarioRun, getLatestAttemptNumber } from '../../db/repositories/e2e-scenario-runs.js'
+import { createScenarioRun, finishScenarioRun, getLatestAttemptNumber, mergeEvidenceManifest } from '../../db/repositories/e2e-scenario-runs.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
 import * as fs from 'fs'
 
@@ -147,6 +148,7 @@ const BASE_STATE: PipelineBStateType = {
   summaryMrUrl: null,
   errorMessage: null,
   imContext: null,
+  playbookDraftId: undefined,
 }
 
 beforeEach(() => {
@@ -168,6 +170,7 @@ beforeEach(() => {
     attemptNumber: 1,
   } as any)
   vi.mocked(finishScenarioRun).mockResolvedValue(undefined)
+  vi.mocked(mergeEvidenceManifest).mockResolvedValue(undefined)
   vi.mocked(getLatestAttemptNumber).mockResolvedValue(0)
   vi.mocked(resolveGitlabConfig).mockResolvedValue({
     url: 'https://gitlab.example.com',
@@ -453,7 +456,7 @@ describe('markUnfixableNode', () => {
     expect(await markUnfixableNode({ ...BASE_STATE })).toEqual({})
   })
 
-  it('移除 currentScenario + finishScenarioRun 调用', async () => {
+  it('移除 currentScenario + 两步调用：finishScenarioRun(unfixable) + mergeEvidenceManifest(aiDiagnosis)', async () => {
     const scenarios = [
       { id: 'login', name: 'L', tags: [] },
       { id: 'prd', name: 'P', tags: [] },
@@ -466,10 +469,15 @@ describe('markUnfixableNode', () => {
     })
     expect(result.pendingScenarios).toHaveLength(1)
     expect(result.currentScenario).toBeNull()
-    expect(finishScenarioRun).toHaveBeenCalledWith(100n, 'unfixable', expect.any(Object))
+    // result 改 unfixable 时不传 evidenceManifest（保留 host Claude 写入的原始 manifest）
+    expect(finishScenarioRun).toHaveBeenCalledWith(100n, 'unfixable')
+    // aiDiagnosis 走 merge 路径，避免覆盖原 manifest
+    expect(mergeEvidenceManifest).toHaveBeenCalledWith(100n, expect.objectContaining({
+      aiDiagnosis: expect.objectContaining({ verdict: expect.any(String), success: false }),
+    }))
   })
 
-  it('currentScenarioRunId null → finishScenarioRun 不调用', async () => {
+  it('currentScenarioRunId null → 不调用任何持久化函数', async () => {
     const scenarios = [{ id: 'login', name: 'L', tags: [] }]
     await markUnfixableNode({
       ...BASE_STATE,
@@ -478,6 +486,7 @@ describe('markUnfixableNode', () => {
       pendingScenarios: scenarios,
     })
     expect(finishScenarioRun).not.toHaveBeenCalled()
+    expect(mergeEvidenceManifest).not.toHaveBeenCalled()
   })
 })
 

@@ -29,6 +29,7 @@ export interface RunPipelineBOptions {
   }
   existingRunId?: bigint
   imContext?: ImContext
+  playbookDraftId?: bigint
 }
 
 export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: bigint; status: string }> {
@@ -61,6 +62,7 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
     scenarioFilter: opts.scenarioFilter ?? null,
     ...(opts.existingRunId ? { runId: opts.existingRunId } : {}),
     imContext: opts.imContext ?? null,
+    playbookDraftId: opts.playbookDraftId,
   }
 
   const graph = buildPipelineBGraph()

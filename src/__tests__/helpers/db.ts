@@ -236,6 +236,8 @@ const SCHEMA_FILES = [
   'schema-v1001.sql',
   // v1002: 修复 v1000 早期提交 INSERT 列错位导致 invoke_target_script.enabled=FALSE。
   'schema-v1002.sql',
+  // v1003: e2e_playbook_drafts 表 — Modal 内"输入场景 → AI 生成 → 人审"调试入口
+  'schema-v1003.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

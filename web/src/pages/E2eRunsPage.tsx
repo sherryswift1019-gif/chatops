@@ -1,14 +1,16 @@
 // web/src/pages/E2eRunsPage.tsx
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Card, Table, Tag, Button, Space, Modal, Form, Select,
-  InputNumber, Collapse, Radio, message, Typography, Popconfirm,
+  InputNumber, Collapse, Radio, Input, message, Typography, Popconfirm,
 } from 'antd'
 import { PlusOutlined, ReloadOutlined, StopOutlined, ExclamationCircleTwoTone } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
+import Editor from '@monaco-editor/react'
 import { e2eRunsApi, type E2eRunDTO, type ScenarioOption } from '../api/e2e-runs'
 import { e2eApi, type E2eTargetProject } from '../api/e2e'
+import { e2ePlaybookDraftsApi, openDraftStream, type DraftStatus } from '../api/e2e-playbook-drafts'
 
 const { Link, Text } = Typography
 
@@ -31,9 +33,11 @@ type ScenarioFilterMode = 'all' | 'tag' | 'id'
 interface CreateFormValues {
   targetProjectId: string
   sourceBranch: string
+  triggerMode: 'select' | 'ai'
   filterMode: ScenarioFilterMode
   filterTags: string[]
   filterIds: string[]
+  scenarioInput?: string
   maxPerScenarioAttempts?: number
   maxRunHours?: number
   maxTotalAttempts?: number
@@ -124,8 +128,10 @@ function CreateRunModal({
   onClose: () => void
   onCreated: () => void
 }) {
+  const navigate = useNavigate()
   const [form] = Form.useForm<CreateFormValues>()
   const [loading, setLoading] = useState(false)
+  const triggerMode = Form.useWatch('triggerMode', form) as 'select' | 'ai' | undefined
   const filterMode = Form.useWatch('filterMode', form) as ScenarioFilterMode | undefined
   const targetProjectId = Form.useWatch('targetProjectId', form) as string | undefined
   const sourceBranch = Form.useWatch('sourceBranch', form) as string | undefined
@@ -139,6 +145,36 @@ function CreateRunModal({
   const [scenarios, setScenarios] = useState<ScenarioOption[]>([])
   const [allTags, setAllTags] = useState<string[]>([])
   const [scenarioOptsLoading, setScenarioOptsLoading] = useState(false)
+
+  // AI mode state
+  const [draftId, setDraftId] = useState<string | null>(null)
+  const [draftStatus, setDraftStatus] = useState<DraftStatus | null>(null)
+  const [yamlContent, setYamlContent] = useState<string>('')
+  const [generatingDraft, setGeneratingDraft] = useState(false)
+  const esRef = useRef<EventSource | null>(null)
+
+  // cleanup EventSource on unmount or modal close
+  const closeEs = () => {
+    if (esRef.current) {
+      esRef.current.close()
+      esRef.current = null
+    }
+  }
+
+  useEffect(() => {
+    if (!open) {
+      closeEs()
+    }
+    return closeEs
+  }, [open])
+
+  const resetDraftState = () => {
+    closeEs()
+    setDraftId(null)
+    setDraftStatus(null)
+    setYamlContent('')
+    setGeneratingDraft(false)
+  }
 
   // targetProjectId 变化 → 加载分支清单 + 重置 sourceBranch
   useEffect(() => {
@@ -192,16 +228,104 @@ function CreateRunModal({
     return () => { canceled = true }
   }, [targetProjectId, sourceBranch])
 
+  const startDraftGeneration = (id: string) => {
+    closeEs()
+    setDraftStatus('drafting')
+    setYamlContent('')
+    const es = openDraftStream(id, {
+      onChunk: (t) => setYamlContent(prev => prev + t),
+      onDone: async () => {
+        try {
+          const d = await e2ePlaybookDraftsApi.get(id)
+          setYamlContent(d.yamlContent ?? '')
+          setDraftStatus(d.status)
+        } catch {
+          setDraftStatus('generation_failed')
+        }
+      },
+      onError: (m) => {
+        setDraftStatus('generation_failed')
+        message.error(m)
+      },
+    })
+    esRef.current = es
+  }
+
+  const handleGenerateDraft = async () => {
+    const values = form.getFieldsValue()
+    if (!values.targetProjectId || !values.scenarioInput?.trim()) {
+      message.warning('请先选择被测项目并填写场景描述')
+      return
+    }
+    setGeneratingDraft(true)
+    try {
+      const { draftId: id } = await e2ePlaybookDraftsApi.create({
+        targetProjectId: values.targetProjectId,
+        scenarioInput: values.scenarioInput.trim(),
+      })
+      setDraftId(id)
+      startDraftGeneration(id)
+    } catch {
+      message.error('创建 draft 失败')
+    } finally {
+      setGeneratingDraft(false)
+    }
+  }
+
+  const handleRegenerate = async () => {
+    if (!draftId) return
+    try {
+      await e2ePlaybookDraftsApi.regenerate(draftId)
+      startDraftGeneration(draftId)
+    } catch {
+      message.error('重新生成失败')
+    }
+  }
+
+  const handleSaveYaml = async () => {
+    if (!draftId) return
+    try {
+      await e2ePlaybookDraftsApi.updateYaml(draftId, yamlContent)
+      message.success('已保存')
+    } catch {
+      message.error('保存失败')
+    }
+  }
+
+  const handleRejectDraft = async () => {
+    if (!draftId) return
+    try {
+      await e2ePlaybookDraftsApi.reject(draftId)
+      resetDraftState()
+    } catch {
+      message.error('拒绝失败')
+    }
+  }
+
   const handleOk = async () => {
     const values = await form.validateFields()
     setLoading(true)
     try {
-      const body = buildCreateBody(values)
-      await e2eRunsApi.create(body)
-      message.success('Run 已创建')
-      form.resetFields()
-      onCreated()
-      onClose()
+      if (triggerMode === 'ai') {
+        const { runId } = await e2eRunsApi.create({
+          targetProjectId: values.targetProjectId,
+          sourceBranch: values.sourceBranch,
+          playbookDraftId: draftId!,
+        })
+        message.success('Run 已创建')
+        form.resetFields()
+        resetDraftState()
+        onCreated()
+        onClose()
+        navigate(`/e2e-runs/${runId}`)
+      } else {
+        const body = buildCreateBody(values)
+        await e2eRunsApi.create(body)
+        message.success('Run 已创建')
+        form.resetFields()
+        onCreated()
+        onClose()
+      }
     } catch {
       message.error('创建失败')
     } finally {
@@ -209,20 +333,29 @@ function CreateRunModal({
     }
   }
 
+  const handleCancel = () => {
+    resetDraftState()
+    form.resetFields()
+    onClose()
+  }
+
+  const isOkDisabled = triggerMode === 'ai' && !(draftId && draftStatus === 'reviewing')
+
   return (
     <Modal
       title="新建 E2E Run"
       open={open}
       onOk={handleOk}
-      onCancel={onClose}
+      onCancel={handleCancel}
       confirmLoading={loading}
-      width={560}
+      okButtonProps={{ disabled: isOkDisabled }}
+      width={600}
       destroyOnClose
     >
       <Form
         form={form}
         layout="vertical"
-        initialValues={{ filterMode: 'all', filterTags: [], filterIds: [] }}
+        initialValues={{ triggerMode: 'select', filterMode: 'all', filterTags: [], filterIds: [] }}
       >
         <Form.Item name="targetProjectId" label="被测项目" rules={[{ required: true }]}>
           <Select
@@ -234,6 +367,22 @@ function CreateRunModal({
             }
           />
         </Form.Item>
+
+        <Form.Item label="触发模式" name="triggerMode" initialValue="select">
+          <Radio.Group onChange={(e) => {
+            const mode = e.target.value as 'select' | 'ai'
+            if (mode === 'select') {
+              form.setFieldsValue({ scenarioInput: undefined })
+              resetDraftState()
+            } else {
+              form.setFieldsValue({ filterTags: undefined, filterIds: undefined })
+            }
+          }}>
+            <Radio.Button value="select">选择已有场景</Radio.Button>
+            <Radio.Button value="ai">手动输入场景（AI 生成）</Radio.Button>
+          </Radio.Group>
+        </Form.Item>
+
         <Form.Item name="sourceBranch" label="源分支" rules={[{ required: true, message: '请选择源分支' }]}>
           <Select
             showSearch
@@ -247,51 +396,112 @@ function CreateRunModal({
             notFoundContent={branchesLoading ? '加载中…' : '无可用分支'}
           />
         </Form.Item>
-        <Form.Item name="filterMode" label="场景过滤">
-          <Radio.Group>
-            <Radio value="all">全部</Radio>
-            <Radio value="tag">按 tag</Radio>
-            <Radio value="id">按 ID</Radio>
-          </Radio.Group>
-        </Form.Item>
-        {filterMode === 'tag' && (
-          <Form.Item
-            name="filterTags"
-            label="Tag 列表"
-            rules={[{ required: true, type: 'array', min: 1, message: '请至少选一个 tag' }]}
-          >
-            <Select
-              mode="multiple"
-              showSearch
-              loading={scenarioOptsLoading}
-              placeholder="选择 tag"
-              options={buildTagOptions(allTags, filterTags)}
-              filterOption={(input, opt) =>
-                String((opt as { value?: string } | undefined)?.value ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              notFoundContent={scenarioOptsLoading ? '加载中…' : '该分支 playbook 无 tag'}
-            />
-          </Form.Item>
+
+        {triggerMode === 'select' && (
+          <>
+            <Form.Item name="filterMode" label="场景过滤">
+              <Radio.Group>
+                <Radio value="all">全部</Radio>
+                <Radio value="tag">按 tag</Radio>
+                <Radio value="id">按 ID</Radio>
+              </Radio.Group>
+            </Form.Item>
+            {filterMode === 'tag' && (
+              <Form.Item
+                name="filterTags"
+                label="Tag 列表"
+                rules={[{ required: true, type: 'array', min: 1, message: '请至少选一个 tag' }]}
+              >
+                <Select
+                  mode="multiple"
+                  showSearch
+                  loading={scenarioOptsLoading}
+                  placeholder="选择 tag"
+                  options={buildTagOptions(allTags, filterTags)}
+                  filterOption={(input, opt) =>
+                    String((opt as { value?: string } | undefined)?.value ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  notFoundContent={scenarioOptsLoading ? '加载中…' : '该分支 playbook 无 tag'}
+                />
+              </Form.Item>
+            )}
+            {filterMode === 'id' && (
+              <Form.Item
+                name="filterIds"
+                label="场景列表"
+                rules={[{ required: true, type: 'array', min: 1, message: '请至少选一个场景' }]}
+              >
+                <Select
+                  mode="multiple"
+                  showSearch
+                  loading={scenarioOptsLoading}
+                  placeholder="选择场景"
+                  options={buildScenarioOptions(scenarios, filterIds)}
+                  filterOption={(input, opt) =>
+                    String((opt as { searchText?: string } | undefined)?.searchText ?? '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  notFoundContent={scenarioOptsLoading ? '加载中…' : '该分支无 scenario'}
+                />
+              </Form.Item>
+            )}
+          </>
         )}
-        {filterMode === 'id' && (
-          <Form.Item
-            name="filterIds"
-            label="场景列表"
-            rules={[{ required: true, type: 'array', min: 1, message: '请至少选一个场景' }]}
-          >
-            <Select
-              mode="multiple"
-              showSearch
-              loading={scenarioOptsLoading}
-              placeholder="选择场景"
-              options={buildScenarioOptions(scenarios, filterIds)}
-              filterOption={(input, opt) =>
-                String((opt as { searchText?: string } | undefined)?.searchText ?? '').toLowerCase().includes(input.toLowerCase())
-              }
-              notFoundContent={scenarioOptsLoading ? '加载中…' : '该分支无 scenario'}
-            />
-          </Form.Item>
+
+        {triggerMode === 'ai' && (
+          <>
+            <Form.Item
+              name="scenarioInput"
+              label="场景描述"
+              rules={[{ required: triggerMode === 'ai', message: '请填写场景描述' }]}
+            >
+              <Input.TextArea
+                rows={6}
+                placeholder="测试登录页：输入 admin / chatops123 后跳转到 /product-lines，验证表头显示『产线管理』"
+              />
+            </Form.Item>
+
+            {(!draftId || draftStatus === 'generation_failed') && (
+              <Form.Item>
+                <Button
+                  type="primary"
+                  loading={generatingDraft}
+                  onClick={handleGenerateDraft}
+                >
+                  生成 playbook
+                </Button>
+              </Form.Item>
+            )}
+
+            {draftId && (
+              <>
+                <Form.Item label="生成的 Playbook YAML">
+                  <Editor
+                    height={280}
+                    language="yaml"
+                    value={yamlContent}
+                    onChange={(v) => setYamlContent(v ?? '')}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 13,
+                      readOnly: draftStatus === 'drafting',
+                    }}
+                  />
+                </Form.Item>
+
+                {draftStatus === 'reviewing' && (
+                  <Form.Item>
+                    <Space>
+                      <Button onClick={handleRegenerate}>重新生成</Button>
+                      <Button type="primary" onClick={handleSaveYaml}>保存修改</Button>
+                      <Button danger onClick={handleRejectDraft}>拒绝</Button>
+                    </Space>
+                  </Form.Item>
+                )}
+              </>
+            )}
+          </>
         )}
+
         <Collapse
           size="small"
           style={{ marginTop: 8 }}
@@ -442,24 +652,27 @@ export default function E2eRunsPage() {
       title: '操作',
       render: (_: unknown, run: E2eRunDTO) => {
         const canAbort = ACTIVE_STATUSES.has(run.status)
-        if (!canAbort) return null
         return (
-          <Popconfirm
-            title="确认中止此 Run？"
-            onConfirm={() => handleAbort(run)}
-            okText="中止"
-            cancelText="取消"
-            okButtonProps={{ danger: true }}
-          >
-            <Button
-              size="small"
-              danger
-              icon={<StopOutlined />}
-              loading={aborting.has(run.id)}
-            >
-              中止
-            </Button>
-          </Popconfirm>
+          <Space size="small">
+            {canAbort && (
+              <Popconfirm
+                title="确认中止此 Run？"
+                onConfirm={() => handleAbort(run)}
+                okText="中止"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button
+                  size="small"
+                  danger
+                  icon={<StopOutlined />}
+                  loading={aborting.has(run.id)}
+                >
+                  中止
+                </Button>
+              </Popconfirm>
+            )}
+          </Space>
         )
       },
     },

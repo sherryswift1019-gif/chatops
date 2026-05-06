@@ -40,6 +40,7 @@ import { registerE2eTargetRoutes } from './routes/e2e-targets.js'
 import { registerE2eSpecRoutes } from './routes/e2e-specs.js'
 import { registerE2eEvidenceRoutes } from './routes/e2e-evidence.js'
 import { registerE2eRunRoutes } from './routes/e2e-runs.js'
+import { registerE2ePlaybookDraftRoutes } from './routes/e2e-playbook-drafts.js'
 
 export async function adminPlugin(
   app: FastifyInstance,
@@ -100,4 +101,5 @@ export async function adminPlugin(
   await registerE2eSpecRoutes(app)
   await registerE2eEvidenceRoutes(app)
   await registerE2eRunRoutes(app)
+  await registerE2ePlaybookDraftRoutes(app)
 }
