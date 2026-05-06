@@ -61,6 +61,29 @@ export async function finishScenarioRun(
   )
 }
 
+/**
+ * 把 partial 浅 merge 进 evidence_manifest（jsonb || 语义）：
+ *   - 字段为 NULL → 写 partial
+ *   - 已有内容 → 保留原 key，新 key 追加，同 key 取 partial 的值
+ *
+ * 用途：mark-unfixable 等"追加诊断"的节点应走这里，避免覆盖 host Claude 写入的
+ * acceptanceResults / claudeTrace / artifacts 等原始 manifest 字段。
+ *
+ * 跟 finishScenarioRun({evidenceManifest}) 的区别：那条是「一次写完整 manifest」契约，
+ * 这条是「在已有 manifest 上 patch 字段」契约——前后两次调用串起来就是完整 evidence。
+ */
+export async function mergeEvidenceManifest(
+  id: bigint,
+  partial: Record<string, unknown>,
+): Promise<void> {
+  await getPool().query(
+    `UPDATE e2e_scenario_runs
+        SET evidence_manifest = COALESCE(evidence_manifest, '{}'::jsonb) || $2::jsonb
+      WHERE id = $1`,
+    [id, JSON.stringify(partial)],
+  )
+}
+
 export async function listScenarioRuns(e2eRunId: bigint): Promise<E2eScenarioRun[]> {
   const { rows } = await getPool().query(
     'SELECT * FROM e2e_scenario_runs WHERE e2e_run_id = $1 ORDER BY scenario_id, attempt_number',

@@ -186,6 +186,24 @@ describe('runScenarioNode (playbook-driven)', () => {
     expect(vi.mocked(finishScenarioRun)).toHaveBeenCalledWith(100n, 'error', expect.any(Object))
   })
 
+  it('manifest=null + errorMessage 有值 → evidence_manifest 持久化 scenarioRunnerError，前端可见诊断', async () => {
+    // 守门历史 bug：runE2eScenario 失败时 errorMessage 仅 console.warn 不写 DB，
+    // 导致前端「查看证据」drawer 看不到 host Claude 跑挂的具体原因（SKILL 缺失 / schema 校验失败 / 超时）。
+    vi.mocked(runE2eScenario).mockResolvedValue({
+      manifest: null,
+      rawOutput: '',
+      errorMessage: 'SKILL.md 未找到: /home/x/.claude/skills/e2e-scenario/SKILL.md',
+    })
+    await runScenarioNode(makeState())
+    expect(vi.mocked(finishScenarioRun)).toHaveBeenCalledWith(
+      100n,
+      'error',
+      expect.objectContaining({
+        evidenceManifest: { scenarioRunnerError: 'SKILL.md 未找到: /home/x/.claude/skills/e2e-scenario/SKILL.md' },
+      }),
+    )
+  })
+
   it('scenario 不在 playbooks 里 → 抛错', async () => {
     const state = makeState({ playbooks: {} })
     await expect(runScenarioNode(state)).rejects.toThrow(/找不到所属 playbook/)

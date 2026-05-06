@@ -85,8 +85,14 @@ export async function runScenarioNode(state: PipelineBStateType): Promise<Partia
     )
   }
 
-  // manifest 直写 e2e_scenario_runs.evidence_manifest（pass/fail 路径都写）
-  const manifestForDb = result.manifest as unknown as Record<string, unknown> | undefined
+  // manifest 直写 e2e_scenario_runs.evidence_manifest（pass/fail 路径都写）。
+  // host Claude 跑挂没产出 manifest 时，把 errorMessage 落到 evidence_manifest.scenarioRunnerError，
+  // 否则 DB 字段是 NULL，前端「查看证据」drawer 只能干瞪眼，看不到为何 fail。
+  const manifestForDb: Record<string, unknown> | undefined = result.manifest
+    ? (result.manifest as unknown as Record<string, unknown>)
+    : result.errorMessage
+      ? { scenarioRunnerError: result.errorMessage }
+      : undefined
   await finishScenarioRun(scenarioRunRecord.id, scenarioResult, {
     durationMs: result.manifest?.durationMs,
     evidenceDirUri: evidenceDirUri ?? undefined,
