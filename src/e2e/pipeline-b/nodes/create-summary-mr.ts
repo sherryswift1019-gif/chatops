@@ -8,6 +8,25 @@ import type { PipelineBStateType } from '../types.js'
 export async function createSummaryMrNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
   const { runId, iterationBranch, sourceBranch, targetProjectId } = state
 
+  // Happy path: 所有 scenario 第 1 次就 pass，没走过 e2e-fix-agent 修过任何代码 →
+  // iterationBranch 跟 sourceBranch 完全相同（无新 commit），且 GitLab 上不存在该 branch
+  // （init-run 只在 workspace 本地 checkout -b，不 push）。这种情况创 MR 会得到一个
+  // source_branch 不存在的空 MR（state=closed/conflict），是数据噪音。
+  // 直接 finalize 为 passed，不动 git/不调 GitLab API。
+  const fixedCount = Object.values(state.governorState.perScenarioAttempts).filter(n => n > 1).length
+  if (fixedCount === 0) {
+    console.log(`[PipelineB:createSummaryMr] runId=${runId} happy path（无 scenario 走过 fix），跳过 MR 创建`)
+    await updateE2eRunStatus(runId, 'passed', { finishedAt: new Date() })
+    if (state.imContext) {
+      notifyRunPassed(
+        { adapter: state.imContext.adapter, groupId: state.imContext.groupId, runId },
+        0,
+        null,
+      ).catch(() => {})
+    }
+    return { summaryMrUrl: null }
+  }
+
   const project = await getE2eTargetProject(targetProjectId)
   if (!project) throw new Error(`e2e_target_projects: "${targetProjectId}" not found`)
 
@@ -61,8 +80,6 @@ export async function createSummaryMrNode(state: PipelineBStateType): Promise<Pa
   })
 
   if (state.imContext) {
-    const fixedCount = Object.values(state.governorState.perScenarioAttempts)
-      .filter(n => n > 1).length
     notifyRunPassed(
       { adapter: state.imContext.adapter, groupId: state.imContext.groupId, runId },
       fixedCount,

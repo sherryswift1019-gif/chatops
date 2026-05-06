@@ -529,9 +529,19 @@ describe('resetIterationBranchNode', () => {
 // ---------------------------------------------------------------------------
 
 describe('createSummaryMrNode', () => {
+  // 让 fix-path 测试明确表达"有修复"（perScenarioAttempts > 1 → fixedCount > 0），
+  // 否则会被 happy-path 短路（fixedCount=0 不创 MR）拦掉。
+  const FIXED_STATE: PipelineBStateType = {
+    ...BASE_STATE,
+    governorState: {
+      ...DEFAULT_GOVERNOR,
+      perScenarioAttempts: { 's1': 2 },
+    },
+  }
+
   it('GitLab config 无 token → 跳过 MR 创建 + run=passed', async () => {
     vi.mocked(resolveGitlabConfig).mockResolvedValue({ url: '', token: '', skipTlsVerify: false })
-    const result = await createSummaryMrNode({ ...BASE_STATE })
+    const result = await createSummaryMrNode({ ...FIXED_STATE })
     expect(result).toEqual({})
     expect(updateE2eRunStatus).toHaveBeenCalledWith(42n, 'passed', expect.any(Object))
   })
@@ -544,7 +554,7 @@ describe('createSummaryMrNode', () => {
         json: () => Promise.resolve({ web_url: 'https://gitlab.example.com/-/merge_requests/99' }),
       }),
     )
-    const result = await createSummaryMrNode({ ...BASE_STATE })
+    const result = await createSummaryMrNode({ ...FIXED_STATE })
     expect(result.summaryMrUrl).toContain('merge_requests')
     expect(updateE2eRunStatus).toHaveBeenCalledWith(42n, 'passed', expect.any(Object))
     vi.unstubAllGlobals()
@@ -559,7 +569,7 @@ describe('createSummaryMrNode', () => {
         text: () => Promise.resolve('branch already has MR'),
       }),
     )
-    const result = await createSummaryMrNode({ ...BASE_STATE })
+    const result = await createSummaryMrNode({ ...FIXED_STATE })
     expect(result.summaryMrUrl).toBeNull()
     expect(updateE2eRunStatus).toHaveBeenCalledWith(42n, 'passed', expect.any(Object))
     vi.unstubAllGlobals()
@@ -567,8 +577,26 @@ describe('createSummaryMrNode', () => {
 
   it('fetch 抛出异常 → summaryMrUrl=null + run 仍 passed', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('ECONNREFUSED')))
-    const result = await createSummaryMrNode({ ...BASE_STATE })
+    const result = await createSummaryMrNode({ ...FIXED_STATE })
     expect(result.summaryMrUrl).toBeNull()
+    expect(updateE2eRunStatus).toHaveBeenCalledWith(42n, 'passed', expect.any(Object))
+    vi.unstubAllGlobals()
+  })
+
+  it('happy path（fixedCount=0，无 scenario 走过 fix）→ 跳过 MR API + summaryMrUrl=null', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    // perScenarioAttempts 每个 scenario 1 次（=1 不算修复），fixedCount=0
+    const result = await createSummaryMrNode({
+      ...BASE_STATE,
+      governorState: {
+        ...DEFAULT_GOVERNOR,
+        perScenarioAttempts: { 's1': 1, 's2': 1 },
+      },
+    })
+    expect(result.summaryMrUrl).toBeNull()
+    // 关键：不应该调 GitLab API（之前的 bug 是无条件调，创出空/失败 MR）
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(updateE2eRunStatus).toHaveBeenCalledWith(42n, 'passed', expect.any(Object))
     vi.unstubAllGlobals()
   })
