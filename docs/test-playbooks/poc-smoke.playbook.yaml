@@ -1,23 +1,25 @@
 specPath: docs/test-specs/poc-smoke.md
-specTitle: PoC Smoke 测试（沙盒可达性烟测，不验业务）
+specTitle: PoC Smoke 测试规约
 scenarios:
   - id: poc.smoke
-    name: 沙盒部署后可达性烟测
+    name: 沙盒可达性
     tags: [poc, smoke]
     setup:
       hints:
-        - 沙盒已部署完毕，所有 endpoints 在 sandboxHandle 里给出
+        - "沙盒已部署完毕，web 入口地址取自 sandboxHandle 中的 endpoints.web_base_url"
+        - "确认 chatops 服务容器处于 running 状态后再执行场景"
     steps:
-      - 用 mcp__playwright__browser_navigate 打开 endpoints.web_base_url
-      - 用 mcp__playwright__browser_snapshot 拿页面 accessibility tree 验证 body 渲染
-      - 用 curl GET endpoints.web_base_url/health 验证 API 返回 200
+      - "用 mcp__playwright__browser_navigate 打开 endpoints.web_base_url 指向的沙盒 web 入口"
+      - "等待页面加载完成，确认 body 元素可见（任意非空白页面即满足条件）"
+      - "用 curl 或 mcp__playwright__browser_navigate 对同一 base_url 发起 GET /health，取回响应状态码"
     acceptance:
       - kind: dom_visible
         selector: body
-        timeout_ms: 10000
+        timeout_ms: 8000
       - kind: api_response
         request: GET /health
         expect_status: 200
     on_fail_hints:
-      - 若 navigate 超时，检查 web_base_url 是否从 host 可达（沙盒可能只暴露在 docker network）
-      - 若 /health 返回 5xx，看 docker logs <containerId> 找应用启动错误
+      - "dom_visible body fail：检查 web_base_url 是否正确，确认容器已启动并正确暴露端口"
+      - "api_response GET /health fail：确认 /health 路由已注册，执行 docker logs <chatops容器名> 排查启动异常"
+      - "两条 acceptance 均 fail：大概率沙盒部署未完成，执行 docker compose ps 检查所有服务状态"
