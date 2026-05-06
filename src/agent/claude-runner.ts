@@ -899,6 +899,12 @@ ${intentRules}
      *   { playwright: { command: 'npx', args: ['-y', '@playwright/mcp@latest'] } }
      */
     extraMcpServers?: Record<string, McpServerSpec>
+    /**
+     * 收到 Porygon 流式消息的回调（每条 msg 调一次，含 tool_use / assistant / error / result 等）。
+     * 在原有 buffer 累积逻辑之前调用，try/catch 隔离不污染主流程。
+     * E2E pipeline-b 用此 hook 把进度事件推到 scenario-event-bus（见 scenario-event-bridge.ts）。
+     */
+    onMessage?: (msg: { type: string; toolName?: string; input?: unknown; text?: string; message?: string }) => void
   }): Promise<string> {
     const { prompt, systemPrompt, context, tools, cwd, sessionKey, freshSession, maxTurns, timeoutMs, dockerExec } = opts
     const mcpServerPath = join(__dirname, 'mcp-server.ts')
@@ -956,6 +962,13 @@ ${intentRules}
 
     const consume = async (): Promise<void> => {
       for await (const msg of queryIter) {
+        if (opts.onMessage) {
+          try {
+            opts.onMessage(msg as { type: string; toolName?: string; input?: unknown; text?: string; message?: string })
+          } catch (e) {
+            console.warn('[Runner] onMessage threw:', e)
+          }
+        }
         if ('sessionId' in msg && msg.sessionId && sessionKey) {
           this.saveSession(sessionKey, msg.sessionId as string, tools)
         }
