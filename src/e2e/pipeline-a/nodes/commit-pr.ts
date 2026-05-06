@@ -1,22 +1,12 @@
 // src/e2e/pipeline-a/nodes/commit-pr.ts
-import { spawnSync } from 'child_process'
 import { writeFileSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { resolveGitlabConfig } from '../../../config/gitlab.js'
 import { updateE2eSpecStatus } from '../../../db/repositories/e2e-specs.js'
 import { getE2eTargetProject, extractGitlabPath } from '../../../db/repositories/e2e-target-projects.js'
 import { getWorkspacePaths } from './baseline-sandbox.js'
+import { git, gitlabApi } from '../../playbook-draft/git-helpers.js'
 import type { PipelineAStateType } from '../types.js'
-
-function git(args: string[], cwd: string, env: Record<string, string> = {}): { status: number; stdout: string; stderr: string } {
-  const r = spawnSync('git', args, {
-    encoding: 'utf8',
-    timeout: 60_000,
-    cwd,
-    env: { ...process.env, ...env },
-  })
-  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
-}
 
 interface GitlabMr {
   iid: number
@@ -24,30 +14,6 @@ interface GitlabMr {
   detailed_merge_status?: string
   pipeline?: { status?: string } | null
   head_pipeline?: { status?: string } | null
-}
-
-async function gitlabApi<T>(
-  method: 'GET' | 'POST' | 'PUT',
-  url: string,
-  token: string,
-  body?: Record<string, unknown>,
-): Promise<{ ok: boolean; status: number; data: T | null; text: string }> {
-  const headers: Record<string, string> = { 'PRIVATE-TOKEN': token }
-  let bodyText: string | undefined
-  if (body !== undefined) {
-    headers['Content-Type'] = 'application/json'
-    bodyText = JSON.stringify(body)
-  }
-  const resp = await fetch(url, {
-    method,
-    headers,
-    body: bodyText,
-    signal: AbortSignal.timeout(30_000),
-  })
-  const text = await resp.text()
-  let data: T | null = null
-  try { data = text ? JSON.parse(text) as T : null } catch { /* not JSON */ }
-  return { ok: resp.ok, status: resp.status, data, text }
 }
 
 export async function commitAndPrNode(state: PipelineAStateType): Promise<Partial<PipelineAStateType>> {

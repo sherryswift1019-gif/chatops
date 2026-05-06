@@ -159,6 +159,9 @@ export const e2eRunsApi = {
   abort: (runId: string, reason?: string) =>
     client.post<{ ok: true }>(`/e2e-runs/${runId}/abort`, { reason }).then(r => r.data),
 
+  rerun: (runId: string) =>
+    client.post<{ runId: string }>(`/e2e-runs/${runId}/rerun`).then(r => r.data),
+
   listScenarioOptions: (projectId: string, ref?: string) =>
     client.get<ScenarioOptionsResponse>('/e2e-runs/scenario-options', {
       params: { projectId, ...(ref ? { ref } : {}) },

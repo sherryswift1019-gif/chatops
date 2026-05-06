@@ -4,7 +4,7 @@ import {
   Card, Table, Tag, Button, Space, Modal, Form, Select,
   InputNumber, Collapse, Radio, Input, message, Typography, Popconfirm,
 } from 'antd'
-import { PlusOutlined, ReloadOutlined, StopOutlined, ExclamationCircleTwoTone } from '@ant-design/icons'
+import { PlusOutlined, ReloadOutlined, StopOutlined, ExclamationCircleTwoTone, RedoOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import type { ColumnsType } from 'antd/es/table'
 import Editor from '@monaco-editor/react'
@@ -21,6 +21,14 @@ const RUN_STATUS_CONFIG: Record<E2eRunDTO['status'], { color: string; label: str
   passed:        { color: 'success',    label: '通过' },
   failed:        { color: 'error',      label: '失败' },
   aborted:       { color: 'default',    label: '已中止' },
+}
+
+const TRIGGER_TYPE_CONFIG: Record<string, { color: string; label: string }> = {
+  manual:        { color: 'blue',   label: '手动选场景' },
+  manual_draft:  { color: 'cyan',   label: '手动输入（AI 生成）' },
+  api:           { color: 'green',  label: 'API 触发' },
+  scheduled:     { color: 'orange', label: '定时触发' },
+  im:            { color: 'purple', label: 'IM 触发' },
 }
 
 function RunStatusTag({ status }: { status: E2eRunDTO['status'] }) {
@@ -627,6 +635,10 @@ export default function E2eRunsPage() {
     {
       title: '触发方式',
       dataIndex: 'triggerType',
+      render: (t: string) => {
+        const cfg = TRIGGER_TYPE_CONFIG[t]
+        return cfg ? <Tag color={cfg.color}>{cfg.label}</Tag> : <Tag>{t}</Tag>
+      },
     },
     {
       title: '状态',
@@ -672,6 +684,22 @@ export default function E2eRunsPage() {
                 </Button>
               </Popconfirm>
             )}
+            <Popconfirm
+              title="确定要重新执行此 Run？"
+              description="将复制此 Run 的配置（项目/源分支/场景/playbook）创建新 Run。"
+              onConfirm={async () => {
+                try {
+                  const { runId } = await e2eRunsApi.rerun(run.id)
+                  message.success(`已起新 Run #${runId}`)
+                  navigate(`/e2e-runs/${runId}`)
+                } catch (err) {
+                  const e = err as { response?: { data?: { message?: string; error?: string } } }
+                  message.error(e.response?.data?.message ?? e.response?.data?.error ?? '重新执行失败')
+                }
+              }}
+            >
+              <Button type="link" icon={<RedoOutlined />} size="small">重新执行</Button>
+            </Popconfirm>
           </Space>
         )
       },

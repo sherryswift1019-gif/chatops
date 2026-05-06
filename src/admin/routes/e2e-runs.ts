@@ -11,7 +11,8 @@ import { getSandboxByRunId } from '../../db/repositories/e2e-sandboxes.js'
 import { runPipelineB } from '../../e2e/pipeline-b/runner.js'
 import { loadScenariosFromGitlab } from '../../e2e/pipeline-b/playbook/load-from-gitlab.js'
 import { buildInitialGovernorState, DEFAULT_GOVERNOR_LIMITS } from '../../e2e/pipeline-b/governor.js'
-import { getDraft, approveDraft } from '../../db/repositories/e2e-playbook-drafts.js'
+import { getDraft, approveDraft, updateDraftCommitInfo, getDraftByRunId, relinkDraftToNewRun } from '../../db/repositories/e2e-playbook-drafts.js'
+import { commitPlaybookToGitlab } from '../../e2e/playbook-draft/commit-to-gitlab.js'
 import { parsePlaybookYaml } from '../../e2e/pipeline-b/playbook/parse.js'
 import type { E2eRun } from '../../db/repositories/e2e-runs.js'
 import type { E2eScenarioRun } from '../../db/repositories/e2e-scenario-runs.js'
@@ -155,6 +156,18 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
 
       await approveDraft(draftBigInt, created.id)
 
+      void commitPlaybookToGitlab({
+        targetProjectId,
+        draftId: draftBigInt,
+        yamlContent: draft.yamlContent ?? '',
+        sourceBranch: sourceBranch ?? 'main',
+        scenarioInput: draft.scenarioInput,
+      }).then(({ mrUrl, committedPath }) =>
+        updateDraftCommitInfo(draftBigInt, mrUrl, committedPath).catch(() => undefined),
+      ).catch((err) => {
+        console.warn(`[admin/e2e-runs] commitPlaybookToGitlab failed draftId=${draftBigInt}:`, err)
+      })
+
       void runPipelineB({
         targetProjectId,
         sourceBranch: sourceBranch ?? 'main',
@@ -230,4 +243,64 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
       return reply.send({ ok: true })
     },
   )
+
+  app.post<{ Params: { id: string } }>('/e2e-runs/:id/rerun', async (req, reply) => {
+    const oldRun = await getE2eRun(BigInt(req.params.id))
+    if (!oldRun) return reply.status(404).send({ error: 'run not found' })
+
+    // 复用 maxQueuedRuns 预检（仿现有 POST /e2e-runs）
+    const queuedCount = await countQueuedE2eRuns(oldRun.targetProjectId)
+    if (queuedCount >= DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns) {
+      return reply.status(429).send({
+        error: 'too_many_queued_runs',
+        message: `当前已有 ${queuedCount} 个 run 在等待，请稍后再试或 abort 现有 run（上限 ${DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns}）`,
+        queued: queuedCount,
+        limit: DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns,
+      })
+    }
+
+    // manual_draft 的 run 反查 draft，拿到 draft.id 传给 runPipelineB（走 DB 路径，不重新调 LLM）
+    let playbookDraftId: bigint | undefined
+    if (oldRun.triggerType === 'manual_draft') {
+      const draft = await getDraftByRunId(oldRun.id)
+      if (draft) playbookDraftId = draft.id
+    }
+
+    const governorState = buildInitialGovernorState()
+    const { createE2eRun } = await import('../../db/repositories/e2e-runs.js')
+    const created = await createE2eRun({
+      targetProjectId: oldRun.targetProjectId,
+      triggerType: oldRun.triggerType,
+      triggerActor: null,
+      sourceBranch: oldRun.sourceBranch,
+      iterationBranch: '',
+      scenarioFilter: oldRun.scenarioFilter,
+      governorState: governorState as unknown as Record<string, unknown>,
+    })
+
+    // 命中 draft 时，把 draft.e2e_run_id 重新指向新 run，
+    // 让下次 rerun 仍能用 getDraftByRunId(newRunId) 命中（避免 chain 断）。
+    if (playbookDraftId !== undefined) {
+      await relinkDraftToNewRun(playbookDraftId, created.id).catch((err) => {
+        console.warn(`[admin/e2e-runs] relinkDraftToNewRun failed draftId=${playbookDraftId}:`, err)
+      })
+    }
+
+    void runPipelineB({
+      targetProjectId: oldRun.targetProjectId,
+      sourceBranch: oldRun.sourceBranch,
+      scenarioFilter: oldRun.scenarioFilter as { ids?: string[]; tags?: string[] } | undefined ?? undefined,
+      playbookDraftId,
+      triggerType: 'api',
+      existingRunId: created.id,
+    }).catch((err) => {
+      console.error(`[admin/e2e-runs] rerun runPipelineB failed runId=${created.id}:`, err)
+      updateE2eRunStatus(created.id, 'aborted', {
+        abortReason: err instanceof Error ? err.message : String(err),
+        finishedAt: new Date(),
+      }).catch(() => undefined)
+    })
+
+    return reply.status(202).send({ runId: created.id.toString(), status: 'pending' })
+  })
 }

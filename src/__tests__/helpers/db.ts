@@ -238,6 +238,10 @@ const SCHEMA_FILES = [
   'schema-v1002.sql',
   // v1003: e2e_playbook_drafts 表 — Modal 内"输入场景 → AI 生成 → 人审"调试入口
   'schema-v1003.sql',
+  // v1004: e2e_playbook_drafts 新增 mr_url / committed_path 列，纯 ALTER，安全加入。
+  'schema-v1004.sql',
+  // v1005: 取消首次登录强制改密（e2e 沙盒需要 admin/admin 直登），纯 UPDATE，安全加入。
+  'schema-v1005.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
