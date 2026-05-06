@@ -55,6 +55,7 @@ export function buildPipelineBGraph() {
         evidenceDir: state.evidenceDirTemp!,
         scenarioId: state.currentScenario!.id,
         scenarioRunId: state.currentScenarioRunId!,
+        runId: state.runId,
         imContext: state.imContext ?? undefined,
       })
     )

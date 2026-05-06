@@ -1,5 +1,5 @@
 // web/src/pages/E2eRunDetailPage.tsx
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Card, Tag, Button, Space, Typography, Descriptions, Spin, message,
@@ -20,6 +20,8 @@ import {
   type PlaybookDraftSummary,
   type AwaitingReviewInfo,
 } from '../api/e2e-runs'
+import { useScenarioEvents } from '../hooks/useScenarioEvents'
+import type { ScenarioEvent, ScenarioEventStatus } from '../hooks/useScenarioEvents'
 
 const { Title, Text, Link, Paragraph } = Typography
 
@@ -179,6 +181,9 @@ function groupByScenario(
 function getScenarioIcon(attempts: E2eScenarioRunDTO[]): React.ReactNode {
   const last = attempts[attempts.length - 1]
   if (!last) return <ClockCircleOutlined style={{ color: '#d9d9d9' }} />
+  // result 字段 NOT NULL，createScenarioRun 时占位为 'error'，要等 finishScenarioRun 才写真实结果。
+  // 所以 finishedAt === null 即"还在跑"，不要用占位 result 渲染成红色。
+  if (!last.finishedAt) return <SyncOutlined spin style={{ color: '#1677ff' }} />
   const cfg = SCENARIO_RESULT_CONFIG[last.result]
   if (last.result === 'pass') return <CheckCircleOutlined style={{ color: cfg.color }} />
   if (last.result === 'fail' || last.result === 'error' || last.result === 'unfixable') {
@@ -207,13 +212,14 @@ function ScenarioTimeline({
 
   const collapseItems = Array.from(groups.entries()).map(([scenarioId, attempts]) => {
     const last = attempts[attempts.length - 1]
-    const lastCfg = last ? SCENARIO_RESULT_CONFIG[last.result] : null
     const scenarioName = last?.scenarioName ?? scenarioId
     const isRunning = !last?.finishedAt && attempts.length > 0
+    // 运行中时不展示占位 result Tag（'error' 是 createScenarioRun 的占位值）
+    const lastCfg = !isRunning && last ? SCENARIO_RESULT_CONFIG[last.result] : null
 
     const headerExtra = (
       <Space size={4}>
-        {isRunning && <SyncOutlined spin style={{ color: '#4B8BFF' }} />}
+        {isRunning && <Tag color="processing"><SyncOutlined spin /> 运行中</Tag>}
         {lastCfg && <Tag color={lastCfg.color === '#52c41a' ? 'success' : lastCfg.color === '#ff4d4f' ? 'error' : 'default'}>{lastCfg.label}</Tag>}
         <Text type="secondary" style={{ fontSize: 12 }}>{attempts.length} 次尝试</Text>
       </Space>
@@ -233,6 +239,7 @@ function ScenarioTimeline({
           size="small"
           dataSource={attempts}
           renderItem={(sr) => {
+            const attemptRunning = !sr.finishedAt
             const cfg = SCENARIO_RESULT_CONFIG[sr.result]
             return (
               <List.Item
@@ -250,17 +257,25 @@ function ScenarioTimeline({
                 ].filter((x): x is React.ReactElement => x != null)}
               >
                 <Space>
-                  <span style={{ color: cfg.color }}>{cfg.icon}</span>
+                  {attemptRunning ? (
+                    <SyncOutlined spin style={{ color: '#1677ff' }} />
+                  ) : (
+                    <span style={{ color: cfg.color }}>{cfg.icon}</span>
+                  )}
                   <Text>第 {sr.attemptNumber} 次</Text>
-                  <Tag
-                    color={
-                      sr.result === 'pass' ? 'success'
-                      : sr.result === 'fail' || sr.result === 'error' ? 'error'
-                      : 'default'
-                    }
-                  >
-                    {cfg.label}
-                  </Tag>
+                  {attemptRunning ? (
+                    <Tag color="processing">运行中</Tag>
+                  ) : (
+                    <Tag
+                      color={
+                        sr.result === 'pass' ? 'success'
+                        : sr.result === 'fail' || sr.result === 'error' ? 'error'
+                        : 'default'
+                      }
+                    >
+                      {cfg.label}
+                    </Tag>
+                  )}
                   <Text type="secondary">{formatDuration(sr.durationMs)}</Text>
                   <Text type="secondary" style={{ fontSize: 12 }}>
                     {new Date(sr.startedAt).toLocaleTimeString()}
@@ -591,6 +606,9 @@ function ReviewDecisionPanel({
   const failedAcceptances = (manifest?.acceptanceResults ?? []).filter(
     (a) => a.result === 'fail' || a.result === 'error',
   )
+  // host Claude 没写出 manifest.json 时（如超时 / 推理结束漏写）由 run-scenario.ts
+  // 兜底写入此字段；此时 acceptanceResults 是空，需要单独提示让用户决策
+  const runnerError = manifest?.scenarioRunnerError
 
   const submit = async (decision: 'approve' | 'retry' | 'reject') => {
     setSubmitting(decision)
@@ -623,6 +641,17 @@ function ReviewDecisionPanel({
         <Text type="secondary" style={{ fontSize: 12 }}>
           场景失败，e2e-fix agent 是否应当介入修复？
         </Text>
+        {runnerError && (
+          <div>
+            <Tag color="error">runner 异常</Tag>
+            <Text type="danger" style={{ fontSize: 12 }}>{runnerError}</Text>
+            <div>
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                Claude 没写出 manifest.json，无验收结果可参考；可以选「重跑场景」再试一次。
+              </Text>
+            </div>
+          </div>
+        )}
         {failedAcceptances.length > 0 && (
           <div>
             <Text type="secondary" style={{ fontSize: 12 }}>失败的验收：</Text>
@@ -669,6 +698,343 @@ function ReviewDecisionPanel({
       </Space>
     </Card>
   )
+}
+
+interface LiveTracePanelProps {
+  runId: string
+  active: boolean
+}
+
+const STATUS_TAG_CONFIG: Record<ScenarioEventStatus, { color: string; label: string }> = {
+  connecting: { color: 'default',    label: '连接中…' },
+  live:       { color: 'processing', label: '直播中' },
+  closed:     { color: 'default',    label: '已结束' },
+  error:      { color: 'error',      label: '连接错误' },
+}
+
+function truncateText(s: string, max: number): string {
+  if (s.length <= max) return s
+  return s.slice(0, max) + '…'
+}
+
+interface ScenarioGroup {
+  key: string                       // scenarioRunId（孤儿事件用 '__orphan__'）
+  scenarioId: string
+  attemptNumber: number
+  events: ScenarioEvent[]
+  status: 'running' | 'pass' | 'fail' | 'error'
+  startedAt: number
+  finishedAt: number | null
+}
+
+function groupEventsByScenario(events: ScenarioEvent[]): ScenarioGroup[] {
+  const groups: ScenarioGroup[] = []
+  let current: ScenarioGroup | null = null
+
+  for (const ev of events) {
+    if (ev.type === 'scenario_start') {
+      current = {
+        key: String(ev.scenarioRunId ?? `start-${ev.ts}`),
+        scenarioId: String(ev.scenarioId ?? ''),
+        attemptNumber: Number(ev.attemptNumber ?? 0),
+        events: [ev],
+        status: 'running',
+        startedAt: Number(ev.ts ?? 0),
+        finishedAt: null,
+      }
+      groups.push(current)
+    } else if (ev.type === 'scenario_end' && current) {
+      current.events.push(ev)
+      const r = String(ev.result ?? '')
+      current.status = r === 'pass' ? 'pass' : r === 'fail' ? 'fail' : 'error'
+      current.finishedAt = Number(ev.ts ?? 0)
+      current = null
+    } else if (ev.type === 'closed') {
+      // run 级别，不进 group
+    } else if (current) {
+      current.events.push(ev)
+    } else {
+      // 孤儿事件（reconnect 时 scenario_start 已被 ring buffer 截断）
+      let orphan = groups.find(g => g.key === '__orphan__')
+      if (!orphan) {
+        orphan = {
+          key: '__orphan__',
+          scenarioId: '（场景上下文未知）',
+          attemptNumber: 0,
+          events: [],
+          status: 'running',
+          startedAt: Number(ev.ts ?? 0),
+          finishedAt: null,
+        }
+        groups.unshift(orphan)
+      }
+      orphan.events.push(ev)
+      current = orphan
+    }
+  }
+
+  return groups
+}
+
+const SCENARIO_GROUP_STATUS_CFG: Record<ScenarioGroup['status'], { icon: React.ReactNode; tagColor: string; label: string }> = {
+  running: { icon: <SyncOutlined spin style={{ color: '#1677ff' }} />,        tagColor: 'processing', label: '进行中' },
+  pass:    { icon: <CheckCircleOutlined style={{ color: '#52c41a' }} />,      tagColor: 'success',    label: '通过' },
+  fail:    { icon: <CloseCircleOutlined style={{ color: '#ff4d4f' }} />,      tagColor: 'error',      label: '失败' },
+  error:   { icon: <CloseCircleOutlined style={{ color: '#ff4d4f' }} />,      tagColor: 'error',      label: '错误' },
+}
+
+function formatDurationMs(ms: number): string {
+  if (ms < 0) return '—'
+  if (ms < 1000) return `${ms}ms`
+  const sec = ms / 1000
+  if (sec < 60) return `${sec.toFixed(1)}s`
+  const min = Math.floor(sec / 60)
+  const remainSec = Math.round(sec - min * 60)
+  return `${min}m${remainSec}s`
+}
+
+function ScenarioGroupHeader({ group }: { group: ScenarioGroup }) {
+  const cfg = SCENARIO_GROUP_STATUS_CFG[group.status]
+  const elapsed = group.finishedAt != null
+    ? group.finishedAt - group.startedAt
+    : Date.now() - group.startedAt
+  const durationLabel = group.finishedAt != null
+    ? formatDurationMs(elapsed)
+    : `已 ${formatDurationMs(elapsed)}`
+  // 事件计数：排除 scenario_start / scenario_end 这两个边界事件本身
+  const meaningfulCount = group.events.filter(e =>
+    e.type !== 'scenario_start' && e.type !== 'scenario_end',
+  ).length
+  return (
+    <Space size={6} wrap>
+      {cfg.icon}
+      <Text code style={{ fontSize: 12 }}>{group.scenarioId || '(unknown)'}</Text>
+      {group.attemptNumber > 0 && (
+        <Text type="secondary" style={{ fontSize: 12 }}>#{group.attemptNumber}</Text>
+      )}
+      <Tag color={cfg.tagColor}>{cfg.label}</Tag>
+      <Text type="secondary" style={{ fontSize: 12 }}>{meaningfulCount} 事件</Text>
+      <Text type="secondary" style={{ fontSize: 12 }}>· {durationLabel}</Text>
+    </Space>
+  )
+}
+
+function ScenarioGroupBody({ events }: { events: ScenarioEvent[] }) {
+  if (events.length === 0) {
+    return <Text type="secondary" style={{ fontSize: 12 }}>暂无事件</Text>
+  }
+  return (
+    <div style={{ maxHeight: 320, overflowY: 'auto' }}>
+      <List
+        size="small"
+        dataSource={events}
+        renderItem={(ev, idx) => {
+          const key = `${ev.ts ?? idx}-${idx}`
+          if (ev.type === 'scenario_start') {
+            return (
+              <List.Item key={key} style={{ padding: '4px 0' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>── 场景开始 ──</Text>
+              </List.Item>
+            )
+          }
+          if (ev.type === 'scenario_end') {
+            return (
+              <List.Item key={key} style={{ padding: '4px 0' }}>
+                <Divider style={{ margin: 0 }} orientation="left" plain>
+                  <Text style={{ fontSize: 12 }}>
+                    场景结束 (result={String(ev.result ?? '')})
+                  </Text>
+                </Divider>
+              </List.Item>
+            )
+          }
+          if (ev.type === 'fix_start') {
+            return (
+              <List.Item key={key} style={{ padding: '4px 0' }}>
+                <Divider style={{ margin: 0, borderColor: '#fa8c16' }} orientation="left" plain>
+                  <Text strong style={{ color: '#fa8c16', fontSize: 12 }}>修复阶段开始</Text>
+                </Divider>
+              </List.Item>
+            )
+          }
+          if (ev.type === 'fix_end') {
+            const success = Boolean(ev.success)
+            return (
+              <List.Item key={key} style={{ padding: '4px 0' }}>
+                <Divider style={{ margin: 0, borderColor: '#fa8c16' }} orientation="left" plain>
+                  <Text style={{ color: '#fa8c16', fontSize: 12 }}>
+                    修复阶段结束 (success={String(success)}, verdict={String(ev.verdict ?? '')})
+                  </Text>
+                </Divider>
+              </List.Item>
+            )
+          }
+          if (ev.type === 'tool_use') {
+            const phase = ev.phase === 'fix' ? 'fix' : 'scenario'
+            return (
+              <List.Item key={key} style={{ padding: '4px 0' }}>
+                <Space size={4} wrap>
+                  <Tag color={phase === 'fix' ? 'orange' : 'blue'}>
+                    step #{Number(ev.step ?? 0)}
+                  </Tag>
+                  <Text code style={{ fontSize: 12 }}>{String(ev.toolName ?? '')}</Text>
+                  {ev.argsSummary != null && (
+                    <>
+                      <Text type="secondary" style={{ fontSize: 12 }}>·</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {String(ev.argsSummary)}
+                      </Text>
+                    </>
+                  )}
+                </Space>
+              </List.Item>
+            )
+          }
+          if (ev.type === 'assistant_text') {
+            const text = truncateText(String(ev.text ?? ''), 200)
+            return (
+              <List.Item key={key} style={{ padding: '4px 0' }}>
+                <Text type="secondary" italic style={{ fontSize: 12 }}>
+                  "{text}"
+                </Text>
+              </List.Item>
+            )
+          }
+          if (ev.type === 'agent_error') {
+            return (
+              <List.Item key={key} style={{ padding: '4px 0' }}>
+                <Space size={4} wrap>
+                  <Tag color="red">agent error</Tag>
+                  <Text type="danger" style={{ fontSize: 12 }}>
+                    {String(ev.message ?? '')}
+                  </Text>
+                </Space>
+              </List.Item>
+            )
+          }
+          return null
+        }}
+      />
+    </div>
+  )
+}
+
+function LiveTracePanel({ runId, active }: LiveTracePanelProps) {
+  const { events, status } = useScenarioEvents(runId, active)
+  const summary = useMemo(() => summarizeEvents(events), [events])
+  const groups = useMemo(() => groupEventsByScenario(events), [events])
+
+  // 内层 Collapse 默认展开：最后一个仍 running（无 finishedAt）的 scenario
+  const defaultInnerActiveKey = useMemo(() => {
+    const running = [...groups].reverse().find(g => g.finishedAt === null)
+    return running ? [running.key] : []
+  }, [groups])
+
+  const statusCfg = STATUS_TAG_CONFIG[status]
+  const phaseLabel =
+    summary.phase === 'scenario' ? '场景执行'
+    : summary.phase === 'fix' ? '修复阶段'
+    : '空闲'
+
+  // 外层 Collapse 默认折叠（不传 defaultActiveKey）
+  return (
+    <Collapse
+      size="small"
+      style={{ marginBottom: 16 }}
+      items={[{
+        key: 'live-trace',
+        label: <Text strong>实时进度</Text>,
+        extra: <Tag color={statusCfg.color}>{statusCfg.label}</Tag>,
+        children: (
+          <>
+            <Space wrap size={12} style={{ marginBottom: 12 }}>
+              <Space size={4}>
+                <Text type="secondary" style={{ fontSize: 12 }}>当前阶段</Text>
+                <Tag color={summary.phase === 'fix' ? 'orange' : summary.phase === 'scenario' ? 'blue' : 'default'}>
+                  {phaseLabel}
+                </Tag>
+              </Space>
+              {summary.scenarioId && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>场景</Text>
+                  <Text code style={{ fontSize: 12 }}>{summary.scenarioId}</Text>
+                  {summary.attempt > 0 && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>#{summary.attempt}</Text>
+                  )}
+                </Space>
+              )}
+              {summary.step > 0 && (
+                <Space size={4}>
+                  <Text type="secondary" style={{ fontSize: 12 }}>当前步数</Text>
+                  <Text strong>{summary.step}</Text>
+                </Space>
+              )}
+            </Space>
+            {groups.length === 0 ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {status === 'connecting' ? '等待事件…' : '暂无事件'}
+              </Text>
+            ) : (
+              <Collapse
+                size="small"
+                ghost
+                defaultActiveKey={defaultInnerActiveKey}
+                items={groups.map(g => ({
+                  key: g.key,
+                  label: <ScenarioGroupHeader group={g} />,
+                  children: <ScenarioGroupBody events={g.events} />,
+                }))}
+              />
+            )}
+          </>
+        ),
+      }]}
+    />
+  )
+}
+
+function summarizeEvents(events: ScenarioEvent[]): {
+  phase: 'scenario' | 'fix' | 'idle'
+  scenarioId: string
+  attempt: number
+  step: number
+} {
+  let phase: 'scenario' | 'fix' | 'idle' = 'idle'
+  let scenarioId = ''
+  let attempt = 0
+  let step = 0
+
+  // 反向扫描决定当前 phase：最近的 fix_start / fix_end / scenario_start / scenario_end
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (ev.type === 'fix_end') { phase = 'scenario'; break }
+    if (ev.type === 'fix_start') { phase = 'fix'; break }
+    if (ev.type === 'scenario_end') { phase = 'idle'; break }
+    if (ev.type === 'scenario_start') { phase = 'scenario'; break }
+  }
+
+  // 找最近的 scenario_start 决定 scenarioId / attempt
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i]
+    if (ev.type === 'scenario_start') {
+      scenarioId = String(ev.scenarioId ?? '')
+      attempt = Number(ev.attemptNumber ?? 0)
+      break
+    }
+  }
+
+  // 找最近的 tool_use（同 phase）决定 step
+  if (phase === 'scenario' || phase === 'fix') {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const ev = events[i]
+      if (ev.type === 'tool_use' && ev.phase === phase) {
+        step = Number(ev.step ?? 0)
+        break
+      }
+    }
+  }
+
+  return { phase, scenarioId, attempt, step }
 }
 
 export default function E2eRunDetailPage() {
@@ -780,6 +1146,7 @@ export default function E2eRunDetailPage() {
         scenarioRuns={scenarioRuns}
         onViewEvidence={setEvidenceSr}
       />
+      {runId && <LiveTracePanel runId={runId} active={ACTIVE_STATUSES.has(run?.status ?? 'pending')} />}
       <EvidenceDrawer
         scenarioRun={evidenceSr}
         onClose={() => setEvidenceSr(null)}

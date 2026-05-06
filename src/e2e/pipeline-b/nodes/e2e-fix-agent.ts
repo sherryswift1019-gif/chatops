@@ -3,6 +3,7 @@ import { getPool } from '../../../db/client.js'
 import type { SandboxHandle } from '../../../db/repositories/e2e-sandboxes.js'
 import { runE2eFix, type AiDiagnosis } from '../../../agent/e2e-fix/runner.js'
 import { notifyBugfixComplete } from '../im-notifier.js'
+import * as bus from '../scenario-event-bus.js'
 import type { ImContext } from '../types.js'
 
 export interface E2eFixAgentInput {
@@ -11,6 +12,7 @@ export interface E2eFixAgentInput {
   evidenceDir: string
   scenarioId: string
   scenarioRunId: bigint
+  runId: bigint
   imContext?: ImContext
 }
 
@@ -27,31 +29,61 @@ export async function e2eFixAgentNode(
     throw new Error('sandboxHandle.containerId is required for e2eFixAgentNode')
   }
 
-  const diagnosis = await runE2eFix({
-    scenarioId,
-    evidenceDir,
-    iterationBranch,
-    containerId: sandboxHandle.containerId,
-    workdir: sandboxHandle.workdir ?? '/workspace',
+  bus.emit(input.runId, {
+    type: 'fix_start',
+    runId: input.runId.toString(),
+    scenarioRunId: input.scenarioRunId.toString(),
+    scenarioId: input.scenarioId,
+    ts: Date.now(),
   })
 
-  await getPool().query(
-    `UPDATE e2e_scenario_runs
-        SET evidence_manifest = jsonb_set(
-              COALESCE(evidence_manifest, '{}'::jsonb),
-              '{aiDiagnosis}',
-              $1::jsonb
-            )
-      WHERE id = $2`,
-    [JSON.stringify(diagnosis), scenarioRunId],
-  )
-
-  if (diagnosis.success && input.imContext) {
-    notifyBugfixComplete(
-      { adapter: input.imContext.adapter, groupId: input.imContext.groupId, runId: scenarioRunId },
+  try {
+    const diagnosis = await runE2eFix({
       scenarioId,
-    ).catch(() => {})
-  }
+      evidenceDir,
+      iterationBranch,
+      containerId: sandboxHandle.containerId,
+      workdir: sandboxHandle.workdir ?? '/workspace',
+      runId: input.runId,
+    })
 
-  return { lastFixResult: diagnosis }
+    await getPool().query(
+      `UPDATE e2e_scenario_runs
+          SET evidence_manifest = jsonb_set(
+                COALESCE(evidence_manifest, '{}'::jsonb),
+                '{aiDiagnosis}',
+                $1::jsonb
+              )
+        WHERE id = $2`,
+      [JSON.stringify(diagnosis), scenarioRunId],
+    )
+
+    if (diagnosis.success && input.imContext) {
+      notifyBugfixComplete(
+        { adapter: input.imContext.adapter, groupId: input.imContext.groupId, runId: scenarioRunId },
+        scenarioId,
+      ).catch(() => {})
+    }
+
+    bus.emit(input.runId, {
+      type: 'fix_end',
+      runId: input.runId.toString(),
+      scenarioRunId: input.scenarioRunId.toString(),
+      success: diagnosis.success,
+      verdict: diagnosis.verdict,
+      ts: Date.now(),
+    })
+
+    return { lastFixResult: diagnosis }
+  } catch (err) {
+    bus.emit(input.runId, {
+      type: 'fix_end',
+      runId: input.runId.toString(),
+      scenarioRunId: input.scenarioRunId.toString(),
+      success: false,
+      verdict: 'error',
+      ts: Date.now(),
+    })
+    throw err
+  }
 }

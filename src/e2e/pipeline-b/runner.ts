@@ -1,4 +1,5 @@
 // src/e2e/pipeline-b/runner.ts
+// src/e2e/pipeline-b/runner.ts
 import { buildPipelineBGraph } from './graph.js'
 import { teardownSandboxNode } from './nodes/teardown-sandbox.js'
 import {
@@ -7,14 +8,35 @@ import {
   updateE2eRunGovernorState,
   countQueuedE2eRuns,
 } from '../../db/repositories/e2e-runs.js'
+import { getSandboxByRunId } from '../../db/repositories/e2e-sandboxes.js'
 import { buildInitialGovernorState, DEFAULT_GOVERNOR_LIMITS } from './governor.js'
-import type { PipelineBStateType, ImContext } from './types.js'
+import * as bus from './scenario-event-bus.js'
+import type { PipelineBStateType, ImContext, SandboxHandle } from './types.js'
 import { notifyRunAborted } from './im-notifier.js'
 
 const MAX_QUEUED_RUNS = DEFAULT_GOVERNOR_LIMITS.maxQueuedRuns
 
 // Terminal statuses 不应被 catch 路径覆盖（节点已经做出最终决定）
 const TERMINAL_STATUSES = new Set(['passed', 'failed', 'aborted'])
+
+// graph.invoke 失败时 LangGraph 不把节点中间 state 回流给外层闭包，
+// runner 的 lastKnownState 仍是 initialState（sandboxHandle: null）。
+// 而 setup_sandbox 节点已经把 handle 同步落地到 e2e_sandboxes 表，
+// 所以这里从 DB 回查补 sandboxHandle/sandboxId，让 catch 路径的 teardown 拿到资源。
+async function rebuildSandboxStateFromDb(
+  state: Partial<PipelineBStateType>,
+): Promise<Partial<PipelineBStateType>> {
+  if (state.sandboxHandle) return state
+  if (!state.runId || state.runId === 0n) return state
+  const sb = await getSandboxByRunId(state.runId).catch(() => null)
+  if (!sb) return state
+  if (sb.status === 'torn_down' || sb.status === 'failed') return state
+  return {
+    ...state,
+    sandboxId: sb.id,
+    sandboxHandle: sb.handle as unknown as SandboxHandle,
+  }
+}
 
 export interface RunPipelineBOptions {
   targetProjectId: string
@@ -68,10 +90,12 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
   const graph = buildPipelineBGraph()
   let lastKnownState: Partial<PipelineBStateType> = initialState
   let finalStatus = 'aborted'
+  let resolvedRunId: bigint | null = null
 
   try {
     const result = await graph.invoke(initialState, { recursionLimit: 500 }) as PipelineBStateType
     lastKnownState = result
+    if (result.runId) resolvedRunId = result.runId
     const pending = result.pendingScenarios ?? []
     finalStatus = pending.length === 0 ? 'passed' : 'failed'
     // 把最终内存版本 governorState（含真实 counters）写回 DB，让详情页反映 run 结束时的进度。
@@ -87,6 +111,7 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
     const runId = (lastKnownState as PipelineBStateType).runId
     const finalGovernor = (lastKnownState as PipelineBStateType).governorState
     if (runId) {
+      resolvedRunId = runId
       // 如果某个节点已经写了 terminal status（比如 createSummaryMr 写 'passed'，
       // 之后 teardown 抛错），catch 路径不应把 status 倒退成 'aborted'。
       // 只补 abortReason / governorState 让事故可见，不动 status。
@@ -98,7 +123,9 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
         governorState: finalGovernor as unknown as Record<string, unknown>,
       }).catch(() => undefined)
     }
-    await teardownSandboxNode(lastKnownState as PipelineBStateType).catch(() => undefined)
+    await teardownSandboxNode(
+      (await rebuildSandboxStateFromDb(lastKnownState)) as PipelineBStateType,
+    ).catch(() => undefined)
     if (opts.imContext) {
       const runIdForNotify = (lastKnownState as PipelineBStateType).runId
       const msg = err instanceof Error ? err.message : String(err)
@@ -108,5 +135,15 @@ export async function runPipelineB(opts: RunPipelineBOptions): Promise<{ runId: 
       ).catch(() => {})
     }
     throw err
+  } finally {
+    if (resolvedRunId && resolvedRunId !== 0n) {
+      bus.emit(resolvedRunId, {
+        type: 'closed',
+        runId: resolvedRunId.toString(),
+        ts: Date.now(),
+      })
+      const idForClear = resolvedRunId
+      setTimeout(() => bus.clearRun(idForClear), 5 * 60_000).unref()
+    }
   }
 }

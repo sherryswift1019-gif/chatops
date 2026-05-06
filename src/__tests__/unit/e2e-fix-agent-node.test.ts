@@ -43,6 +43,7 @@ describe('e2eFixAgentNode', () => {
       evidenceDir: '/var/chatops/e2e-evidence/42/login-success/1',
       scenarioId: 'login-success',
       scenarioRunId: BigInt(99),
+      runId: 0n,
     })
 
     expect(runE2eFixMock).toHaveBeenCalledWith({
@@ -51,6 +52,7 @@ describe('e2eFixAgentNode', () => {
       iterationBranch: 'test-iter/42',
       containerId: 'sandbox-42-container',
       workdir: '/workspace/chatops',
+      runId: 0n,
     })
   })
 
@@ -67,6 +69,7 @@ describe('e2eFixAgentNode', () => {
       evidenceDir: '/var/chatops/e2e-evidence/42/login-success/1',
       scenarioId: 'login-success',
       scenarioRunId: BigInt(99),
+      runId: 0n,
     })
 
     expect(poolQueryMock).toHaveBeenCalledWith(
@@ -90,6 +93,7 @@ describe('e2eFixAgentNode', () => {
       evidenceDir: '/var/chatops/e2e-evidence/42/create-prd/1',
       scenarioId: 'create-prd',
       scenarioRunId: BigInt(101),
+      runId: 0n,
     })
 
     expect(result.lastFixResult?.success).toBe(true)
@@ -111,6 +115,7 @@ describe('e2eFixAgentNode', () => {
       evidenceDir: '/var/chatops/e2e-evidence/42/approval-flow/2',
       scenarioId: 'approval-flow',
       scenarioRunId: BigInt(200),
+      runId: 0n,
     })
 
     expect(result.lastFixResult?.success).toBe(false)
@@ -127,6 +132,7 @@ describe('e2eFixAgentNode', () => {
         evidenceDir: '/tmp/evidence',
         scenarioId: 'login-success',
         scenarioRunId: BigInt(1),
+      runId: 0n,
       }),
     ).rejects.toThrow(/containerId/)
   })

@@ -99,122 +99,153 @@ async function main(): Promise<void> {
     { timeout: 600_000, cwd: workDir },
   )
   if (provision.exitCode !== 0) {
+    // provision 失败时 deploy.sh 可能已经建了 docker 网络但没写完 handle —— 这种边缘
+    // 情况靠 deploy.sh 给网络打的 chatops.e2e.role=sandbox-net label 让外部扫描兜底。
     console.error(`[PoC] provision failed (exit ${provision.exitCode}): ${provision.stderr.slice(0, 500)}`)
     process.exit(1)
   }
 
-  // ---- step 2: build (optional) ----
-  if (!skipBuild) {
-    console.log('[PoC] build...')
-    const buildResult = await runScript(buildScript, [], {
-      timeout: 900_000,
+  // ---- step 2-5 整体包 try/finally：任何 step 抛错都要走 teardown，避免容器/网络泄漏 ----
+  let handleJson: Record<string, unknown> | null = null
+  let exitCode = 0
+  try {
+    // ---- step 2: build (optional) ----
+    if (!skipBuild) {
+      console.log('[PoC] build...')
+      const buildResult = await runScript(buildScript, [], {
+        timeout: 900_000,
+        cwd: workDir,
+        env: {
+          IMAGE_NAME: `chatops-poc-${Date.now()}`,
+          IMAGE_TAG: 'poc',
+        },
+      })
+      if (buildResult.exitCode !== 0) {
+        throw new Error(`build failed (exit ${buildResult.exitCode}): ${buildResult.stderr.slice(0, 500)}`)
+      }
+    } else {
+      console.log('[PoC] skip build (POC_SKIP_BUILD=1)')
+    }
+
+    // ---- step 3: deploy ----
+    console.log('[PoC] deploy...')
+    const deploy = await runScript(deployScript, ['deploy', `--handle=${handleFile}`], {
+      timeout: 300_000,
       cwd: workDir,
-      env: {
-        IMAGE_NAME: `chatops-poc-${Date.now()}`,
-        IMAGE_TAG: 'poc',
-      },
     })
-    if (buildResult.exitCode !== 0) {
-      console.error(`[PoC] build failed (exit ${buildResult.exitCode}): ${buildResult.stderr.slice(0, 500)}`)
-      process.exit(1)
+    if (deploy.exitCode !== 0) {
+      throw new Error(`deploy failed (exit ${deploy.exitCode}): ${deploy.stderr.slice(0, 500)}`)
     }
-  } else {
-    console.log('[PoC] skip build (POC_SKIP_BUILD=1)')
-  }
 
-  // ---- step 3: deploy ----
-  console.log('[PoC] deploy...')
-  const deploy = await runScript(deployScript, ['deploy', `--handle=${handleFile}`], {
-    timeout: 300_000,
-    cwd: workDir,
-  })
-  if (deploy.exitCode !== 0) {
-    console.error(`[PoC] deploy failed (exit ${deploy.exitCode}): ${deploy.stderr.slice(0, 500)}`)
-    process.exit(1)
-  }
+    handleJson = JSON.parse(readFileSync(handleFile, 'utf8')) as Record<string, unknown>
+    console.log('[PoC] handle:', JSON.stringify(handleJson, null, 2))
 
-  const handleJson = JSON.parse(readFileSync(handleFile, 'utf8')) as Record<string, unknown>
-  console.log('[PoC] handle:', JSON.stringify(handleJson, null, 2))
+    // chatops 的 deploy.sh:135 在 deploy 子命令里把容器命名为 chatops-e2e-{apiPort}，
+    // 但 provision 写出的 handle JSON 不带 containerId / workdir。这里 driver 自己派生，
+    // 让 scenario runner 能用 docker exec。
+    const internalRefs = (handleJson.internalRefs as Record<string, unknown>) ?? {}
+    const apiPort = internalRefs.apiPort
+    const derivedContainerId =
+      typeof handleJson.containerId === 'string'
+        ? handleJson.containerId
+        : typeof apiPort === 'number'
+          ? `chatops-e2e-${apiPort}`
+          : undefined
 
-  // chatops 的 deploy.sh:135 在 deploy 子命令里把容器命名为 chatops-e2e-{apiPort}，
-  // 但 provision 写出的 handle JSON 不带 containerId / workdir。这里 driver 自己派生，
-  // 让 scenario runner 能用 docker exec。
-  const internalRefs = (handleJson.internalRefs as Record<string, unknown>) ?? {}
-  const apiPort = internalRefs.apiPort
-  const derivedContainerId =
-    typeof handleJson.containerId === 'string'
-      ? handleJson.containerId
-      : typeof apiPort === 'number'
-        ? `chatops-e2e-${apiPort}`
-        : undefined
-
-  // chatops 沙盒只暴露 endpoints.api（前端 SPA + /admin API 同 server），
-  // SKILL.md 默认从 endpoints.web_base_url 起 Playwright，这里别名一下。
-  const rawEndpoints = (handleJson.endpoints as Record<string, string>) ?? {}
-  const endpoints: Record<string, string> = { ...rawEndpoints }
-  if (!endpoints.web_base_url && endpoints.api) {
-    endpoints.web_base_url = endpoints.api
-  }
-
-  if (!derivedContainerId) {
-    console.warn('[PoC] WARN: 无法派生 containerId — Claude docker exec 类操作会失败')
-  }
-
-  const sandboxHandle: SandboxHandle = {
-    envId: handleJson.envId as string,
-    kind: (handleJson.kind as string) ?? 'docker-compose-local',
-    endpoints,
-    internalRefs,
-    containerId: derivedContainerId,
-    workdir: (handleJson.workdir as string | undefined) ?? '/app',
-  }
-
-  // ---- step 4: 准备 evidenceDir ----
-  const evidenceDir = mkdtempSync(join(tmpdir(), 'poc-evidence-'))
-  console.log(`[PoC] evidenceDir = ${evidenceDir}`)
-
-  // ---- step 5: 跑 scenario ----
-  console.log('[PoC] running scenario via Claude...')
-  const t0 = Date.now()
-  const result = await runE2eScenario({
-    playbook: POC_PLAYBOOK,
-    scenarioId,
-    evidenceDir,
-    sandboxHandle,
-    attemptNumber: 1,
-  })
-  const elapsedMs = Date.now() - t0
-  console.log(`[PoC] runE2eScenario done (${(elapsedMs / 1000).toFixed(1)}s)`)
-
-  console.log('==== rawOutput (last 2000 chars) ====')
-  console.log(result.rawOutput.slice(-2000))
-  console.log('==== manifest ====')
-  console.log(result.manifest ? JSON.stringify(result.manifest, null, 2) : '(null)')
-  console.log('==== errorMessage ====')
-  console.log(result.errorMessage ?? '(null)')
-  console.log(`[PoC] evidenceDir 留在: ${evidenceDir}`)
-
-  // ---- step 6: teardown ----
-  if (teardownOnExit) {
-    console.log('[PoC] teardown...')
-    const teardownHandleFile = join(handleDir, 'teardown.json')
-    writeFileSync(teardownHandleFile, JSON.stringify(handleJson))
-    const teardown = await runScript(
-      deployScript,
-      ['teardown', `--handle=${teardownHandleFile}`],
-      { timeout: 300_000, cwd: workDir },
-    )
-    if (teardown.exitCode !== 0) {
-      console.warn(`[PoC] teardown 返回 ${teardown.exitCode}: ${teardown.stderr.slice(0, 300)}`)
+    // chatops 沙盒只暴露 endpoints.api（前端 SPA + /admin API 同 server），
+    // SKILL.md 默认从 endpoints.web_base_url 起 Playwright，这里别名一下。
+    const rawEndpoints = (handleJson.endpoints as Record<string, string>) ?? {}
+    const endpoints: Record<string, string> = { ...rawEndpoints }
+    if (!endpoints.web_base_url && endpoints.api) {
+      endpoints.web_base_url = endpoints.api
     }
-  } else {
-    console.log('[PoC] skip teardown (POC_TEARDOWN_ON_EXIT=0)')
+
+    if (!derivedContainerId) {
+      console.warn('[PoC] WARN: 无法派生 containerId — Claude docker exec 类操作会失败')
+    }
+
+    const sandboxHandle: SandboxHandle = {
+      envId: handleJson.envId as string,
+      kind: (handleJson.kind as string) ?? 'docker-compose-local',
+      endpoints,
+      internalRefs,
+      containerId: derivedContainerId,
+      workdir: (handleJson.workdir as string | undefined) ?? '/app',
+    }
+
+    // ---- step 4: 准备 evidenceDir ----
+    const evidenceDir = mkdtempSync(join(tmpdir(), 'poc-evidence-'))
+    console.log(`[PoC] evidenceDir = ${evidenceDir}`)
+
+    // ---- step 5: 跑 scenario ----
+    console.log('[PoC] running scenario via Claude...')
+    const t0 = Date.now()
+    const result = await runE2eScenario({
+      playbook: POC_PLAYBOOK,
+      scenarioId,
+      evidenceDir,
+      sandboxHandle,
+      attemptNumber: 1,
+      runId: 0n,  // PoC 脚本无 e2e_runs，bus.emit 防御 0n 跳过推送
+    })
+    const elapsedMs = Date.now() - t0
+    console.log(`[PoC] runE2eScenario done (${(elapsedMs / 1000).toFixed(1)}s)`)
+
+    console.log('==== rawOutput (last 2000 chars) ====')
+    console.log(result.rawOutput.slice(-2000))
+    console.log('==== manifest ====')
+    console.log(result.manifest ? JSON.stringify(result.manifest, null, 2) : '(null)')
+    console.log('==== errorMessage ====')
+    console.log(result.errorMessage ?? '(null)')
+    console.log(`[PoC] evidenceDir 留在: ${evidenceDir}`)
+
+    if (result.errorMessage) exitCode = 1
+  } catch (err) {
+    console.error('[PoC] fatal in step 2-5:', err)
+    exitCode = 2
+  } finally {
+    // ---- step 6: teardown（兜底）----
+    if (teardownOnExit) {
+      // step 3 之前抛错时 handleJson 仍为 null —— 兜底从 handleFile 重读
+      // （provision 已落盘 handle，唯一漏网情况是 provision 自身崩在写 handle 之前）
+      if (!handleJson) {
+        try {
+          handleJson = JSON.parse(readFileSync(handleFile, 'utf8')) as Record<string, unknown>
+        } catch {
+          /* handle 不可读 — 任何残留容器/网络靠 deploy.sh 打的 chatops.e2e.role label 兜底 */
+        }
+      }
+      if (handleJson) {
+        console.log('[PoC] teardown...')
+        const teardownHandleFile = join(handleDir, 'teardown.json')
+        try {
+          writeFileSync(teardownHandleFile, JSON.stringify(handleJson))
+          const teardown = await runScript(
+            deployScript,
+            ['teardown', `--handle=${teardownHandleFile}`],
+            { timeout: 300_000, cwd: workDir },
+          )
+          if (teardown.exitCode !== 0) {
+            console.warn(`[PoC] teardown 返回 ${teardown.exitCode}: ${teardown.stderr.slice(0, 300)}`)
+          }
+        } catch (tdErr) {
+          console.warn(`[PoC] teardown spawn 异常: ${tdErr}`)
+        }
+      } else {
+        console.warn(
+          '[PoC] teardown 跳过：handle 不可读 — 任何残留容器/网络应通过 chatops.e2e.role label 扫描清理',
+        )
+      }
+    } else {
+      console.log('[PoC] skip teardown (POC_TEARDOWN_ON_EXIT=0)')
+    }
   }
 
-  process.exit(result.errorMessage ? 1 : 0)
+  process.exit(exitCode)
 }
 
 main().catch((err) => {
-  console.error('[PoC] fatal:', err)
-  process.exit(2)
+  // try/finally 自身崩了才会进这里；正常 fatal 已经在内部处理并 process.exit
+  console.error('[PoC] outer fatal (post-finally):', err)
+  process.exit(3)
 })

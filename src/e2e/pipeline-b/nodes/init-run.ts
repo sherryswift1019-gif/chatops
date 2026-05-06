@@ -4,6 +4,7 @@ import { createE2eRun, updateE2eRunStatus } from '../../../db/repositories/e2e-r
 import { resolveGitlabConfig } from '../../../config/gitlab.js'
 import { runScript } from '../run-script.js'
 import { getWorkspacePaths, ensureWorkspaceCloned } from '../../workspace.js'
+import * as bus from '../scenario-event-bus.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function initRunNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
@@ -91,6 +92,7 @@ export async function initRunNode(state: PipelineBStateType): Promise<Partial<Pi
   await updateE2eRunStatus(runId, 'running')
 
   console.log(`[PipelineB:initRun] runId=${runId} sourceBranch=${state.sourceBranch} iterationBranch=${iterationBranch} workspace=${containerPath}`)
+  bus.ensureRun(runId)
   return {
     runId,
     iterationBranch,

@@ -59,6 +59,7 @@ export async function runBaselineCheckNode(state: PipelineAStateType): Promise<P
       evidenceDir,
       sandboxHandle,
       attemptNumber: state.baselineAttempts + 1,
+      runId: 0n,  // pipeline-a 无 e2e_runs 概念；bus.emit 防御 0n 跳过推送
     })
 
     const sceneResult = result.manifest?.result ?? 'error'
