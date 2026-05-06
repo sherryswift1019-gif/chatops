@@ -1,0 +1,24 @@
+specPath: draft://chatops/1778064385917
+specTitle: Admin 登录页验证 - 使用默认凭据登录后跳转至 /product-lines
+scenarios:
+  - id: admin-login-redirect
+    name: 使用用户名 admin、密码 admin 登录后验证 URL 跳转到 /product-lines
+    tags: [auth, smoke]
+    setup:
+      hints:
+        - "沙盒环境已启动，admin 账号密码均为 admin（默认）"
+        - "确认登录页可正常访问，无需预先登录状态"
+    steps:
+      - "用 mcp__playwright__browser_navigate 打开登录页（通常为 /login 或根路径，视实际部署 URL 而定）"
+      - "用 mcp__playwright__browser_type 在用户名输入框填入 admin"
+      - "用 mcp__playwright__browser_type 在密码输入框填入 admin"
+      - "用 mcp__playwright__browser_click 点击提交按钮（button[type=submit] 或登录按钮）"
+      - "等待页面跳转，验证当前 URL 路径是否为 /product-lines"
+    acceptance:
+      - kind: url_match
+        value: /product-lines
+        timeout_ms: 5000
+    on_fail_hints:
+      - "检查登录凭据是否正确，沙盒环境 admin 密码可能已被修改"
+      - "检查登录接口响应状态，若返回 401/403 则认证失败，查看 docker logs 确认服务日志"
+      - "若 URL 未跳转，检查前端路由配置，确认 /product-lines 路由已注册且登录成功后的重定向逻辑正确"
