@@ -19,16 +19,22 @@ export function governorCheck(state: PipelineBStateType): 'continue' | 'over_bud
 }
 
 export async function finalizeFailedNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
-  const { runId, governorState } = state
+  const { runId, governorState, lastUnfixableScenario } = state
 
   const nowMs = Date.now()
   const elapsedMs = nowMs - governorState.runStartedAt
-  let reason = 'governor_over_budget'
-
+  let reason: string
   if (elapsedMs > governorState.limits.maxRunHours * 3600 * 1000) {
     reason = `over_time_limit: ${Math.round(elapsedMs / 60000)}min elapsed (limit ${governorState.limits.maxRunHours}h)`
   } else if (governorState.totalAttempts >= governorState.limits.maxTotalAttempts) {
     reason = `over_total_attempts: ${governorState.totalAttempts} (limit ${governorState.limits.maxTotalAttempts})`
+  } else if (lastUnfixableScenario) {
+    // mark_unfixable → finalize_failed 的 fail-fast 路径：真正原因不是预算，
+    // 是某个 scenario 被判 unfixable。早期默认 reason 落到 governor_over_budget
+    // 是误导。
+    reason = `scenario_unfixable: ${lastUnfixableScenario}`
+  } else {
+    reason = 'governor_over_budget'
   }
 
   await updateE2eRunStatus(runId, 'failed', {

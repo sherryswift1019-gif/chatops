@@ -42,7 +42,7 @@ describe('Integration: 新增 Repository CRUD', () => {
   it('creates and retrieves bug analysis report', async () => {
     const report = await createBugAnalysisReport({
       issueId: 1001,
-      issueUrl: 'https://gitlab.example.com/issues/1001',
+      issueUrl: 'https://code.paraview.cn/issues/1001',
       productLineId,
       agentSessionId: 'session-abc',
       level: 'l1',
@@ -77,9 +77,9 @@ describe('Integration: 新增 Repository CRUD', () => {
   it('creates and retrieves knowledge repo config', async () => {
     await createProductKnowledgeRepo({
       productLineId,
-      codeRepoUrl: 'git@gitlab.example.com:pam/pas.git',
+      codeRepoUrl: 'git@code.paraview.cn:pam/pas.git',
       codeDefaultBranch: 'develop',
-      knowledgeRepoUrl: 'git@gitlab.example.com:pam/pam-knowledge.git',
+      knowledgeRepoUrl: 'git@code.paraview.cn:pam/pam-knowledge.git',
       aiSummaryPath: 'docs/ai',
       imageStorageConfig: { type: 'local', path: '/opt/knowledge/images' },
     })

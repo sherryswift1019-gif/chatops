@@ -8,7 +8,7 @@ export interface E2eRunDTO {
   triggerActor: string | null
   sourceBranch: string
   iterationBranch: string
-  status: 'pending' | 'running' | 'awaiting_fix' | 'passed' | 'failed' | 'aborted'
+  status: 'pending' | 'running' | 'awaiting_fix' | 'awaiting_human_review' | 'passed' | 'failed' | 'aborted'
   governorState: {
     perScenarioAttempts?: Record<string, number>
     totalAttempts?: number
@@ -112,10 +112,24 @@ export interface E2eScenarioRunDTO {
   finishedAt: string | null
 }
 
+export interface PlaybookDraftSummary {
+  id: string
+  status: 'drafting' | 'reviewing' | 'approved' | 'rejected' | 'generation_failed'
+  mrUrl: string | null
+  committedPath: string | null
+}
+
+export interface AwaitingReviewInfo {
+  scenarioRunId: string
+  scenarioId: string | null
+}
+
 export interface E2eRunDetailResponse {
   run: E2eRunDTO
   sandbox: E2eSandboxDTO | null
   scenarioRuns: E2eScenarioRunDTO[]
+  playbookDraft: PlaybookDraftSummary | null
+  awaitingReview: AwaitingReviewInfo | null
 }
 
 export interface CreateRunBody {
@@ -161,6 +175,11 @@ export const e2eRunsApi = {
 
   rerun: (runId: string) =>
     client.post<{ runId: string }>(`/e2e-runs/${runId}/rerun`).then(r => r.data),
+
+  submitReviewDecision: (runId: string, decision: 'approve' | 'retry' | 'reject') =>
+    client
+      .post<{ ok: true; decision: string }>(`/e2e-runs/${runId}/review-decision`, { decision })
+      .then(r => r.data),
 
   listScenarioOptions: (projectId: string, ref?: string) =>
     client.get<ScenarioOptionsResponse>('/e2e-runs/scenario-options', {

@@ -25,7 +25,7 @@ describe('gitlabAddIssueLabel', () => {
 
   beforeEach(() => {
     vi.mocked(axios.put).mockReset()
-    process.env.GITLAB_URL = 'https://gitlab.example.com'
+    process.env.GITLAB_URL = 'https://code.paraview.cn'
     process.env.GITLAB_TOKEN = 'test-token-xyz'
   })
 
@@ -44,7 +44,7 @@ describe('gitlabAddIssueLabel', () => {
     expect(axios.put).toHaveBeenCalledTimes(1)
     const [url, body, cfg] = vi.mocked(axios.put).mock.calls[0]
     expect(url).toBe(
-      'https://gitlab.example.com/api/v4/projects/PAM%2Fpas-api/issues/42',
+      'https://code.paraview.cn/api/v4/projects/PAM%2Fpas-api/issues/42',
     )
     expect(body).toEqual({ add_labels: 'needs-handover' })
     expect((cfg as any).headers['PRIVATE-TOKEN']).toBe('test-token-xyz')

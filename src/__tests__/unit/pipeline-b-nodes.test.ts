@@ -147,6 +147,7 @@ const BASE_STATE: PipelineBStateType = {
   governorState: DEFAULT_GOVERNOR,
   summaryMrUrl: null,
   errorMessage: null,
+  lastUnfixableScenario: null,
   imContext: null,
   playbookDraftId: undefined,
 }
@@ -173,7 +174,7 @@ beforeEach(() => {
   vi.mocked(mergeEvidenceManifest).mockResolvedValue(undefined)
   vi.mocked(getLatestAttemptNumber).mockResolvedValue(0)
   vi.mocked(resolveGitlabConfig).mockResolvedValue({
-    url: 'https://gitlab.example.com',
+    url: 'https://code.paraview.cn',
     token: 'tok',
     skipTlsVerify: false,
   })
@@ -488,6 +489,59 @@ describe('markUnfixableNode', () => {
     expect(finishScenarioRun).not.toHaveBeenCalled()
     expect(mergeEvidenceManifest).not.toHaveBeenCalled()
   })
+
+  it('lastFixResult 缺失时 fallback 文案明示语义（人审 reject vs 缺审者）', async () => {
+    const scenarios = [{ id: 'login', name: 'L', tags: [] }]
+
+    // reject 路径：humanReviewDecision='reject' → 文案说明是审核者拒绝
+    await markUnfixableNode({
+      ...BASE_STATE,
+      currentScenario: scenarios[0],
+      currentScenarioRunId: 100n,
+      pendingScenarios: scenarios,
+      lastFixResult: null,
+      humanReviewDecision: 'reject',
+    })
+    const rejectCall = vi.mocked(mergeEvidenceManifest).mock.calls.at(-1)
+    expect(rejectCall?.[1]).toMatchObject({
+      aiDiagnosis: expect.objectContaining({
+        verdict: 'uncertain',
+        success: false,
+        rootCauseSummary: expect.stringMatching(/human reviewer rejected/),
+        failureReason: expect.stringMatching(/human reviewer rejected/),
+      }),
+    })
+
+    // 异常 fallthrough 路径：humanReviewDecision 非 reject → 兜底文案不再使用
+    // 误导性的 "max fix attempts exceeded"
+    vi.mocked(mergeEvidenceManifest).mockClear()
+    await markUnfixableNode({
+      ...BASE_STATE,
+      currentScenario: scenarios[0],
+      currentScenarioRunId: 101n,
+      pendingScenarios: scenarios,
+      lastFixResult: null,
+      humanReviewDecision: null,
+    })
+    const otherCall = vi.mocked(mergeEvidenceManifest).mock.calls.at(-1)
+    expect(otherCall?.[1]).toMatchObject({
+      aiDiagnosis: expect.objectContaining({
+        rootCauseSummary: expect.stringMatching(/no fix attempted/),
+        failureReason: expect.stringMatching(/no fix attempted/),
+      }),
+    })
+  })
+
+  it('返回值携带 lastUnfixableScenario, 用于 finalize 区分 unfixable vs 真预算', async () => {
+    const scenarios = [{ id: 'login', name: 'L', tags: [] }]
+    const result = await markUnfixableNode({
+      ...BASE_STATE,
+      currentScenario: scenarios[0],
+      currentScenarioRunId: 100n,
+      pendingScenarios: scenarios,
+    })
+    expect(result.lastUnfixableScenario).toBe('login')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -560,7 +614,7 @@ describe('createSummaryMrNode', () => {
       'fetch',
       vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ web_url: 'https://gitlab.example.com/-/merge_requests/99' }),
+        json: () => Promise.resolve({ web_url: 'https://code.paraview.cn/-/merge_requests/99' }),
       }),
     )
     const result = await createSummaryMrNode({ ...FIXED_STATE })
@@ -644,6 +698,33 @@ describe('finalizeFailedNode', () => {
     }
     const result = await finalizeFailedNode(state)
     expect(result.errorMessage).toMatch(/over_total_attempts/)
+  })
+
+  it('lastUnfixableScenario 非空 + 未超时/超 attempts → errorMessage=scenario_unfixable, 不再误报 governor_over_budget', async () => {
+    const state = {
+      ...BASE_STATE,
+      lastUnfixableScenario: 'login-lockout',
+    }
+    const result = await finalizeFailedNode(state)
+    expect(result.errorMessage).toBe('scenario_unfixable: login-lockout')
+    expect(updateE2eRunStatus).toHaveBeenCalledWith(
+      42n,
+      'failed',
+      expect.objectContaining({ abortReason: 'scenario_unfixable: login-lockout' }),
+    )
+  })
+
+  it('真超时优先于 lastUnfixableScenario → errorMessage 仍报 over_time_limit', async () => {
+    const state = {
+      ...BASE_STATE,
+      lastUnfixableScenario: 'login',
+      governorState: {
+        ...DEFAULT_GOVERNOR,
+        runStartedAt: Date.now() - 5 * 3600 * 1000,
+      },
+    }
+    const result = await finalizeFailedNode(state)
+    expect(result.errorMessage).toMatch(/over_time_limit/)
   })
 })
 

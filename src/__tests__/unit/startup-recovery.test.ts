@@ -52,7 +52,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(updateE2eRunStatus).mockResolvedValue(undefined)
   vi.mocked(updateSandboxStatus).mockResolvedValue(undefined)
-  vi.mocked(resolveGitlabConfig).mockResolvedValue({ url: 'https://gitlab.example.com', token: 'tok', skipTlsVerify: false })
+  vi.mocked(resolveGitlabConfig).mockResolvedValue({ url: 'https://code.paraview.cn', token: 'tok', skipTlsVerify: false })
   vi.mocked(getE2eTargetProject).mockResolvedValue(null)
   vi.mocked(fsPromises.mkdtemp).mockResolvedValue('/tmp/e2e-recovery-test' as any)
   vi.mocked(fsPromises.writeFile).mockResolvedValue(undefined)

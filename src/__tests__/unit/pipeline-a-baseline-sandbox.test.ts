@@ -19,7 +19,7 @@ vi.mock('../../db/repositories/e2e-sandboxes.js', () => ({
 vi.mock('../../db/repositories/e2e-target-projects.js', () => ({
   getE2eTargetProject: vi.fn().mockResolvedValue({
     id: 'chatops',
-    gitlabRepo: 'http://gitlab.example.com/foo/chatops.git',
+    gitlabRepo: 'http://code.paraview.cn/foo/chatops.git',
     defaultBranch: 'main',
     scripts: { deploy: 'deploy.sh', build: 'build.sh', test: 'test.sh' },
     workingDir: '.',
@@ -27,7 +27,7 @@ vi.mock('../../db/repositories/e2e-target-projects.js', () => ({
   extractGitlabPath: vi.fn().mockReturnValue('foo/chatops'),
 }))
 vi.mock('../../config/gitlab.js', () => ({
-  resolveGitlabConfig: vi.fn().mockResolvedValue({ url: 'http://gitlab.example.com', token: 'test-token' }),
+  resolveGitlabConfig: vi.fn().mockResolvedValue({ url: 'http://code.paraview.cn', token: 'test-token' }),
 }))
 
 import { spawnSync, execSync } from 'child_process'

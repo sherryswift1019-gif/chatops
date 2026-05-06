@@ -87,6 +87,9 @@ export const PipelineBState = Annotation.Root({
   }),
   summaryMrUrl: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
   errorMessage: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
+  // 标记最近被打成 unfixable 的 scenario id，用于 finalize-failed 区分
+  // “真预算超限”vs“某个 scenario 不可修”两条到达 finalize_failed 的路径。
+  lastUnfixableScenario: Annotation<string | null>({ default: () => null, reducer: (_, v) => v }),
   imContext: Annotation<ImContext | null>({ default: () => null, reducer: (_, v) => v }),
   playbookDraftId: Annotation<bigint | undefined>({ default: () => undefined, reducer: (_, v) => v }),
 })

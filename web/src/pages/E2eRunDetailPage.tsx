@@ -17,17 +17,20 @@ import {
   type E2eScenarioRunDTO,
   type EvidenceManifest,
   type EvidenceArtifact,
+  type PlaybookDraftSummary,
+  type AwaitingReviewInfo,
 } from '../api/e2e-runs'
 
 const { Title, Text, Link, Paragraph } = Typography
 
 const RUN_STATUS_CONFIG: Record<E2eRunDTO['status'], { color: string; label: string }> = {
-  pending:       { color: 'default',    label: '等待中' },
-  running:       { color: 'processing', label: '运行中' },
-  awaiting_fix:  { color: 'warning',    label: '等待修复' },
-  passed:        { color: 'success',    label: '通过' },
-  failed:        { color: 'error',      label: '失败' },
-  aborted:       { color: 'default',    label: '已中止' },
+  pending:                { color: 'default',    label: '等待中' },
+  running:                { color: 'processing', label: '运行中' },
+  awaiting_fix:           { color: 'warning',    label: '等待修复' },
+  awaiting_human_review:  { color: 'warning',    label: '等待人审' },
+  passed:                 { color: 'success',    label: '通过' },
+  failed:                 { color: 'error',      label: '失败' },
+  aborted:                { color: 'default',    label: '已中止' },
 }
 
 const SCENARIO_RESULT_CONFIG: Record<E2eScenarioRunDTO['result'], { icon: React.ReactNode; color: string; label: string }> = {
@@ -62,9 +65,9 @@ function formatElapsed(startMs: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
 
-const ACTIVE_STATUSES = new Set<E2eRunDTO['status']>(['running', 'awaiting_fix', 'pending'])
+const ACTIVE_STATUSES = new Set<E2eRunDTO['status']>(['running', 'awaiting_fix', 'awaiting_human_review', 'pending'])
 
-function RunSummary({ run }: { run: E2eRunDTO }) {
+function RunSummary({ run, playbookDraft }: { run: E2eRunDTO; playbookDraft: PlaybookDraftSummary | null }) {
   const gs = run.governorState
   const limits = gs?.limits
   const totalAttempts = gs?.totalAttempts ?? 0
@@ -96,6 +99,17 @@ function RunSummary({ run }: { run: E2eRunDTO }) {
         <Space>
           <Text type="secondary">汇总 MR：</Text>
           <Link href={run.summaryMrUrl} target="_blank">查看 MR</Link>
+        </Space>
+      )}
+      {playbookDraft?.mrUrl && (
+        <Space wrap>
+          <Text type="secondary">Playbook MR：</Text>
+          <Link href={playbookDraft.mrUrl} target="_blank">查看 MR</Link>
+          {playbookDraft.committedPath && (
+            <Text type="secondary" code style={{ fontSize: 12 }}>
+              {playbookDraft.committedPath}
+            </Text>
+          )}
         </Space>
       )}
       {run.abortReason && (
@@ -559,12 +573,112 @@ function EvidenceDrawer({
   )
 }
 
+function ReviewDecisionPanel({
+  runId,
+  awaitingReview,
+  scenarioRuns,
+  onSubmitted,
+}: {
+  runId: string
+  awaitingReview: AwaitingReviewInfo
+  scenarioRuns: E2eScenarioRunDTO[]
+  onSubmitted: () => void
+}) {
+  const [submitting, setSubmitting] = useState<'approve' | 'retry' | 'reject' | null>(null)
+  // 找到正在等审的 scenarioRun，把失败原因摘要显示给人，让审核者有依据再点按钮
+  const sr = scenarioRuns.find((s) => s.id === awaitingReview.scenarioRunId)
+  const manifest = sr?.evidenceManifest
+  const failedAcceptances = (manifest?.acceptanceResults ?? []).filter(
+    (a) => a.result === 'fail' || a.result === 'error',
+  )
+
+  const submit = async (decision: 'approve' | 'retry' | 'reject') => {
+    setSubmitting(decision)
+    try {
+      await e2eRunsApi.submitReviewDecision(runId, decision)
+      message.success(`已提交决策：${decision}`)
+      onSubmitted()
+    } catch (err) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+      message.error(`提交失败${msg ? `：${msg}` : ''}`)
+    } finally {
+      setSubmitting(null)
+    }
+  }
+
+  return (
+    <Card
+      type="inner"
+      size="small"
+      title={
+        <Space>
+          <Badge status="warning" />
+          <Text strong>等待人审决策</Text>
+          {awaitingReview.scenarioId && <Text code style={{ fontSize: 12 }}>{awaitingReview.scenarioId}</Text>}
+        </Space>
+      }
+      style={{ marginBottom: 16, borderColor: '#faad14' }}
+    >
+      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          场景失败，e2e-fix agent 是否应当介入修复？
+        </Text>
+        {failedAcceptances.length > 0 && (
+          <div>
+            <Text type="secondary" style={{ fontSize: 12 }}>失败的验收：</Text>
+            <div style={{ marginTop: 4 }}>
+              {failedAcceptances.map((ar, i) => (
+                <div key={i} style={{ marginBottom: 4 }}>
+                  <Tag color="error">{ar.kind}#{ar.index}</Tag>
+                  {ar.reason && (
+                    <Text type="secondary" style={{ fontSize: 11 }}>{ar.reason}</Text>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <Space>
+          <Button
+            type="primary"
+            loading={submitting === 'approve'}
+            disabled={submitting !== null}
+            onClick={() => submit('approve')}
+          >
+            批准修复
+          </Button>
+          <Button
+            loading={submitting === 'retry'}
+            disabled={submitting !== null}
+            onClick={() => submit('retry')}
+          >
+            重跑场景
+          </Button>
+          <Popconfirm
+            title="拒绝后此场景将被标记为不可修复，整个 Run 终止"
+            onConfirm={() => submit('reject')}
+            okText="确认拒绝"
+            cancelText="取消"
+            okButtonProps={{ danger: true }}
+          >
+            <Button danger loading={submitting === 'reject'} disabled={submitting !== null}>
+              拒绝
+            </Button>
+          </Popconfirm>
+        </Space>
+      </Space>
+    </Card>
+  )
+}
+
 export default function E2eRunDetailPage() {
   const { runId } = useParams<{ runId: string }>()
   const navigate = useNavigate()
   const [run, setRun] = useState<E2eRunDTO | null>(null)
   const [sandbox, setSandbox] = useState<E2eSandboxDTO | null>(null)
   const [scenarioRuns, setScenarioRuns] = useState<E2eScenarioRunDTO[]>([])
+  const [playbookDraft, setPlaybookDraft] = useState<PlaybookDraftSummary | null>(null)
+  const [awaitingReview, setAwaitingReview] = useState<AwaitingReviewInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [aborting, setAborting] = useState(false)
   const [evidenceSr, setEvidenceSr] = useState<E2eScenarioRunDTO | null>(null)
@@ -572,10 +686,12 @@ export default function E2eRunDetailPage() {
   const fetchDetail = useCallback(async () => {
     if (!runId) return
     try {
-      const { run: r, sandbox: sb, scenarioRuns: srs } = await e2eRunsApi.get(runId)
+      const { run: r, sandbox: sb, scenarioRuns: srs, playbookDraft: pd, awaitingReview: ar } = await e2eRunsApi.get(runId)
       setRun(r)
       setSandbox(sb)
       setScenarioRuns(srs)
+      setPlaybookDraft(pd)
+      setAwaitingReview(ar)
     } catch {
       message.error('加载失败')
     } finally {
@@ -649,8 +765,16 @@ export default function E2eRunDetailPage() {
       }
     >
       <div style={{ marginBottom: 16 }}>
-        <RunSummary run={run} />
+        <RunSummary run={run} playbookDraft={playbookDraft} />
       </div>
+      {awaitingReview && runId && (
+        <ReviewDecisionPanel
+          runId={runId}
+          awaitingReview={awaitingReview}
+          scenarioRuns={scenarioRuns}
+          onSubmitted={fetchDetail}
+        />
+      )}
       {sandbox && <SandboxCard sandbox={sandbox} />}
       <ScenarioTimeline
         scenarioRuns={scenarioRuns}

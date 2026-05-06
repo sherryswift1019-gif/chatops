@@ -1,5 +1,6 @@
 // src/admin/routes/e2e-runs.ts
 import type { FastifyInstance } from 'fastify'
+import * as bus from '../../e2e/pipeline-b/scenario-event-bus.js'
 import {
   getE2eRun,
   updateE2eRunStatus,
@@ -14,9 +15,15 @@ import { buildInitialGovernorState, DEFAULT_GOVERNOR_LIMITS } from '../../e2e/pi
 import { getDraft, approveDraft, updateDraftCommitInfo, getDraftByRunId, relinkDraftToNewRun } from '../../db/repositories/e2e-playbook-drafts.js'
 import { commitPlaybookToGitlab } from '../../e2e/playbook-draft/commit-to-gitlab.js'
 import { parsePlaybookYaml } from '../../e2e/pipeline-b/playbook/parse.js'
+import {
+  getPendingWebReview,
+  submitWebReviewDecision,
+} from '../../e2e/pipeline-b/web-review-waiter.js'
+import type { HumanReviewDecision } from '../../e2e/pipeline-b/types.js'
 import type { E2eRun } from '../../db/repositories/e2e-runs.js'
 import type { E2eScenarioRun } from '../../db/repositories/e2e-scenario-runs.js'
 import type { E2eSandbox } from '../../db/repositories/e2e-sandboxes.js'
+import type { E2ePlaybookDraft } from '../../db/repositories/e2e-playbook-drafts.js'
 
 function serializeRun(run: E2eRun): Record<string, unknown> {
   return { ...run, id: run.id.toString() }
@@ -37,6 +44,18 @@ function serializeSandbox(sb: E2eSandbox | null): Record<string, unknown> | null
     ...sb,
     id: sb.id.toString(),
     e2eRunId: sb.e2eRunId?.toString() ?? null,
+  }
+}
+
+// 详情页只用得上 mrUrl/committedPath/status，不返回 yamlContent / scenarioInput
+// 这些大字段（前者 KB 级 YAML，后者用户输入），避免详情 payload 膨胀。
+function serializeDraftSummary(draft: E2ePlaybookDraft | null): Record<string, unknown> | null {
+  if (!draft) return null
+  return {
+    id: draft.id.toString(),
+    status: draft.status,
+    mrUrl: draft.mrUrl,
+    committedPath: draft.committedPath,
   }
 }
 
@@ -78,14 +97,30 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
   app.get<{ Params: { runId: string } }>('/e2e-runs/:runId', async (req, reply) => {
     const run = await getE2eRun(BigInt(req.params.runId))
     if (!run) return reply.status(404).send({ error: 'run not found' })
-    const [sandbox, scenarioRuns] = await Promise.all([
+    const [sandbox, scenarioRuns, playbookDraft] = await Promise.all([
       getSandboxByRunId(run.id),
       listScenarioRuns(run.id),
+      getDraftByRunId(run.id),
     ])
+    // 当 run 在等 web 审决策时，告诉前端等的是哪个 scenario_run（让 UI 决策按钮
+    // 知道针对哪条记录），同时给出最近一次失败 attempt 的 manifest summary 让人看清。
+    let awaitingReview: { scenarioRunId: string; scenarioId: string | null } | null = null
+    if (run.status === 'awaiting_human_review') {
+      const pending = getPendingWebReview(run.id)
+      if (pending) {
+        const sr = scenarioRuns.find((r) => r.id === pending.scenarioRunId)
+        awaitingReview = {
+          scenarioRunId: pending.scenarioRunId.toString(),
+          scenarioId: sr?.scenarioId ?? null,
+        }
+      }
+    }
     return reply.send({
       run: serializeRun(run),
       sandbox: serializeSandbox(sandbox),
       scenarioRuns: scenarioRuns.map(serializeScenarioRun),
+      playbookDraft: serializeDraftSummary(playbookDraft),
+      awaitingReview,
     })
   })
 
@@ -156,6 +191,10 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
 
       await approveDraft(draftBigInt, created.id)
 
+      // 同步预创建 SSE bus，消除"前端拿到 runId 立即 GET /events，但 runPipelineB
+      // 还没第一次 emit → bus 不存在 → SSE 误报 closed"的 race。
+      bus.ensureRun(created.id)
+
       void commitPlaybookToGitlab({
         targetProjectId,
         draftId: draftBigInt,
@@ -203,6 +242,9 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
       scenarioFilter: scenarioFilter ?? null,
       governorState: governorState as unknown as Record<string, unknown>,
     })
+
+    // 同步预创建 SSE bus，消除前端立即订阅时 runPipelineB 还没 emit 的 race。
+    bus.ensureRun(created.id)
 
     void runPipelineB({
       targetProjectId,
@@ -302,5 +344,98 @@ export async function registerE2eRunRoutes(app: FastifyInstance): Promise<void> 
     })
 
     return reply.status(202).send({ runId: created.id.toString(), status: 'pending' })
+  })
+
+  app.post<{
+    Params: { runId: string }
+    Body: { decision: HumanReviewDecision }
+  }>('/e2e-runs/:runId/review-decision', async (req, reply) => {
+    const decision = req.body?.decision
+    if (decision !== 'approve' && decision !== 'retry' && decision !== 'reject') {
+      return reply.status(400).send({
+        error: 'invalid_decision',
+        message: "decision must be one of 'approve' | 'retry' | 'reject'",
+      })
+    }
+
+    const run = await getE2eRun(BigInt(req.params.runId))
+    if (!run) return reply.status(404).send({ error: 'run not found' })
+    if (run.status !== 'awaiting_human_review') {
+      // 410 Gone 比 409/400 更准确：waiter 一旦消失就不会再回来（process restart /
+      // 已被另一终端处理 / run 已离开 await gate）。
+      return reply.status(410).send({
+        error: 'not_awaiting_review',
+        message: `run status is '${run.status}', no review pending`,
+      })
+    }
+
+    const result = submitWebReviewDecision(run.id, decision)
+    if (result === 'no_waiter') {
+      return reply.status(410).send({
+        error: 'no_waiter',
+        message: 'no in-memory waiter (process restart or already submitted)',
+      })
+    }
+    return reply.send({ ok: true, decision })
+  })
+
+  // SSE 实时进度流：连上时 replay history → 订阅后续 emit → 收到 closed 后服务端关流。
+  // 鉴权自动走 src/admin/auth/session-plugin.ts:requireAuth（已经全局挂 preHandler）。
+  // 参考 src/admin/routes/test-runs.ts SSE 模式：disconnect cleanup + ssePush try/catch + heartbeat。
+  app.get<{ Params: { runId: string } }>('/e2e-runs/:runId/events', async (req, reply) => {
+    let runId: bigint
+    try {
+      runId = BigInt(req.params.runId)
+    } catch {
+      return reply.status(400).send({ error: 'invalid runId' })
+    }
+
+    reply.raw.setHeader('Content-Type', 'text/event-stream')
+    reply.raw.setHeader('Cache-Control', 'no-cache')
+    reply.raw.setHeader('Connection', 'keep-alive')
+    reply.raw.flushHeaders()
+
+    let closed = false
+    let unsub: () => void = () => { /* placeholder until subscribe */ }
+    let heartbeat: NodeJS.Timeout | null = null
+
+    const ssePush = (event: string, data: unknown): void => {
+      if (closed) return
+      try {
+        reply.raw.write(`event: ${event}\n`)
+        reply.raw.write(`data: ${JSON.stringify(data)}\n\n`)
+      } catch { /* connection closed */ }
+    }
+
+    const cleanup = (): void => {
+      if (closed) return
+      closed = true
+      try { unsub() } catch { /* ignore */ }
+      if (heartbeat) clearInterval(heartbeat)
+      try { reply.raw.end() } catch { /* ignore */ }
+    }
+
+    req.raw.on('close', cleanup)
+
+    try {
+      // replay history（剥 type 字段避免 data 内冗余）
+      for (const ev of bus.getHistory(runId)) {
+        const { type, ...payload } = ev
+        ssePush(type, payload)
+      }
+      // live subscribe；bus 中收到 closed 时服务端主动关流
+      unsub = bus.subscribe(runId, (ev) => {
+        const { type, ...payload } = ev
+        ssePush(type, payload)
+        if (ev.type === 'closed') cleanup()
+      })
+      // heartbeat 30s 防 nginx idle 切流
+      heartbeat = setInterval(() => ssePush('heartbeat', { ts: Date.now() }), 30000)
+    } catch (err) {
+      console.error('[SSE e2e-runs/events] handler init failed:', err)
+      cleanup()
+    }
+
+    return reply
   })
 }

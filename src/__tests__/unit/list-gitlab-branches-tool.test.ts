@@ -84,7 +84,7 @@ describe('list_gitlab_branches tool', () => {
   it('GitLab 正常返回分支 → 格式化输出', async () => {
     mockListProjects.mockResolvedValue([project()])
     mockResolveGitlabConfig.mockResolvedValue({
-      url: 'http://gitlab.example.com',
+      url: 'http://code.paraview.cn',
       token: 'secret',
       skipTlsVerify: false,
     })
@@ -110,7 +110,7 @@ describe('list_gitlab_branches tool', () => {
   it('GitLab 请求抛异常 → 空列表友好提示', async () => {
     mockListProjects.mockResolvedValue([project()])
     mockResolveGitlabConfig.mockResolvedValue({
-      url: 'http://gitlab.example.com',
+      url: 'http://code.paraview.cn',
       token: 'secret',
       skipTlsVerify: false,
     })
@@ -134,7 +134,7 @@ describe('listProjectBranches helper (deploy.ts 404 fallback 复用此函数)', 
 
   it('GitLab 正常 → 返回分支名数组', async () => {
     mockResolveGitlabConfig.mockResolvedValue({
-      url: 'http://gitlab.example.com',
+      url: 'http://code.paraview.cn',
       token: 'secret',
       skipTlsVerify: false,
     })
@@ -147,7 +147,7 @@ describe('listProjectBranches helper (deploy.ts 404 fallback 复用此函数)', 
 
   it('GitLab 请求异常 → 返回空数组（catch 吃掉，不抛）', async () => {
     mockResolveGitlabConfig.mockResolvedValue({
-      url: 'http://gitlab.example.com',
+      url: 'http://code.paraview.cn',
       token: 'secret',
       skipTlsVerify: false,
     })

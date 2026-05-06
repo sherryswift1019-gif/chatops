@@ -96,7 +96,7 @@ describe('discoverNode (playbook-driven)', () => {
     vi.mocked(getE2eTargetProject).mockResolvedValue({
       id: 'chatops',
       displayName: 'ChatOps',
-      gitlabRepo: 'http://gitlab.example.com/g/chatops.git',
+      gitlabRepo: 'http://code.paraview.cn/g/chatops.git',
       defaultBranch: 'main',
       workingDir: '.',
       scripts: { build: 'build.sh', deploy: 'deploy.sh', test: 'test.sh' },
@@ -105,7 +105,7 @@ describe('discoverNode (playbook-driven)', () => {
       createdAt: new Date(),
     })
     vi.mocked(extractGitlabPath).mockReturnValue('g/chatops')
-    vi.mocked(resolveGitlabConfig).mockResolvedValue({ url: 'http://gitlab.example.com', token: 't', skipTlsVerify: false })
+    vi.mocked(resolveGitlabConfig).mockResolvedValue({ url: 'http://code.paraview.cn', token: 't', skipTlsVerify: false })
 
     fetchSpy = vi.spyOn(globalThis, 'fetch')
   })

@@ -15,12 +15,13 @@ import { e2ePlaybookDraftsApi, openDraftStream, type DraftStatus } from '../api/
 const { Link, Text } = Typography
 
 const RUN_STATUS_CONFIG: Record<E2eRunDTO['status'], { color: string; label: string }> = {
-  pending:       { color: 'default',    label: '等待中' },
-  running:       { color: 'processing', label: '运行中' },
-  awaiting_fix:  { color: 'warning',    label: '等待修复' },
-  passed:        { color: 'success',    label: '通过' },
-  failed:        { color: 'error',      label: '失败' },
-  aborted:       { color: 'default',    label: '已中止' },
+  pending:                { color: 'default',    label: '等待中' },
+  running:                { color: 'processing', label: '运行中' },
+  awaiting_fix:           { color: 'warning',    label: '等待修复' },
+  awaiting_human_review:  { color: 'warning',    label: '等待人审' },
+  passed:                 { color: 'success',    label: '通过' },
+  failed:                 { color: 'error',      label: '失败' },
+  aborted:                { color: 'default',    label: '已中止' },
 }
 
 const TRIGGER_TYPE_CONFIG: Record<string, { color: string; label: string }> = {
@@ -555,7 +556,7 @@ function buildCreateBody(values: CreateFormValues) {
   return body
 }
 
-const ACTIVE_STATUSES = new Set<E2eRunDTO['status']>(['running', 'awaiting_fix'])
+const ACTIVE_STATUSES = new Set<E2eRunDTO['status']>(['running', 'awaiting_fix', 'awaiting_human_review'])
 
 export default function E2eRunsPage() {
   const navigate = useNavigate()

@@ -1,5 +1,5 @@
 // src/__tests__/integration/pipeline-a.test.ts
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { resetTestDb } from '../helpers/db.js'
 
 vi.mock('child_process', async (importOriginal) => {
@@ -38,7 +38,7 @@ vi.mock('../../e2e/pipeline-a/llm-bridge.js', () => ({
     .mockResolvedValue('{"verdict":"script_bug"}'),
 }))
 vi.mock('../../config/gitlab.js', () => ({
-  resolveGitlabConfig: vi.fn().mockResolvedValue({ url: 'https://gitlab.example.com', token: 'tok' }),
+  resolveGitlabConfig: vi.fn().mockResolvedValue({ url: 'https://code.paraview.cn', token: 'tok' }),
 }))
 
 // runE2eScenario 是 host Claude → docker exec，单测里桩成"全部 acceptance 通过"。
@@ -94,9 +94,28 @@ import { spawnSync } from 'child_process'
 import { runPipelineA } from '../../e2e/pipeline-a/runner.js'
 import { listE2eSpecs } from '../../db/repositories/e2e-specs.js'
 
+let fetchMock: ReturnType<typeof vi.fn>
+
 beforeEach(async () => {
   await resetTestDb()
   vi.clearAllMocks()
+  // commit-pr.ts 调 GitLab REST 创 MR（fetch）。默认全部成功；个别 case 可覆盖。
+  fetchMock = vi.fn().mockResolvedValue({
+    ok: true,
+    status: 201,
+    text: () =>
+      Promise.resolve(
+        JSON.stringify({
+          iid: 1,
+          web_url: 'https://code.paraview.cn/devops/chatops/-/merge_requests/1',
+        }),
+      ),
+  })
+  vi.stubGlobal('fetch', fetchMock)
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('Pipeline A integration', () => {
@@ -117,8 +136,6 @@ describe('Pipeline A integration', () => {
       .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' } as any)
       .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' } as any)
       .mockReturnValueOnce({ status: 0, stdout: '', stderr: '' } as any)
-      // glab mr create
-      .mockReturnValueOnce({ status: 0, stdout: 'https://gitlab.example.com/devops/chatops/-/merge_requests/1\n', stderr: '' } as any)
       // teardown
       .mockReturnValue({ status: 0, stdout: '', stderr: '' } as any)
 

@@ -4,17 +4,27 @@ import { notifyGovernorUnfixable } from '../im-notifier.js'
 import type { PipelineBStateType } from '../types.js'
 
 export async function markUnfixableNode(state: PipelineBStateType): Promise<Partial<PipelineBStateType>> {
-  const { currentScenario, currentScenarioRunId, pendingScenarios, runId, lastFixResult } = state
+  const { currentScenario, currentScenarioRunId, pendingScenarios, runId, lastFixResult, humanReviewDecision } = state
   if (!currentScenario) return {}
 
   if (currentScenarioRunId) {
-    const aiDiagnosis = lastFixResult ?? {
-      verdict: 'uncertain' as const,
-      rootCauseSummary: 'max fix attempts exceeded',
-      fixCommitSha: null,
-      fixedFiles: [],
-      success: false,
-      failureReason: 'exhausted all fix attempts',
+    let aiDiagnosis = lastFixResult
+    if (!aiDiagnosis) {
+      // 没经过 e2e_fix_agent（reject 直达此处 / 异常 fallthrough）。区分两种语义：
+      //  - reject 路径：人审决策为 reject，并未尝试修复
+      //  - 其他：兜底文案，配合 lastUnfixableScenario 让 finalize 报准确 reason
+      const reason =
+        humanReviewDecision === 'reject'
+          ? 'human reviewer rejected fix attempt'
+          : 'no fix attempted (auto-rejected: missing reviewer context)'
+      aiDiagnosis = {
+        verdict: 'uncertain' as const,
+        rootCauseSummary: reason,
+        fixCommitSha: null,
+        fixedFiles: [],
+        success: false,
+        failureReason: reason,
+      }
     }
     // 两步：仅改 result（不传 evidenceManifest，COALESCE 保留原 manifest），
     // 然后把 aiDiagnosis 用 jsonb 浅 merge 追加进去——避免历史 bug：之前用
@@ -44,5 +54,6 @@ export async function markUnfixableNode(state: PipelineBStateType): Promise<Part
     lastScenarioResult: null,
     lastFixResult: null,
     evidenceDirTemp: null,
+    lastUnfixableScenario: currentScenario.id,
   }
 }

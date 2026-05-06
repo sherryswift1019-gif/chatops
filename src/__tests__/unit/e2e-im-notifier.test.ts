@@ -76,11 +76,11 @@ describe('e2e im-notifier', () => {
   })
 
   it('notifyRunPassed 包含 fixedCount 和 mrUrl', async () => {
-    await notifyRunPassed(opts, 3, 'https://gitlab.example.com/mr/99')
+    await notifyRunPassed(opts, 3, 'https://code.paraview.cn/mr/99')
     const [, content] = (adapter.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(content.text).toContain('PASSED')
     expect(content.text).toContain('3')
-    expect(content.text).toContain('https://gitlab.example.com/mr/99')
+    expect(content.text).toContain('https://code.paraview.cn/mr/99')
   })
 
   it('notifyRunPassed mrUrl=null 时不报错', async () => {
