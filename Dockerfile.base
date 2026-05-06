@@ -1,4 +1,5 @@
 # ChatOps base image — Node runtime + pnpm + 后端/前端 node_modules
+#                     + 不变的运行时系统依赖（git/curl/gosu/playwright chromium）
 # 触发重建条件：pnpm-lock.yaml / web/pnpm-lock.yaml / package.json / Dockerfile.base 变化
 #
 # 产物：
@@ -15,6 +16,13 @@ WORKDIR /app
 # 使用内网 Nexus npm 代理
 RUN pnpm config set registry http://proxy.paraview.cn/repository/npm-proxy/
 
+# 运行时系统依赖：git 用于 analyze_bug/fix_bug 的 clone + worktree
+# 这些不依赖源码，放在 base 里避免每次业务构建都重装
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gosu \
+ && rm -rf /var/lib/apt/lists/* \
+ && git config --system user.email "chatops@paraview.cn" \
+ && git config --system user.name "ChatOps Agent"
+
 # 后端依赖
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false
@@ -22,6 +30,12 @@ RUN pnpm install --frozen-lockfile --prod=false
 # 前端依赖（单独一层，web/pnpm-lock.yaml 不变则 cache hit）
 COPY web/package.json web/pnpm-lock.yaml web/
 RUN cd web && pnpm install --frozen-lockfile
+
+# Playwright Chromium + 系统依赖（用于 E2E baseline 检查）
+# 装到全局路径让 chatops 用户也能读
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npx playwright install chromium --with-deps \
+ && chmod -R a+rx /ms-playwright
 
 # 创建运行时需要的目录与非 root 用户
 RUN mkdir -p /data/chatops/test-runs \

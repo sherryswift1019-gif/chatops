@@ -10,6 +10,12 @@ WORKDIR /app
 
 RUN pnpm config set registry https://registry.npmmirror.com
 
+# 运行时系统依赖：git/curl/gosu。放在 base 里避免每次业务构建都重装。
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates curl gosu \
+ && rm -rf /var/lib/apt/lists/* \
+ && git config --system user.email "chatops@paraview.cn" \
+ && git config --system user.name "ChatOps Agent"
+
 # 后端依赖
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile --prod=false
@@ -17,6 +23,11 @@ RUN pnpm install --frozen-lockfile --prod=false
 # 前端依赖
 COPY web/package.json web/pnpm-lock.yaml web/
 RUN cd web && pnpm install --frozen-lockfile
+
+# Playwright Chromium + 系统依赖（E2E baseline）。装到全局路径让 chatops 用户能读。
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN npx playwright install chromium --with-deps \
+ && chmod -R a+rx /ms-playwright
 
 # 运行时目录与非 root 用户
 RUN mkdir -p /data/chatops/test-runs \
