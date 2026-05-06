@@ -8,7 +8,7 @@ const PLAYBOOK_PROMPT_TEMPLATE = `你是一个 e2e 测试工程师。根据 mark
 
 \`\`\`yaml
 specPath: docs/test-specs/<filename>.md
-specTitle: <规约标题，可选>
+specTitle: <规约中文标题，可从 spec markdown 第一行 # 标题派生>
 scenarios:
   - id: <字母数字 . _ -，整 playbook 里唯一>
     name: <场景名>
@@ -46,23 +46,33 @@ scenarios:
       - "<可选：常见失败诊断提示>"
 \`\`\`
 
-# 硬约束（违反任一条会让生成的 playbook 在 baseline check 阶段失败）
+# 字段分两类，规则不同
 
-1. **不得编造 endpoints / paths / selectors / DOM 属性**。如果 spec 写"GET /health"，
-   你只能写 \`/health\`，不能改成 \`/healthz\`、\`/api/health\`、\`/v1/health\` 等"看起来更规范"
-   的版本。如果 spec 没明示 \`data-testid\` 或 selector 细节，用通用语义 selector
-   （如 \`body\`、\`form\`、\`button[type=submit]\`），**不要凭空造 \`data-testid=user-menu\`
-   这种属性**——产品代码里大概率没有。
-2. **scenarios 数量必须等于 spec markdown 中明示列出的场景数**。spec 列了 1 个就生成
-   1 个；列了 3 个就生成 3 个。**不要自动补充** "smoke.health_check"、"smoke.login_flow"、
-   "authenticated_api" 等 spec 未要求的 scenarios。
-3. **scenario.id 用 spec 中明示的 ID**（如 spec 写"poc.smoke"就用 \`poc.smoke\`，不要
-   改成 \`smoke.health_check\` / \`smoke.poc\` 等"重命名"）。
-4. **acceptance 数量与字段必须忠于 spec 的"验收"小节**。spec 说"2 条 acceptance：
-   dom_visible body + api_response /health 200"，你就写 2 条且字段值与 spec 一致。
-5. acceptance.kind 必须从上面 7 种选，字段严格匹配；db_query.connection 不能写
-   "猜测"的值，未在沙盒 endpoints 中登记的就别加 db_query。
-6. scenario.id 唯一，只允许字母数字 . _ -
+## 业务字段（必须严格按 spec，不得编造）
+
+这些字段值是产品代码层的"事实"，写错就会让验证 fail：
+- endpoints / paths：spec 写 \`/health\` 你只能写 \`/health\`，不能改 \`/healthz\`、\`/api/health\` 等
+- selector / DOM 属性：spec 没明示 \`data-testid\` 就不要造，用通用语义 selector（\`body\`、\`form\`、\`button[type=submit]\`）
+- scenario.id：用 spec 中明示的 ID（spec 写 \`poc.smoke\` 就用 \`poc.smoke\`，不要重命名）
+- acceptance.kind / request / sql / db_query.connection：spec 怎么写就怎么写
+- scenarios 数量：等于 spec markdown 中明示列出的场景数；spec 列 1 个就生成 1 个，**不要补充 spec 未要求的 scenarios**
+
+## metadata 字段（可由 LLM 合理派生，让 playbook 完整可用）
+
+这些字段不影响验证正确性，是给 host Claude 跑场景时的辅助信息，**应该补全**：
+- \`specTitle\`：取 spec markdown 第一行 \`# 标题\` 的完整中文标题，**不要**简化成文件名
+- \`scenario.name\`：用 spec 中场景章节标题的完整描述，**不要**截短成 2-4 字
+- \`tags\`：从 specTitle / scenario.name 提取关键词（如含"烟测"加 \`smoke\`、含"鉴权"加 \`auth\`、含"PoC"加 \`poc\`）。spec 没明示也应派生 1-3 个 tag
+- \`setup.hints\`：根据 scenario 性质给前置说明（如"沙盒已部署完毕，endpoints 在 sandboxHandle 里"、"使用 seed 用户 testuser/testpass"）。1-2 条
+- \`steps\`：给 host Claude 的操作建议，可以提示具体工具（如"用 mcp__playwright__browser_navigate 打开 X"、"用 curl GET /health"），让 host Claude 知道走哪条路径
+- \`acceptance.timeout_ms\`：给合理默认（DOM 类 5000-10000，API 类 3000-5000）
+- \`on_fail_hints\`：根据 acceptance.kind 给 2-3 条失败诊断提示（如 dom_visible fail → "检查 selector 是否在 SPA 异步加载中"；api_response 5xx → "看 docker logs"）
+
+# 硬约束
+
+1. acceptance.kind 必须从上面 7 种选，字段严格匹配
+2. db_query.connection 不能写"猜测"的值，未在沙盒 endpoints 中登记的就别加 db_query
+3. scenario.id 唯一，只允许字母数字 . _ -
 
 spec 路径: %SPEC_PATH%
 spec 标题: %TITLE%
@@ -70,8 +80,7 @@ spec 标题: %TITLE%
 spec 内容:
 %CONTENT%
 
-请直接输出 YAML，不要 \`\`\` 围栏，不要额外解释。**严格按 spec 内容生成；spec 没明示
-的细节宁可少写也不要靠通用 web 经验补充。**`
+请直接输出 YAML，不要 \`\`\` 围栏，不要额外解释。**业务字段忠于 spec；metadata 字段补全到 playbook 可独立运行的完整度**。`
 
 export async function runE2eLlmGenerator(specPath: string, title: string): Promise<string> {
   let specContent = ''
