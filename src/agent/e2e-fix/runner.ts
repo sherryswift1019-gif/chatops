@@ -4,6 +4,7 @@ import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import { ClaudeRunner } from '../claude-runner.js'
 import type { TaskContext } from '../tools/types.js'
+import { createOnMessageBridge } from '../../e2e/pipeline-b/scenario-event-bridge.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -32,6 +33,7 @@ export interface E2eFixInput {
   iterationBranch: string
   containerId: string
   workdir: string
+  runId: bigint
 }
 
 const E2E_FIX_CONTEXT: TaskContext = {
@@ -46,6 +48,11 @@ let _runner: ClaudeRunner | null = null
 function getRunner(): ClaudeRunner {
   if (!_runner) _runner = new ClaudeRunner()
   return _runner
+}
+
+// 测试 / 替换钩子：让单测注入假 runner，无需真起 Claude CLI。
+export function __setRunnerForTesting(runner: ClaudeRunner | null): void {
+  _runner = runner
 }
 
 function parseLastJsonLine(output: string): AiDiagnosis | null {
@@ -89,6 +96,7 @@ export async function runE2eFix(input: E2eFixInput): Promise<AiDiagnosis> {
 
   try {
     const systemPrompt = readFileSync(resolveSkillPath(), 'utf8')
+    const onMessage = createOnMessageBridge(input.runId, 'fix')
     const output = await getRunner().executeCapabilityDirect({
       prompt: userMessage,
       systemPrompt,
@@ -100,6 +108,7 @@ export async function runE2eFix(input: E2eFixInput): Promise<AiDiagnosis> {
       maxTurns: 40,
       timeoutMs: 30 * 60 * 1000,
       dockerExec: { containerId: input.containerId },
+      onMessage,
     })
 
     const parsed = parseLastJsonLine(output)

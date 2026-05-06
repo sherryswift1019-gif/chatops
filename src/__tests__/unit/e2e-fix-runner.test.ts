@@ -56,6 +56,7 @@ describe('runE2eFix', () => {
       iterationBranch: 'test-iter/42',
       containerId: 'sandbox-container-42',
       workdir: '/workspace/chatops',
+      runId: 0n,
     })
 
     expect(result.success).toBe(true)
@@ -76,6 +77,7 @@ describe('runE2eFix', () => {
       iterationBranch: 'test-iter/42',
       containerId: 'sandbox-container-42',
       workdir: '/workspace/chatops',
+      runId: 0n,
     })
 
     expect(result.success).toBe(false)
@@ -94,6 +96,7 @@ describe('runE2eFix', () => {
       iterationBranch: 'test-iter/42',
       containerId: 'sandbox-container-42',
       workdir: '/workspace/chatops',
+      runId: 0n,
     })
 
     expect(result.success).toBe(false)
@@ -115,6 +118,7 @@ describe('runE2eFix', () => {
       iterationBranch: 'test-iter/7',
       containerId: 'my-container-id',
       workdir: '/workspace/chatops',
+      runId: 0n,
     })
 
     expect(executeCapabilityDirectMock).toHaveBeenCalledWith(
@@ -141,6 +145,7 @@ describe('runE2eFix', () => {
       iterationBranch: 'test-iter/7',
       containerId: 'my-container-id',
       workdir: '/workspace/chatops',
+      runId: 0n,
     })
 
     expect(executeCapabilityDirectMock).toHaveBeenCalledWith(

@@ -140,6 +140,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
     expect(r.manifest).toBeNull()
     expect(r.errorMessage).toMatch(/不在 playbook 中/)
@@ -156,6 +157,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
     expect(r.manifest).toBeNull()
     expect(r.errorMessage).toMatch(/SKILL\.md 未找到/)
@@ -181,6 +183,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 2,
+      runId: 0n,
     })
     expect(r.errorMessage).toBeNull()
     expect(r.manifest).not.toBeNull()
@@ -199,6 +202,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
     expect(r.manifest).toBeNull()
     expect(r.errorMessage).toMatch(/未写出.*manifest\.json/)
@@ -223,6 +227,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
     expect(r.manifest).toBeNull()
     expect(r.errorMessage).toMatch(/schema 校验失败/)
@@ -238,6 +243,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
     expect(r.manifest).toBeNull()
     expect(r.errorMessage).toBe('Claude timeout')
@@ -259,6 +265,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 3,
+      runId: 0n,
     })
 
     expect(fakeRunner.calls).toHaveLength(1)
@@ -286,6 +293,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
 
     const prompt = fakeRunner.calls[0].prompt
@@ -314,6 +322,7 @@ describe('runE2eScenario', () => {
       evidenceDir: tempDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
 
     expect(fakeRunner.calls[0].systemPrompt).toBe(SKILL_STUB)
@@ -331,6 +340,7 @@ describe('runE2eScenario', () => {
       evidenceDir: missingDir,
       sandboxHandle: sampleSandbox,
       attemptNumber: 1,
+      runId: 0n,
     })
     expect(r.manifest).toBeNull()
     expect(r.errorMessage).toMatch(/未写出/)

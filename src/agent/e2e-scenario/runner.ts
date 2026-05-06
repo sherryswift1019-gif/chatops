@@ -16,6 +16,7 @@ import { parseManifestJson } from '../../e2e/pipeline-b/playbook/parse.js'
 import type { Playbook } from '../../e2e/pipeline-b/playbook/types.js'
 import type { Manifest } from '../../e2e/pipeline-b/playbook/manifest.js'
 import type { SandboxHandle } from '../../e2e/pipeline-b/types.js'
+import { createOnMessageBridge } from '../../e2e/pipeline-b/scenario-event-bridge.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -35,6 +36,7 @@ export interface RunScenarioInput {
   evidenceDir: string
   sandboxHandle: SandboxHandle
   attemptNumber: number
+  runId: bigint
 }
 
 export interface RunScenarioResult {
@@ -60,12 +62,21 @@ const SCENARIO_CONTEXT: TaskContext = {
 // --no-sandbox: 容器内无 user namespaces（Ubuntu 24+ 默认禁），chromium zygote 启动会
 //   FATAL: No usable sandbox。
 // --headless: 容器内无 display server，必须 headless。
+// @playwright/mcp 装在 chatops 的 node_modules（package.json deps 0.0.73 pin 版本），
+// 不再用 `npx -y @playwright/mcp@latest` 现场下载。
+// 修因：npx 冷启动需 50s+ 拉 17MB，与 Claude CLI MCP init 形成 race condition，
+// host Claude 看到的 tools/list 不含 mcp__playwright__*，调用时报"No such tool available"。
+// 改本地 cli.js 直调后启动稳定 1-2s（缓存命中级）。
 const CHROMIUM_BIN = '/ms-playwright/chromium-1217/chrome-linux/chrome'
-const PLAYWRIGHT_MCP: Record<string, McpServerSpec> = {
+const PLAYWRIGHT_MCP_CLI = join(
+  __dirname, '..', '..', '..',
+  'node_modules', '@playwright', 'mcp', 'cli.js',
+)
+export const PLAYWRIGHT_MCP: Record<string, McpServerSpec> = {
   playwright: {
-    command: 'npx',
+    command: 'node',
     args: [
-      '-y', '@playwright/mcp@latest',
+      PLAYWRIGHT_MCP_CLI,
       `--executable-path=${CHROMIUM_BIN}`,
       '--no-sandbox',
       '--headless',
@@ -147,6 +158,7 @@ export async function runE2eScenario(input: RunScenarioInput): Promise<RunScenar
 
   let rawOutput = ''
   try {
+    const onMessage = createOnMessageBridge(input.runId, 'scenario')
     rawOutput = await getRunner().executeCapabilityDirect({
       prompt: userMessage,
       systemPrompt,
@@ -158,6 +170,7 @@ export async function runE2eScenario(input: RunScenarioInput): Promise<RunScenar
       timeoutMs: 30 * 60 * 1000,
       disallowedTools: SCENARIO_DISALLOWED,
       extraMcpServers: PLAYWRIGHT_MCP,
+      onMessage,
     })
   } catch (err) {
     return {
