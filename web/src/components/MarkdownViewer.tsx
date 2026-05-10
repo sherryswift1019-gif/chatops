@@ -2,6 +2,8 @@ import { memo, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeSlug from 'rehype-slug'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 
 interface Props {
   source: string
@@ -9,8 +11,31 @@ interface Props {
   style?: React.CSSProperties
 }
 
+// rehype-sanitize allowlist：默认 GitHub schema + 加 <details><summary>（v3 摘要折叠区用）
+// 同时保留 GFM 表格、code className（保 syntax highlight）、a target/rel
+const SANITIZE_SCHEMA = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames ?? []), 'details', 'summary'],
+  attributes: {
+    ...defaultSchema.attributes,
+    code: [...((defaultSchema.attributes ?? {}).code ?? []), ['className', /^language-./]],
+    details: [['open']],
+    a: [...((defaultSchema.attributes ?? {}).a ?? []), 'target', 'rel'],
+  },
+}
+
 function MarkdownViewerImpl({ source, className, style }: Props) {
-  const plugins = useMemo(() => ({ remark: [remarkGfm], rehype: [rehypeSlug] }), [])
+  // remark: GFM 扩展（表格、删除线、任务列表）
+  // rehype: ① rehypeRaw 解析原始 HTML（spec.md/PRD 含 <details>）
+  //         ② rehypeSanitize 用 allowlist 过滤恶意 HTML（XSS 防护）
+  //         ③ rehypeSlug 给 heading 加 id 用于锚点
+  const plugins = useMemo(
+    () => ({
+      remark: [remarkGfm],
+      rehype: [rehypeRaw, [rehypeSanitize, SANITIZE_SCHEMA] as [typeof rehypeSanitize, typeof SANITIZE_SCHEMA], rehypeSlug],
+    }),
+    [],
+  )
 
   return (
     <div

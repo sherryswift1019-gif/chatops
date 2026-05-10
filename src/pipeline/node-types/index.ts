@@ -14,6 +14,19 @@ import './template-render.js'
 import './fan-out.js'
 import './switch.js'
 import './invoke-target-script.js'
+// Quick-Impl Phase 1 skill node types (interrupt-bound / context-bound)
+import './skill-node.js'
+import './skill-with-approval.js'
+import './skill-with-review.js'
+// Quick-Impl Phase 1 MR creation node type
+import './mr-create.js'
+// Quick-Impl Phase 1 init branch + e2e stub node types
+import './init-qi-branch.js'
+import './e2e-stub.js'
+// Quick-Impl Phase 2 real E2E runner（替换 e2e_stub）
+import './qi-e2e-runner.js'
+// Quick-Impl Phase 2 IM 卡片人工介入节点
+import './im-input.js'
 
 export * from './registry.js'
 export * from './types.js'

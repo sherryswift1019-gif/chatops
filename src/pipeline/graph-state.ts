@@ -6,7 +6,12 @@ import type { StageResult } from '../db/repositories/test-runs.js'
 export type { StageResult }
 
 // Merge a single StageResult into an existing list by `name`:
-// - if an entry with the same name exists, overwrite it in place;
+// - if an entry with the same name exists, **shallow-merge** the incoming
+//   entry into the existing one (incoming keys win on conflicts; existing-only
+//   keys are preserved). This is critical for v2 quick-impl: appendStageResult
+//   writes rounds/skillOutput/evidence/acDiff directly to DB during a node's
+//   internal loop; when the node finally returns its base StageResult after
+//   resume, those v2 fields would otherwise be clobbered.
 // - otherwise append.
 // The reducer accepts either a single StageResult or a StageResult[].
 export type StageResultsUpdate = StageResult | StageResult[]
@@ -27,7 +32,7 @@ export function mergeStageResults(
       byName.set(r.name, next.length)
       next.push(r)
     } else {
-      next[existingIdx] = r
+      next[existingIdx] = { ...next[existingIdx]!, ...r }
     }
   }
   return next

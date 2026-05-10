@@ -59,6 +59,10 @@ const SCENARIO_CONTEXT: TaskContext = {
 // 用 --executable-path 显式指向 base image 已装的 chromium binary，绕开版本问题。
 // 路径来自 Dockerfile.base 的 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright + chromium 子目录。
 //
+// host 开发跑（mac/linux 直接 pnpm dev 跑测试）时 chromium 不在这个路径，可通过
+// PLAYWRIGHT_CHROMIUM_BIN env var 覆盖（如 ~/Library/Caches/ms-playwright/...）；
+// 不设时维持 docker 默认（生产环境镜像 / CI 都是这个路径）。
+//
 // --no-sandbox: 容器内无 user namespaces（Ubuntu 24+ 默认禁），chromium zygote 启动会
 //   FATAL: No usable sandbox。
 // --headless: 容器内无 display server，必须 headless。
@@ -67,7 +71,8 @@ const SCENARIO_CONTEXT: TaskContext = {
 // 修因：npx 冷启动需 50s+ 拉 17MB，与 Claude CLI MCP init 形成 race condition，
 // host Claude 看到的 tools/list 不含 mcp__playwright__*，调用时报"No such tool available"。
 // 改本地 cli.js 直调后启动稳定 1-2s（缓存命中级）。
-const CHROMIUM_BIN = '/ms-playwright/chromium-1217/chrome-linux/chrome'
+const CHROMIUM_BIN =
+  process.env.PLAYWRIGHT_CHROMIUM_BIN ?? '/ms-playwright/chromium-1217/chrome-linux/chrome'
 const PLAYWRIGHT_MCP_CLI = join(
   __dirname, '..', '..', '..',
   'node_modules', '@playwright', 'mcp', 'cli.js',

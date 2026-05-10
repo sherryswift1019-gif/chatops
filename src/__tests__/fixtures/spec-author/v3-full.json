@@ -1,0 +1,133 @@
+{
+  "schemaVersion": "v2",
+  "summary": "登录页加'记住用户名'Checkbox — 完整 v3 输出含全部字段",
+  "decision": "pass",
+  "notes": [],
+  "confidenceLevel": "high",
+  "reviewHints": [
+    {
+      "severity": "medium",
+      "point": "AC-5 深色样式断言主观，e2e 验不了",
+      "reason": "需肉眼验证，建议改可观测断言或移到非功能需求"
+    },
+    {
+      "severity": "low",
+      "point": "风险全 low，可能漏判 XSS 读 localStorage",
+      "reason": "纯前端 + localStorage 应该考虑 XSS 攻击场景"
+    }
+  ],
+  "noGos": [
+    { "desc": "不存密码（任何形式）", "reason": "需求明确不存密码" },
+    { "desc": "不实现自动登录", "reason": "用户仍需手动输入密码" },
+    { "desc": "不修改后端 session 逻辑" }
+  ],
+  "evidence": {
+    "standardsConsulted": [
+      {
+        "file": "docs/standards/frontend-enum-select.md",
+        "usedFor": "确认 Checkbox 不属于枚举字段，无需 Select 下拉"
+      }
+    ],
+    "selfCheck": [
+      {
+        "item": "为什么把 AC-3 设计为'登录时清理'而非'取消勾选立即清理'？",
+        "answer": "登录时清理更直观，且保留用户改主意的机会（取消后又重新勾选）"
+      },
+      {
+        "item": "本 spec 最弱点是什么？",
+        "answer": "AC-5 的'深色主题协调'是主观判断，没法在 e2e 里客观断言，需开发时肉眼验证"
+      }
+    ]
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "format": "given-when-then",
+      "text": "Given 用户首次访问登录页，When 页面加载完成，Then '记住用户名'复选框显示在密码框和登录按钮之间，默认不勾选"
+    },
+    {
+      "id": "AC-2",
+      "format": "given-when-then",
+      "text": "Given 用户勾选了'记住用户名'并成功登录，When 用户关闭浏览器后再次访问登录页，Then 用户名字段自动回填，复选框为勾选状态"
+    },
+    {
+      "id": "AC-3",
+      "format": "given-when-then",
+      "text": "Given 用户之前勾选过'记住用户名'，When 用户取消勾选并成功登录，Then localStorage 中的用户名被清除"
+    }
+  ],
+  "openQuestions": [],
+  "risks": [
+    {
+      "desc": "localStorage 中的用户名在共用设备上可能泄露",
+      "severity": "low"
+    }
+  ],
+  "references": [
+    {
+      "file": "web/src/pages/LoginPage.tsx",
+      "line": 1,
+      "purpose": "登录页主组件，需在此添加 Checkbox 和 localStorage 逻辑"
+    },
+    {
+      "file": "web/src/pages/LoginPage.tsx",
+      "line": 10,
+      "purpose": "onFinish 回调是登录成功入口，在此处根据 checkbox 状态写入或清除 localStorage"
+    }
+  ],
+  "clarifications": [
+    {
+      "kind": "fact",
+      "q": "当前登录页是否已有记住密码功能？",
+      "a": "无。LoginPage.tsx 中无 Checkbox、localStorage 或 sessionStorage 使用"
+    },
+    {
+      "kind": "assumption",
+      "q": "用户名保存后是否需要过期机制？",
+      "a": "默认不过期，localStorage 持久存储",
+      "userMayDisagreeIf": "如果安全合规要求 N 天过期"
+    },
+    {
+      "kind": "assumption",
+      "q": "复选框默认状态？",
+      "a": "首次访问不勾选；localStorage 已有用户名时默认勾选",
+      "userMayDisagreeIf": "认为'默认勾选 + 提示'更友好"
+    }
+  ],
+  "e2eScenarios": [
+    {
+      "id": "login-with-remember-checked",
+      "name": "勾选记住用户名后回填",
+      "kind": "happy",
+      "coversAC": ["AC-1", "AC-2"],
+      "tags": [],
+      "steps": [
+        "打开 /login 页面",
+        "在 [data-testid=username] 输入 'admin'，[data-testid=password] 输入 'Test123!'",
+        "勾选 [data-testid=remember-checkbox]",
+        "点击 [data-testid=login-btn] 按钮"
+      ],
+      "acceptance": [
+        "页面跳转到 /dashboard",
+        "localStorage 中 'chatops_remembered_username' 等于 'admin'"
+      ]
+    },
+    {
+      "id": "login-uncheck-clears-storage",
+      "name": "取消勾选清理 localStorage",
+      "kind": "negative",
+      "coversAC": ["AC-3"],
+      "tags": [],
+      "steps": [
+        "前置：localStorage 中 'chatops_remembered_username' 已为 'admin'",
+        "打开 /login 页面（用户名自动回填）",
+        "取消勾选 [data-testid=remember-checkbox]",
+        "点击登录按钮并成功登录"
+      ],
+      "acceptance": [
+        "登录成功后 localStorage 中 'chatops_remembered_username' 不存在",
+        "下次刷新 /login 页面 username 字段为空"
+      ]
+    }
+  ]
+}

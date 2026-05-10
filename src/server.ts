@@ -18,7 +18,8 @@ import type { IMAdapter } from './adapters/im/types.js'
 import type { TaskQueue } from './agent/task-queue.js'
 import type { NormalizedMessage } from './adapters/im/types.js'
 import { PipelineApprovalManager } from './pipeline/approval-manager.js'
-import { initGraphRunnerDispatchers } from './pipeline/graph-runner.js'
+import { initGraphRunnerDispatchers, resumeFromQiApproval } from './pipeline/graph-runner.js'
+import { initQiApprovalManager, isQiApproval, handleQiCardCallback } from './pipeline/qi-approval-manager.js'
 import { registerImSender, registerImDmSender } from './pipeline/im-notifier.js'
 import { assertRegistryConsistent } from './pipeline/node-types/registry.js'
 import { listEnabledNodeTypeKeys } from './db/repositories/pipeline-node-types.js'
@@ -85,6 +86,8 @@ import { startCleanupScheduler } from './agent/worktree/cleanup-scheduler.js'
 import { startPipelineScheduler } from './pipeline/scheduler.js'
 import { startMrReconciler, stopMrReconciler } from './agent/reconcile/mr-state-reconciler.js'
 import { setApprovalGate, setNotifyDmFn } from './agent/coordinator.js'
+import { bootstrapQuickImpl } from './quick-impl/bootstrap.js'
+import { startQuickImplWorker, stopQuickImplWorker } from './quick-impl/worker.js'
 
 async function resolveProductLineId(userId: string): Promise<{ productLineId: number; role: string } | null> {
   try {
@@ -261,6 +264,14 @@ async function main(): Promise<void> {
   // 启动 MR 状态对账调度器（webhook 漏发兜底，默认 5min）
   startMrReconciler()
 
+  // Quick-Impl：创建/更新流水线模板，启动排队工作器 + Worktree 清理
+  try {
+    await bootstrapQuickImpl()
+  } catch (err) {
+    app.log.warn({ err }, '[quick-impl] bootstrap failed (non-fatal)')
+  }
+  startQuickImplWorker()
+
   // 启动兜底：把被上次进程中断的 PRD（status=reviewing 停留 >5min）推到 review_blocked，
   // 避免 UI 永久卡在 "Agent 正在处理" 的 spinner。
   try {
@@ -319,11 +330,25 @@ async function main(): Promise<void> {
   // after PipelineApprovalManager.initialize() so getInstance() succeeds.
   initGraphRunnerDispatchers()
 
+  // Initialize QI approval manager (DingTalk card → claimWaiter → resumeFromQiApproval)
+  initQiApprovalManager(adapters, async (_waiterId, waiter) => {
+    await resumeFromQiApproval(waiter.id, waiter)
+  })
+
   // Card action (approval responses)
   for (const adapter of adapters) {
     adapter.onCardAction(async (taskId, action, approverId) => {
-      // 钉钉互动卡片的 Action ID 是自定义的（agree/reject）；旧路径可能直接传 approved/rejected。
-      // 统一映射到 approval-manager 期待的决策词。
+      console.log(`[Card] 审批回调路由: taskId=${taskId} action=${action} approver=${approverId}`)
+
+      // 1. QI 审批（qi-approval-manager 发出的卡片）
+      if (isQiApproval(taskId)) {
+        await handleQiCardCallback(taskId, action, approverId).catch((err) => {
+          app.log.error({ err, taskId }, 'qi handleCardCallback failed')
+        })
+        return
+      }
+
+      // 2. 旧 Pipeline approval 节点（agree/reject → approved/rejected）
       const decision: 'approved' | 'rejected' | null =
         action === 'agree' || action === 'approved' ? 'approved' :
         action === 'reject' || action === 'rejected' ? 'rejected' :
@@ -333,10 +358,6 @@ async function main(): Promise<void> {
         return
       }
 
-      console.log(`[Card] 审批回调路由: taskId=${taskId} decision=${decision} approver=${approverId}`)
-
-      // Route pipeline approval callbacks first: only forward when the id is
-      // owned by PipelineApprovalManager，避免 tool/generic-gate 卡片日志噪音。
       const mgr = PipelineApprovalManager.getInstance()
       if (mgr.isPipelineApproval(taskId)) {
         await mgr.handleCallback(taskId, decision, approverId).catch((err) => {
@@ -345,6 +366,7 @@ async function main(): Promise<void> {
         return
       }
 
+      // 3. 通用审批门（工具审批等）
       await gate.respond(taskId, approverId, decision)
     })
   }
@@ -446,6 +468,7 @@ async function main(): Promise<void> {
   // Graceful shutdown
   const shutdown = async () => {
     stopMrReconciler()
+    stopQuickImplWorker()
     for (const adapter of adapters) {
       await adapter.stop?.()
     }

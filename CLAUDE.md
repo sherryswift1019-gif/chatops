@@ -137,12 +137,16 @@ PostgreSQL，pg 驱动直连。Schema 在 `src/db/schema.sql` + `schema-v2.sql..
 
 ### Tool 自注册
 
+> 详见 [docs/standards/tool-registration.md](docs/standards/tool-registration.md)（v2 完整版含 grep 校验）
+
 新增 MCP 工具需要：
 1. 在 `src/agent/tools/` 创建文件，实现 `AgentTool` 接口并调用 `registerTool()`
 2. 在 `src/server.ts` 和 `src/agent/mcp-server.ts` 中添加 `import './tools/<name>.js'`
 3. 如需 RBAC 默认角色配置，在 `src/agent/tools/types.ts` 的 `DEFAULT_TOOL_ROLES` 中添加
 
 ### GitLab 配置读取约定（2026-04-20）
+
+> 详见 [docs/standards/gitlab-config.md](docs/standards/gitlab-config.md)（v2 完整版含 grep 校验 + 例外清单）
 
 所有访问 GitLab 的代码必须调 `resolveGitlabConfig()`（[src/config/gitlab.ts](src/config/gitlab.ts)），**不要直接 `process.env.GITLAB_URL/TOKEN` 或裸调 `getConfig('gitlab')`**。
 
@@ -155,11 +159,15 @@ PostgreSQL，pg 驱动直连。Schema 在 `src/db/schema.sql` + `schema-v2.sql..
 
 ### DB Repository 约定
 
+> 详见 [docs/standards/repository-pattern.md](docs/standards/repository-pattern.md)（v2 完整版）
+
 - 直接写参数化 SQL（`$1, $2...`），无 ORM
 - 数据库字段 snake_case，TypeScript camelCase，repository 中 `mapRow()` 做转换
 - 新增迁移：创建 `src/db/schema-vN.sql`，然后在 `src/db/migrate.ts:SCHEMA_FILES` 中追加一行
 
 ### Schema 编号顺序（2026-04-28）
+
+> 详见 [docs/standards/db-schema-versioning.md](docs/standards/db-schema-versioning.md)（v2 完整版含双 SCHEMA_FILES 同步检查）
 
 新建 schema 文件时**版本号必须早于所有引用其表/列的 schema 文件**。例：
 `pipeline_node_types` 表的 CREATE 在 v27，则 v34/v35/v36/v44 才能 INSERT/UPDATE 它。
@@ -172,6 +180,8 @@ PostgreSQL，pg 驱动直连。Schema 在 `src/db/schema.sql` + `schema-v2.sql..
 
 ### 测试基础设施
 
+> 详见 [docs/standards/test-conventions.md](docs/standards/test-conventions.md)（v2 完整版含 vitest --related 命令模板）
+
 `./test.sh` 是 canonical 入口（200s+ 全套）。本地跑时 vitest globalSetup（`src/__tests__/setup/pg-container.ts`）
 会启一次性 `postgres:16-alpine` testcontainer 并扫所有 `schema-v*.sql` 跑一遍；CI 短路
 （`process.env.CI === 'true'` 时复用 GitLab service postgres）。`resetTestDb()` 用 marker
@@ -183,6 +193,8 @@ PostgreSQL，pg 驱动直连。Schema 在 `src/db/schema.sql` + `schema-v2.sql..
 所有管理端点在 `/admin` 前缀下，路由文件在 `src/admin/routes/`，通过 `src/admin/index.ts` 注册为 Fastify 插件。
 
 ### 前端表单：枚举字段下拉规范（2026-04-22）
+
+> 详见 [docs/standards/frontend-enum-select.md](docs/standards/frontend-enum-select.md)（v2 完整版）
 
 新增 / 审查任何管理后台表单时，按"**定义** vs **使用**"原则决定控件类型：
 
@@ -204,6 +216,37 @@ PostgreSQL，pg 驱动直连。Schema 在 `src/db/schema.sql` + `schema-v2.sql..
 **要改下拉但 API 缺失怎么办**：先加 admin GET 端点（哪怕读只读），不要因为"没 API 就留 Input"。
 
 参考实现：`web/src/pipeline-canvas/panels/NodeInspector.tsx`（capability Select + stale 兼容）、`web/src/pages/ApprovalRulesPage.tsx`（action/env 含通配符 Select）。
+
+### Commit 约定
+
+> 详见 [docs/standards/commit-conventions.md](docs/standards/commit-conventions.md)（v2 完整版，dev-loop role 强制遵守）
+
+- quick-impl pipeline 的 dev-loop role 必须**按任务 commit**，不一次性大 commit
+- commit message：`feat(qi-{requirement_id}): T{n} {任务标题}` / round 2+ 修订用 `fix(qi-{requirement_id}): T{n} 修订 — {反馈摘要}`
+- dev-loop **不 push**（mr_create 节点统一推）
+- 不 rebase / amend / `--no-verify` / force push（除非用户显式要求）
+
+### 代码风格约定
+
+> 详见 [docs/standards/code-style.md](docs/standards/code-style.md)（v2 完整版）
+
+- TypeScript strict mode 通过 `pnpm exec tsc --noEmit`；ES2022 + NodeNext modules，import 路径用 `.js` 后缀
+- 错误处理仅在系统边界（用户输入 / 外部 API），内部代码信任 framework guarantees
+- **默认不写注释**；仅在 WHY 非显然时加（隐藏约束 / 不变量 / workaround / 反直觉行为）
+- 不写"used by X" / "added for Y" / "fix issue #N" 这类引用代码 / PR 的注释
+- 起名前先 grep 类似实现，对齐既有模式
+
+### Skill Reviewer 设计约定（2026-05-09）
+
+> 详见 [docs/standards/skill-reviewer-design.md](docs/standards/skill-reviewer-design.md)（v1 完整版）
+
+新建 reviewer role 或配置含审查节点的 pipeline 时，遵循以下 6 条：
+1. **双源输入**：reviewer 同时读 `devOutput`（JSON）和 `artifact_path`（文件全文），不能只信 JSON
+2. **specCoverage[]**：逐条输出 AC 覆盖证据，数量 == spec.acceptanceCriteria.length，`covered: false` 必须有 missingReason
+3. **Error vs Warn 分级**：失败会让 dev 工作无效 → error；只降低质量 → warn；fail 条件写进 `superRefine`
+4. **条件边路由**：AI review 失败升级人工用 `onFailure: 'continue'` + `condition: { kind: 'onFailure' }` 边，而非 `onFailure: 'stop'`
+5. **stepOutputs 暴露**：所有产出 artifact 的 skill 节点，success stepOutputs 必须含 `lastArtifactPath`（文件路径）和 `skillOutput`（完整 JSON）
+6. **priorReviewerNotes 透传**：AI review 失败升级到人工节点时，inputs 里传入 AI reviewer 的 notes
 
 ## Tech Stack
 

@@ -337,7 +337,11 @@ export default function PipelineCanvasPage() {
             />
           </div>
           <div style={{ width: 280, borderLeft: '1px solid #f0f0f0', padding: 12, overflow: 'auto' }}>
-            <VariablesPanel pipeline={pipeline} variableCatalog={variableCatalog} />
+            <VariablesPanel
+              pipeline={pipeline}
+              variableCatalog={variableCatalog}
+              onVariablesUpdated={(vars) => setPipeline(p => p ? { ...p, variables: vars } : p)}
+            />
           </div>
         </div>
         <NodeInspector

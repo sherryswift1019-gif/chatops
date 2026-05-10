@@ -18,6 +18,7 @@ import {
   FileTextOutlined,
   MessageOutlined,
   ExperimentOutlined,
+  RocketOutlined,
 } from '@ant-design/icons'
 import { me, logout, type MeResponse } from '../api/auth'
 
@@ -44,6 +45,7 @@ const PAGE_NAMES: Record<string, string> = {
   '/e2e-targets': '被测项目',
   '/e2e-specs': '测试规约',
   '/e2e-runs': 'E2E 测试 Runs',
+  '/requirements': '需求管理',
 }
 
 const menuItems = [
@@ -94,6 +96,13 @@ const menuItems = [
       { key: '/e2e-targets', icon: <ExperimentOutlined />, label: '被测项目' },
       { key: '/e2e-specs', icon: <FileTextOutlined />, label: '测试规约' },
       { key: '/e2e-runs', icon: <HistoryOutlined />, label: 'E2E Runs' },
+    ],
+  },
+  {
+    type: 'group' as const,
+    label: 'Quick-Impl',
+    children: [
+      { key: '/requirements', icon: <RocketOutlined />, label: '需求管理' },
     ],
   },
 ]

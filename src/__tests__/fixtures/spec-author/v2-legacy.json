@@ -1,0 +1,48 @@
+{
+  "summary": "完成登录页'记住用户名'复选框需求规格撰写：5 条 AC（Given-When-Then 格式），覆盖首次访问、回填、取消记住、安全性、深色主题样式；纯前端改动，localStorage 存储用户名，不涉及后端变更",
+  "decision": "pass",
+  "notes": [],
+  "evidence": {
+    "standardsConsulted": ["docs/standards/frontend-enum-select.md"],
+    "selfCheck": [
+      { "item": "AC 全部用 Given-When-Then 格式", "passed": true },
+      { "item": "每条 AC 都可测试（无模糊描述）", "passed": true },
+      { "item": "至少 1 条 references 引用 codebase 现有实现（file:line 必须能 grep 找到）", "passed": true },
+      { "item": "非功能需求 5 个维度（性能/安全/可观测/兼容/可访问性）都有结论", "passed": true },
+      { "item": "风险与未知章节非空（至少 1 条）", "passed": true },
+      { "item": "evidence.standardsConsulted 至少包含 1 项", "passed": true },
+      { "item": "JSON 字段值中所有双引号都用转义", "passed": true }
+    ]
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "format": "given-when-then",
+      "text": "Given 用户首次访问登录页，When 页面加载完成，Then \"记住用户名\"复选框显示在密码框和登录按钮之间，默认不勾选，用户名字段为空且获得焦点"
+    },
+    {
+      "id": "AC-2",
+      "format": "given-when-then",
+      "text": "Given 用户勾选了\"记住用户名\"并成功登录，When 用户关闭浏览器后再次访问登录页，Then 用户名字段自动回填为上次登录的用户名"
+    },
+    {
+      "id": "AC-3",
+      "format": "given-when-then",
+      "text": "Given 用户之前勾选过\"记住用户名\"且 localStorage 中已有用户名，When 用户取消勾选并成功登录，Then localStorage 中的用户名被清除"
+    }
+  ],
+  "openQuestions": [],
+  "risks": [
+    { "desc": "localStorage 中的用户名在共用设备上可能泄露给其他使用者", "severity": "low" },
+    { "desc": "Ant Design Checkbox 在深色背景下的默认样式可能需要 CSS 覆盖", "severity": "low" }
+  ],
+  "references": [
+    { "file": "web/src/pages/LoginPage.tsx", "line": 1, "purpose": "登录页主组件" },
+    { "file": "web/src/pages/LoginPage.tsx", "line": 10, "purpose": "onFinish 回调是登录成功入口" }
+  ],
+  "clarifications": [
+    { "q": "当前登录页是否已有记住密码功能？", "a": "无。LoginPage.tsx 中无 Checkbox、localStorage 或 sessionStorage 使用。" },
+    { "q": "登录认证方式是什么？", "a": "后端 Fastify session（cookie-based），前端 withCredentials: true。" },
+    { "q": "是否需要后端参与？", "a": "不需要。仅前端 localStorage 保存用户名。" }
+  ]
+}

@@ -19,6 +19,32 @@ import { resolveCapabilityParams } from './executor-hooks.js'
 import { evalExpression } from './expressions.js'
 import { extractJsonObject, NotJsonObjectError } from './json-extract.js'
 import { markStageRunning } from './stage-status.js'
+import type { SkillExecutor, RunSkillOptions, SkillContextInputs, PreviousRoundData, AcceptanceCriterion, AcDiff } from '../quick-impl/skill-runner.js'
+import {
+  runSkill,
+  defaultMcpServerPath,
+  SkillOutputParseError,
+  diffAcceptanceCriteria,
+} from '../quick-impl/skill-runner.js'
+import {
+  createWaiter,
+  getActiveWaiter,
+  getWaiterByNodeAndRound,
+  type ApprovalKind,
+  type DecisionSet,
+  type RequirementApprovalWaiter,
+} from '../db/repositories/requirement-approval-waiters.js'
+import {
+  shouldEscalate,
+  computeNewBudget,
+} from '../quick-impl/approval-claim.js'
+import { setRequirementStatus } from '../db/repositories/requirements.js'
+import { appendStageResult, getTestRunById } from '../db/repositories/test-runs.js'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
+import { execSync } from 'child_process'
+import { buildSpecApprovalSummary, buildFinalApprovalSummary, buildPlanApprovalSummary } from './approval-summary/index.js'
+import type { SpecAuthorOutput } from '../quick-impl/role-output-schemas.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -85,6 +111,11 @@ export interface StageContextBase extends Omit<StageContext, 'stageIndex'> {
   dockerExecutor?: DockerExecutor
   /** Pipeline 级默认镜像；node 没配 containerImage 时由 hooks 回落使用 */
   pipelineContainerImage?: string
+  /** Quick-Impl skill 节点执行器（skill_node / skill_with_approval / skill_with_review 用）。
+   *  生产环境由 server.ts 注入 ClaudeRunner 包装；测试注入 fake。 */
+  skillExecutor?: SkillExecutor
+  /** 专用 MCP server 路径；未设置时 skill-runner 用 defaultMcpServerPath()。 */
+  mcpServerPath?: string
 }
 
 export interface BuildGraphInput {
@@ -103,6 +134,77 @@ export const APPROVAL_APPROVED = 'approved' as const
 export const APPROVAL_REJECTED = 'rejected' as const
 // NOTE: webhook timeout is expressed as `{ timeout: true }` on the resume
 // value (see `WebhookResume`), not as an extra constant here.
+
+// ---- Quick-Impl skill_with_approval interrupt/resume types ---------------
+
+export const QI_APPROVAL_INTERRUPT = 'qi_approval' as const
+
+/** 单轮审批循环状态，随 interrupt payload 和 resume prevState 传递。 */
+export interface ApprovalLoopState {
+  budgetUsed: number
+  rejectHistory: Array<{
+    round: number
+    reason: string | null
+    at: string
+    /** PRD §7 step 6：人审 rejected_plan 时填的 task 定位（仅 plan_escalation） */
+    targetTaskId?: string | null
+    /** PRD §7 step 6：人审勾选的 AI notes 子集（仅 plan_escalation） */
+    citedAiNotes?: string[] | null
+  }>
+  lastCommit?: string
+  lastArtifactPath?: string
+  /** 最近一轮 skill 的 fenced-JSON 完整输出（无则退化为 .output 摘要对象）。
+   *  下游模板 {{steps.<id>.output.skillOutput}} 用，跨 interrupt 通过 resume.prevState 持久。 */
+  lastSkillOutput?: unknown
+}
+
+/** interrupt 值：graph-runner dispatchInterrupt 据此注册 pending waiter。 */
+export interface QiApprovalInterruptValue {
+  type: typeof QI_APPROVAL_INTERRUPT
+  waiterId: number
+  runId: number
+  nodeId: string
+  round: number
+  approvalKind: ApprovalKind
+  decisionSet: DecisionSet
+  loopState: ApprovalLoopState
+  /** 钉钉审批人 userId 列表，空数组 = 仅 Web 审批 */
+  approverIds: string[]
+  requirementId: number
+  requirementTitle: string
+  contextSummary: string | null
+  /** v3 IM 卡片精简摘要（≤ 250 字符，由 buildSpec/FinalApprovalSummary 拼装）；缺失时 IM 走 contextSummary 截断 */
+  imSummary?: string | null
+}
+
+/** resume 值：由 resumeFromQiApproval 打包后通过 Command({resume:...}) 送回节点。 */
+export interface QiApprovalResume {
+  claimedWaiter: RequirementApprovalWaiter
+  prevState: ApprovalLoopState
+}
+
+// ---- Quick-Impl im_input interrupt/resume types --------------------------
+// im_input 是单次 interrupt（不像 skill_with_approval 多轮 loop），用于 e2e 失败 /
+// sandbox 失败两类人工介入场景。详见 docs/prds/prd-quick-impl-e2e-phase2.md "三个新节点类型 / im_input"。
+
+export const QI_IM_INPUT_INTERRUPT = 'qi_im_input' as const
+
+export interface QiImInputInterruptValue {
+  type: typeof QI_IM_INPUT_INTERRUPT
+  waiterId: number
+  runId: number
+  nodeId: string
+  /** 'qi_e2e_intervention' (3 按钮) | 'qi_sandbox_failed' (2 按钮) */
+  kind: string
+  approverIds: string[]
+  requirementId: number
+  requirementTitle: string
+  contextSummary: string | null
+}
+
+export interface QiImInputResume {
+  claimedWaiter: RequirementApprovalWaiter
+}
 
 // Shape of the value passed to interrupt() for approval stages.
 export interface ApprovalInterruptValue {
@@ -160,6 +262,25 @@ function resolveTargetServers(
 
 function nowIso(): string {
   return new Date().toISOString()
+}
+
+/**
+ * v2: 从 ClaudeRunner raw output 抽取最后一个 ```json``` block 的扩展字段。
+ * 现有 SkillOutputSchema 只解析 summary/decision/notes，v2 的 acceptanceCriteria/tasks/commits/specCoverage
+ * 等需要二次解析。失败返回 null（兼容 v1 baseline 输出格式不规范的情况）。
+ */
+function parseFencedJsonFromRaw(raw: string): Record<string, unknown> | null {
+  if (!raw) return null
+  const fenced = raw.match(/```\s*json\s*([\s\S]*?)```/g)
+  if (!fenced) return null
+  const last = fenced[fenced.length - 1]!
+  const body = last.replace(/```\s*json\s*/, '').replace(/```$/, '').trim()
+  try {
+    const parsed = JSON.parse(body)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
+  }
 }
 
 // Build a StageResult patch for the "running" → "done" transition.
@@ -870,6 +991,13 @@ function buildExecutorNode(
       output: result.output ?? {},
     }
 
+    if (result.status === 'success' && resolvedParams.statusOnSuccess) {
+      const reqId = Number(resolvedParams.requirementId || triggerParams.requirementId)
+      if (reqId && !isNaN(reqId)) {
+        setRequirementStatus(reqId, resolvedParams.statusOnSuccess as any).catch(() => {})
+      }
+    }
+
     return {
       currentStageIndex: index,
       stageResults: stageResult,
@@ -885,6 +1013,1021 @@ function extractRuntimeVars(
   if (data === undefined) return null
   if (isPlainObject(data)) return { ...data }
   return { [`__webhook_${tag}`]: data }
+}
+
+// ---- Quick-Impl skill node builders ----------------------------------------
+//
+// All three share the same param-resolve + skillExecutor-guard prologue.
+// skill_node: single shot (no interrupt).
+// skill_with_approval: multi-round interrupt loop with human gate.
+// skill_with_review: multi-round async loop with AI reviewer gate.
+
+function buildSkillNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `skill_node param resolve failed: ${String(err)}`,
+        error: String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!ctxBase.skillExecutor) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'skill_node: skillExecutor not configured in stageContext',
+        error: 'no_skill_executor',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const requirementId = Number(params.requirementId)
+    const skill = String(params.skill ?? '')
+    const role = String(params.role ?? '')
+    const worktreePath = String(params.worktreePath ?? '')
+    const branch = String(params.branch ?? '')
+    const baseBranch = String(params.baseBranch ?? '')
+    const artifactPath = String(params.artifactPath ?? '')
+    const nodeId = (node as PipelineNode).id ?? stageName
+
+    if (!skill || !role || !worktreePath) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `skill_node: missing required params (skill=${skill}, role=${role}, worktreePath=${worktreePath})`,
+        error: 'missing_params',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    let result: Awaited<ReturnType<typeof runSkill>>
+    try {
+      result = await runSkill(
+        {
+          requirementId,
+          nodeId,
+          skill,
+          role,
+          worktreePath,
+          branch,
+          baseBranch,
+          artifactPath,
+          inputs: (params.inputs as SkillContextInputs) ?? {},
+          specSources: params.specSources as string[] | undefined,
+          maxTurns: typeof params.maxTurns === 'number' ? params.maxTurns : undefined,
+          timeoutMs: typeof params.timeoutMs === 'number' ? params.timeoutMs : undefined,
+        },
+        ctxBase.skillExecutor,
+        ctxBase.mcpServerPath,
+      )
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `skill_node: ${String(err)}`,
+        error: err instanceof Error ? err.message : String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const exec: StageExecutionResult = {
+      status: result.output.decision === 'fail' ? 'failed' : 'success',
+      output: result.rawOutput,
+    }
+    const stepOutput: StepOutput = {
+      status: exec.status,
+      output: {
+        ...result.output,
+        durationMs: result.durationMs,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+      },
+    }
+    if (exec.status === 'success' && params.statusOnSuccess && requirementId) {
+      setRequirementStatus(requirementId, params.statusOnSuccess as any).catch(() => {})
+    }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      stepOutputs: { [(node as PipelineNode).id ?? stageName]: stepOutput },
+    }
+  }
+}
+
+/**
+ * skill_with_approval — interrupt-based multi-round loop with human gate.
+ *
+ * Loop invariant (replay-safe):
+ *   Each round creates exactly one DB waiter. On replay, getWaiterByNodeAndRound
+ *   detects the existing waiter and skips the generator so we don't double-run.
+ *   Calling interrupt() the N-th time in a replay returns the N-th stored resume
+ *   value; only the NEW interrupt throws to pause the graph.
+ *
+ * State threading:
+ *   loopState is embedded in the interrupt payload so graph-runner can register
+ *   it in qi-approval-waiter.ts; resumeFromQiApproval echoes it back as
+ *   resume.prevState, which restores lastCommit etc. on replay (when the
+ *   generator was skipped and loopState wasn't recomputed from scratch).
+ */
+function buildSkillWithApprovalNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `skill_with_approval param resolve failed: ${String(err)}`,
+        error: String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!ctxBase.skillExecutor) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'skill_with_approval: skillExecutor not configured',
+        error: 'no_skill_executor',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+    const skillExecutor = ctxBase.skillExecutor
+
+    const requirementId = Number(params.requirementId)
+    const skill = String(params.skill ?? '')
+    const role = String(params.role ?? '')
+    const worktreePath = String(params.worktreePath ?? '')
+    const branch = String(params.branch ?? '')
+    const baseBranch = String(params.baseBranch ?? '')
+    const artifactPath = String(params.artifactPath ?? '')
+    const decisionSet = (params.decisionSet as DecisionSet | undefined) ?? 'binary'
+    const maxRounds = typeof params.maxRounds === 'number' ? params.maxRounds : 5
+    // PRD #4：plan_human_escalation 等"先通知再修"场景下 round 1 跳过 skill 直接挂 waiter；
+    // round 2+（人拒绝后）才跑 skill，把人审 reason 与 priorReviewerNotes 一起作为修订输入。
+    const skipFirstSkill = params.skipFirstSkill === true
+    const nodeId = (node as PipelineNode).id ?? stageName
+    // approverIds: 逗号分隔字符串或已经是数组（bootstrap 传 variable 展开后）
+    const rawApprovers = params.approverIds
+    const approverIds: string[] = Array.isArray(rawApprovers)
+      ? (rawApprovers as string[]).filter(Boolean)
+      : typeof rawApprovers === 'string' && rawApprovers.trim()
+        ? rawApprovers.split(',').map(s => s.trim()).filter(Boolean)
+        : []
+
+    let loopState: ApprovalLoopState = {
+      budgetUsed: typeof params.initialBudget === 'number' ? params.initialBudget : 0,
+      rejectHistory: [],
+    }
+
+    for (let round = 1; ; round++) {
+      // Replay protection: if a waiter already exists for this round, the
+      // generator already ran in a prior execution — skip it.
+      const existingWaiter = await getWaiterByNodeAndRound(requirementId, nodeId, round, ctxBase.runId)
+      let waiterRow: RequirementApprovalWaiter
+      // 由 createWaiter 内的 contextSummary IIFE 设置；后续 interruptPayload 透传给 IM 卡片。
+      // 提到 if(!existingWaiter) 之外是为了让 else 分支（已有 waiter）也能拿到字段（默认 null）
+      let pendingImSummary: string | null = null
+
+      if (!existingWaiter) {
+        const baseApprovalKind = (params.approvalKind as ApprovalKind | undefined) ?? 'spec'
+        // budgetUsed 累积 budget_extended 决策追加的 round 配额（默认 0）；
+        // 有效预算 = maxRounds + budgetUsed。round >= effectiveBudget 时切 escalation。
+        const effectiveBudget = maxRounds + loopState.budgetUsed
+        const approvalKind: ApprovalKind = shouldEscalate(round, effectiveBudget)
+          ? 'escalation'
+          : baseApprovalKind
+        const effectiveDecisionSet: DecisionSet = approvalKind === 'escalation' ? 'escalation' : decisionSet
+
+        // round 内可被 createWaiter IIFE 引用的 spec-author 上下文
+        // 声明在 if(skill) 之外，以便无 skill 路径也能正确处理（spec-author 走有 skill 路径，
+        // 这些变量仅在 if(skill) 内被赋值）
+        let prevSkillOutput: SpecAuthorOutput | undefined
+        let usesV3SummaryForMeta: boolean | undefined = undefined
+        // 在 if(skill) 内赋值；createWaiter contextSummary IIFE 外层引用
+        let currentSkillOutput: SpecAuthorOutput | null = null
+        let currentAcDiff: AcDiff | null = null
+
+        if (skill && !(skipFirstSkill && round === 1)) {
+          // v2: 构造 previousRound 反馈传给 runSkill（多轮场景）
+          let previousRound: PreviousRoundData | undefined
+          let prevAcs: AcceptanceCriterion[] | undefined
+          if (round > 1) {
+            try {
+              const tr = await getTestRunById(ctxBase.runId)
+              const stageRounds = tr?.stageResults?.[index]?.rounds ?? []
+              const prevRound = [...stageRounds].reverse().find(
+                (r: { round: number }) => r.round === round - 1,
+              )
+              const lastReject = loopState.rejectHistory[loopState.rejectHistory.length - 1]
+              const prevSO = prevRound?.skillOutput as SpecAuthorOutput | undefined
+              previousRound = {
+                round: round - 1,
+                decision: 'rejected',
+                rejectReason: lastReject?.reason ?? undefined,
+                previousArtifactPath: prevRound?.artifactPath ?? loopState.lastArtifactPath,
+                previousCommits: loopState.lastCommit ? [loopState.lastCommit] : undefined,
+                decidedAt: lastReject?.at,
+                // v3: 透传上轮 LLM 自报 review 点 + 已接受的 assumption（feedback.md 渲染用）
+                prevReviewHints: Array.isArray(prevSO?.reviewHints) ? prevSO!.reviewHints : undefined,
+                prevAssumptions: Array.isArray(prevSO?.clarifications)
+                  ? prevSO!.clarifications.filter((c) => c.kind === 'assumption').map((c) => ({
+                      q: c.q,
+                      a: c.a,
+                      userMayDisagreeIf: c.userMayDisagreeIf,
+                    }))
+                  : undefined,
+                // PRD §7 step 6：plan_escalation rejected_plan 的字段级反馈
+                targetTaskId: lastReject?.targetTaskId ?? undefined,
+                citedAiNotes: lastReject?.citedAiNotes ?? undefined,
+              }
+              prevAcs = (prevRound?.skillOutput?.acceptanceCriteria as AcceptanceCriterion[]) ?? undefined
+              prevSkillOutput = prevSO
+            } catch (err) {
+              console.warn(`[graph-builder] previousRound build failed (continuing): ${err}`)
+            }
+          }
+
+          // Run skill generator then create waiter
+          let genResult: Awaited<ReturnType<typeof runSkill>>
+          try {
+            genResult = await runSkill(
+              {
+                requirementId,
+                nodeId: `${nodeId}:gen:r${round}`,
+                skill,
+                role,
+                worktreePath,
+                branch,
+                baseBranch,
+                artifactPath,
+                inputs: {
+                  round,
+                  budgetUsed: loopState.budgetUsed,
+                  rejectHistory: loopState.rejectHistory,
+                  lastCommit: loopState.lastCommit,
+                  ...((params.inputs as SkillContextInputs) ?? {}),
+                },
+                specSources: params.specSources as string[] | undefined,
+                previousRound,
+              },
+              skillExecutor,
+              ctxBase.mcpServerPath,
+            )
+          } catch (err) {
+            const exec: StageExecutionResult = {
+              status: 'failed',
+              output: `skill_with_approval round ${round} generator failed: ${String(err)}`,
+              error: err instanceof Error ? err.message : String(err),
+            }
+            return {
+              currentStageIndex: index,
+              stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+            }
+          }
+
+          if (genResult.output.decision === 'fail') {
+            const exec: StageExecutionResult = {
+              status: 'failed',
+              output: `skill_with_approval round ${round} generator decision=fail: ${genResult.output.summary}`,
+              error: 'generator_fail',
+            }
+            return {
+              currentStageIndex: index,
+              stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+            }
+          }
+
+          // plan-decomposer v3 可能返回 reject_input（upstream spec 有问题无法继续拆解）。
+          // 未来 TODO: 路由回 spec_review_loop 并把 rejectReasons[] 写入 spec-author 的 feedback.md。
+          // 现在：停 pipeline，保留 rejectReasons 供运营查看（不走 human-approval 流程）。
+          if ((genResult.output as { decision?: string }).decision === 'reject_input') {
+            const rejectReasons = (genResult.output as { rejectReasons?: string[] }).rejectReasons ?? []
+            const exec: StageExecutionResult = {
+              status: 'failed',
+              output: `skill_with_approval round ${round} generator decision=reject_input: ${genResult.output.summary} | rejectReasons: ${rejectReasons.join('; ')}`,
+              error: 'reject_input',
+            }
+            return {
+              currentStageIndex: index,
+              stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+            }
+          }
+
+          // v2: 持久化本轮 skillOutput / acDiff（详见 docs/prds/quick-impl-roles-v2/02-data-flow.md §5/§6）
+          const extendedOutput = parseFencedJsonFromRaw(genResult.rawOutput)
+          const currentAcs = extendedOutput?.acceptanceCriteria as AcceptanceCriterion[] | undefined
+          const acDiff = role === 'spec-author' && round > 1 && prevAcs && currentAcs
+            ? diffAcceptanceCriteria(prevAcs, currentAcs)
+            : undefined
+          // hoist 给外层 createWaiter contextSummary IIFE 用（v3 摘要直接传，不再绕 state.stageResults）
+          currentSkillOutput = (extendedOutput as SpecAuthorOutput | null) ?? null
+          currentAcDiff = acDiff ?? null
+          // 持久化到 loopState：interrupt resume 时 prevState 还原后，success path 的 stepOutputs
+          // 才能拿到 skillOutput / lastArtifactPath（下游 dev-loop 模板 {{steps.<id>.output.skillOutput}} 依赖）。
+          loopState = {
+            ...loopState,
+            lastArtifactPath: artifactPath,
+            lastSkillOutput: currentSkillOutput ?? genResult.output,
+          }
+          if (acDiff && (acDiff.added.length || acDiff.removed.length || acDiff.changed.length)) {
+            console.log(
+              `[graph-builder] spec acDiff round ${round}: +${acDiff.added.length} -${acDiff.removed.length} ~${acDiff.changed.length}`,
+            )
+          }
+          // v3 灰度路由（仅 spec-author 适用）：第一次进 spec_review_loop 时基于 env 计算 usesV3Summary
+          // 后续 resume / 跨轮直接读 stage.meta.usesV3Summary（避免 in-flight pipeline 因 env 变化漂移）
+          if (role === 'spec-author' && requirementId) {
+            const cachedFlag = (
+              (state.stageResults as Array<{ meta?: { usesV3Summary?: boolean } }> | undefined)?.[index]?.meta?.usesV3Summary
+            )
+            if (cachedFlag !== undefined) {
+              usesV3SummaryForMeta = cachedFlag  // 沿用上一轮缓存
+            } else {
+              const v3FlagEnabled = process.env.QI_SPEC_V3_SUMMARY === 'true'
+              const v3Percent = Math.max(0, Math.min(100, parseInt(process.env.QI_SPEC_V3_SUMMARY_PERCENT ?? '0', 10) || 0))
+              usesV3SummaryForMeta = v3FlagEnabled && requirementId % 100 < v3Percent
+            }
+          }
+          // v3 metric：观测 LLM 输出健康指标 + 缓存灰度路由决定
+          const metaPatch: Record<string, unknown> = {
+            zodParseStatus: extendedOutput ? 'success' : 'failed',
+            reviewHintsCount: Array.isArray((extendedOutput as { reviewHints?: unknown[] } | null)?.reviewHints)
+              ? (extendedOutput as { reviewHints: unknown[] }).reviewHints.length
+              : 0,
+            confidenceLevel: (extendedOutput as { confidenceLevel?: string } | null)?.confidenceLevel ?? null,
+          }
+          if (usesV3SummaryForMeta !== undefined) metaPatch.usesV3Summary = usesV3SummaryForMeta
+          await appendStageResult(ctxBase.runId, index, {
+            round,
+            decision: 'pass',
+            summary: genResult.output.summary,
+            skillOutput: extendedOutput ?? { summary: genResult.output.summary },
+            evidence: extendedOutput?.evidence as { standardsConsulted?: string[]; selfCheck?: Array<{ item: string; passed: boolean; reason?: string }> } | undefined,
+            artifactPath,
+            acDiff,
+            meta: metaPatch,
+          }).catch((err) => {
+            console.warn(`[graph-builder] appendStageResult failed (non-fatal): ${err}`)
+          })
+        }
+
+        // 灰度路由：复用上面 appendStageResult 写入 metaPatch 时算好的 usesV3SummaryForMeta；
+        // 若上轮已缓存到 stage.meta.usesV3Summary 则沿用（in-flight 跨轮一致）。
+        const usesV3Summary: boolean = ((): boolean => {
+          if (usesV3SummaryForMeta !== undefined) return usesV3SummaryForMeta
+          const cached = (state.stageResults as Array<{ meta?: { usesV3Summary?: boolean } }> | undefined)?.[index]?.meta?.usesV3Summary
+          return cached === true
+        })()
+
+        waiterRow = await createWaiter({
+          requirementId,
+          pipelineRunId: ctxBase.runId,
+          nodeId,
+          approvalKind,
+          round,
+          decisionSet: effectiveDecisionSet,
+          contextSummary: (() => {
+            const staticSummary = (params.contextSummary as string | null | undefined) ?? null
+            if (staticSummary) return staticSummary
+            if (!worktreePath || !requirementId) return null
+
+            // ── final approval（已抽到 approval-summary/final.ts） ────────────────
+            // baseApprovalKind 来自 params；approvalKind 可能被 shouldEscalate 升为 'escalation'，
+            // 但 final 节点要按原 kind 处理。
+            if (baseApprovalKind === 'final') {
+              const stepOutputs = state.stepOutputs as Record<string, { output?: Record<string, unknown> }>
+              const devOutput = stepOutputs?.dev_with_review_loop?.output as {
+                review?: { summary?: string; decision?: string; notes?: Array<{ msg: string }>; fileRisks?: Array<{ file: string; role: string; impact: string; risk: 'high' | 'medium' | 'low'; focusOn: string }> }
+                tasksDone?: string[]
+                fixRounds?: number
+              } | undefined
+              const e2eOutput = stepOutputs?.qi_e2e_runner?.output as {
+                result?: string
+                scenariosRun?: number
+                passed?: number
+                failed?: number
+                skipped?: boolean
+                skipReason?: string
+              } | undefined
+              const { web, im } = buildFinalApprovalSummary({
+                devOutput: devOutput ?? null,
+                e2eOutput: e2eOutput ?? null,
+                worktreePath,
+              })
+              pendingImSummary = im
+              return web || null
+            }
+
+            // ── plan approval：v3 摘要 builder（PRD §3 step 5；含 stage 2 reviewer notes）──
+            if (baseApprovalKind === 'plan') {
+              const planPath = join(worktreePath, 'docs', 'plans', `qi-${requirementId}.md`)
+              const planMdContent = existsSync(planPath) ? readFileSync(planPath, 'utf8') : ''
+
+              const stepOutputs = state.stepOutputs as Record<string, { output?: Record<string, unknown> }>
+              const planReviewLoopOutput = stepOutputs?.plan_review_loop?.output as
+                | {
+                    review?: { summary?: string; decision?: string; notes?: Array<{ severity?: string; msg: string; file?: string }> }
+                    reviewHistory?: Array<{ round: number; output: Record<string, unknown> }>
+                    skillOutput?: unknown
+                    maxRoundsExceeded?: boolean
+                  }
+                | undefined
+              const specReviewLoopOutput = stepOutputs?.spec_review_loop?.output as
+                | { skillOutput?: unknown }
+                | undefined
+
+              // 优先用当前阶段重跑的 plan-decomposer 输出；fallback 到 stage 2 持久化的
+              // （PRD #6 修后 stage 2 失败时也会持久化；PRD #4 修后 stage 3 round 1 不重跑，fallback 是主路径）
+              const planSkillOutput =
+                (currentSkillOutput as unknown as import('../quick-impl/role-output-schemas.js').PlanDecomposerOutputV3 | null) ??
+                (planReviewLoopOutput?.skillOutput as
+                  | import('../quick-impl/role-output-schemas.js').PlanDecomposerOutputV3
+                  | undefined ??
+                  null)
+
+              const reviewHistory = planReviewLoopOutput?.reviewHistory ?? []
+              const aiRejectRounds = reviewHistory.length || (planReviewLoopOutput?.maxRoundsExceeded ? 2 : 0)
+
+              const { web, im } = buildPlanApprovalSummary({
+                planSkillOutput,
+                lastReview: planReviewLoopOutput?.review ?? null,
+                reviewHistory,
+                planMdContent,
+                specOutput:
+                  (specReviewLoopOutput?.skillOutput as
+                    | import('../quick-impl/role-output-schemas.js').SpecAuthorOutput
+                    | undefined) ?? null,
+                round,
+                aiRejectRounds,
+              })
+              pendingImSummary = im
+              return web || planMdContent || null
+            }
+
+            // ── spec / escalation：v3 摘要 or fallback readFileSync(spec.md) ──
+            const specPath = join(worktreePath, 'docs', 'specs', `qi-${requirementId}.md`)
+            const specMdContent = existsSync(specPath) ? readFileSync(specPath, 'utf8') : ''
+
+            if (!usesV3Summary) {
+              return specMdContent || null  // 灰度未命中：保留旧行为
+            }
+
+            // 走 v3 摘要：直接用本作用域内已校验的 spec-author 结构化输出
+            // （state.stageResults 是 LangGraph 内存态，appendStageResult 仅写 DB 不回写内存）
+            const skillOutputForSummary = currentSkillOutput
+            const acDiffForSummary = currentAcDiff
+
+            // 读 .qi-context/feedback.md（round 2+ 才存在；不存在则空）
+            let feedbackMd: string | null = null
+            try {
+              const fbPath = join(worktreePath, '.qi-context', 'feedback.md')
+              if (existsSync(fbPath)) feedbackMd = readFileSync(fbPath, 'utf8')
+            } catch {
+              /* non-fatal */
+            }
+
+            const { web, im } = buildSpecApprovalSummary({
+              skillOutput: skillOutputForSummary,
+              specMdContent,
+              round,
+              acDiff: acDiffForSummary,
+              feedbackMd,
+              prevSkillOutput,
+              budgetExtended: loopState.budgetUsed > 0,
+            })
+            pendingImSummary = im
+            return web || null
+          })(),
+        })
+      } else {
+        waiterRow = existingWaiter
+      }
+
+      // interrupt() throws on first call; returns stored resume on replay.
+      const interruptPayload: QiApprovalInterruptValue = {
+        type: QI_APPROVAL_INTERRUPT,
+        waiterId: waiterRow.id,
+        runId: ctxBase.runId,
+        nodeId,
+        round,
+        approvalKind: waiterRow.approvalKind,
+        decisionSet: waiterRow.decisionSet,
+        loopState,
+        approverIds,
+        requirementId,
+        requirementTitle: String(params.title ?? triggerParams.title ?? ''),
+        contextSummary: waiterRow.contextSummary,
+        imSummary: pendingImSummary,
+      }
+      const resume = interrupt(interruptPayload) as QiApprovalResume
+
+      // Restore loopState from resume.prevState so that lastCommit etc. are
+      // available even when the generator was skipped on replay.
+      loopState = { ...loopState, ...resume.prevState }
+
+      const { decision } = resume.claimedWaiter
+
+      if (decision === 'approved' || decision === 'force_passed') {
+        if (params.statusOnSuccess && requirementId) {
+          setRequirementStatus(requirementId, params.statusOnSuccess as any).catch(() => {})
+        }
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: `skill_with_approval approved at round ${round} (${decision})`,
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [(node as PipelineNode).id ?? stageName]: {
+              status: 'success' as const,
+              output: {
+                round,
+                decision,
+                loopState,
+                // 下游模板契约（docs/standards/skill-reviewer-design.md §5）：所有产出 artifact
+                // 的 skill 节点必须暴露 lastArtifactPath（文件路径）+ skillOutput（完整 JSON）。
+                lastArtifactPath: loopState.lastArtifactPath ?? artifactPath,
+                skillOutput: loopState.lastSkillOutput,
+              },
+            },
+          },
+        }
+      }
+
+      if (decision === 'aborted') {
+        if (requirementId) {
+          await setRequirementStatus(requirementId, 'aborted' as any).catch(() => {})
+        }
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `skill_with_approval aborted at round ${round}`,
+          error: 'aborted',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        }
+      }
+
+      // PRD §7 step 4：rejected_spec 暂当 abort（spec 升级路径见 follow-up PRD）。
+      // rejectReason 加 [SPEC_REVISION_NEEDED] 前缀，以便后续 worker / 运营按前缀识别。
+      if (decision === 'rejected_spec') {
+        if (requirementId) {
+          await setRequirementStatus(requirementId, 'aborted' as any).catch(() => {})
+        }
+        const humanReason = resume.claimedWaiter.rejectReason ?? '(no reason)'
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `skill_with_approval rejected_spec at round ${round}: [SPEC_REVISION_NEEDED] ${humanReason}`,
+          error: 'spec_revision_needed',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        }
+      }
+
+      if (decision === 'budget_extended') {
+        loopState = {
+          ...loopState,
+          budgetUsed: computeNewBudget(loopState.budgetUsed, resume.claimedWaiter.budgetDelta ?? 1),
+        }
+        continue
+      }
+
+      // decision === 'rejected' | 'rejected_plan' (or null/unknown — treat as reject)
+      // PRD §7 step 4：'rejected_plan' 与 'rejected' 共享 round++ 路径，区别仅在反馈语义（plan 锅 vs 通用拒绝）
+      if (round >= maxRounds) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `skill_with_approval rejected, max rounds (${maxRounds}) reached`,
+          error: 'max_rounds_exceeded',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        }
+      }
+
+      loopState = {
+        ...loopState,
+        rejectHistory: [
+          ...loopState.rejectHistory,
+          {
+            round,
+            reason: resume.claimedWaiter.rejectReason ?? null,
+            at: nowIso(),
+            targetTaskId: resume.claimedWaiter.targetTaskId,
+            citedAiNotes: resume.claimedWaiter.citedAiNotes,
+          },
+        ],
+      }
+      // continue to next round
+    }
+  }
+}
+
+/**
+ * im_input — 单次 interrupt-bound 节点，让人工通过钉钉卡片 / Web UI 决策。
+ *
+ * 用于 Quick-Impl Phase 2：
+ *   - kind='qi_e2e_intervention' — E2E 第 3 轮失败，3 按钮 fix/force_passed/aborted
+ *   - kind='qi_sandbox_failed'   — sandbox provision 失败，2 按钮 retry/aborted (内部归 fix/aborted)
+ *
+ * 与 skill_with_approval 的差异：
+ *   - 单次 interrupt，没有多轮 loop
+ *   - 没有 generator 阶段（dev-loop 输出在前置节点已生成）
+ *   - decisionSet 用新枚举值 'qi_e2e_intervention' / 'qi_sandbox_failed'
+ *
+ * resume 后输出：
+ *   { decision, humanNote, decidedBy, decidedAt }
+ * 下游用 switch 节点按 decision 分流。
+ */
+function buildImInputNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `im_input param resolve failed: ${String(err)}`,
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const requirementId = Number(params.requirementId ?? triggerParams.requirementId ?? 0)
+    if (!requirementId) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'im_input: requirementId required',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const kind = String(params.kind ?? '')
+    if (kind !== 'qi_e2e_intervention' && kind !== 'qi_sandbox_failed') {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `im_input: kind must be 'qi_e2e_intervention' or 'qi_sandbox_failed', got "${kind}"`,
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const approverIds = Array.isArray(params.approverIds)
+      ? (params.approverIds as unknown[]).map((x) => String(x))
+      : []
+    const requirementTitle = String(params.requirementTitle ?? triggerParams.title ?? '')
+    const contextSummary =
+      typeof params.contextSummary === 'string' ? params.contextSummary :
+      params.contextSummary != null ? JSON.stringify(params.contextSummary).slice(0, 1500) :
+      null
+    const nodeId = (node as PipelineNode).id ?? stageName
+
+    // 复用 / 创建 waiter（replay 时可能已存在）
+    let waiterRow: RequirementApprovalWaiter
+    const existing = await getActiveWaiter(requirementId, nodeId)
+    if (existing) {
+      waiterRow = existing
+    } else {
+      waiterRow = await createWaiter({
+        requirementId,
+        pipelineRunId: ctxBase.runId,
+        nodeId,
+        approvalKind: kind as ApprovalKind,
+        round: 1,
+        decisionSet: kind as DecisionSet,
+        contextSummary,
+      })
+    }
+
+    const interruptPayload: QiImInputInterruptValue = {
+      type: QI_IM_INPUT_INTERRUPT,
+      waiterId: waiterRow.id,
+      runId: ctxBase.runId,
+      nodeId,
+      kind,
+      approverIds,
+      requirementId,
+      requirementTitle,
+      contextSummary: waiterRow.contextSummary,
+    }
+    const resume = interrupt(interruptPayload) as QiImInputResume
+
+    const decision = resume.claimedWaiter.decision ?? 'aborted'
+    const humanNote = resume.claimedWaiter.rejectReason ?? null
+    const decidedBy = resume.claimedWaiter.decidedBy ?? resume.claimedWaiter.claimedBy ?? null
+    const decidedAt = resume.claimedWaiter.claimedAt
+      ? resume.claimedWaiter.claimedAt.toISOString()
+      : nowIso()
+
+    const exec: StageExecutionResult = {
+      status: 'success',
+      output: `im_input ${kind} resolved: ${decision} by ${decidedBy ?? '(unknown)'}`,
+    }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      stepOutputs: {
+        [nodeId]: {
+          status: 'success' as const,
+          output: { decision, humanNote, decidedBy, decidedAt },
+        },
+      },
+    }
+  }
+}
+
+/**
+ * skill_with_review — async multi-round loop with AI reviewer gate (no interrupt).
+ *
+ * Phase 1: runs dev generator → reviewer → if reviewer passes, success; if fail,
+ * feed reviewer notes back into next round. Max rounds hard-stop.
+ */
+function buildSkillWithReviewNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `skill_with_review param resolve failed: ${String(err)}`,
+        error: String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!ctxBase.skillExecutor) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'skill_with_review: skillExecutor not configured',
+        error: 'no_skill_executor',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+    const skillExecutor = ctxBase.skillExecutor
+
+    const requirementId = Number(params.requirementId)
+    const devSkill = String(params.devSkill ?? '')
+    const devRole = String(params.devRole ?? '')
+    const reviewerSkill = String(params.reviewerSkill ?? '')
+    const reviewerRole = String(params.reviewerRole ?? '')
+    const worktreePath = String(params.worktreePath ?? '')
+    const branch = String(params.branch ?? '')
+    const baseBranch = String(params.baseBranch ?? '')
+    const artifactPath = String(params.artifactPath ?? '')
+    const maxRounds = typeof params.maxRounds === 'number' ? params.maxRounds : 3
+    const nodeId = (node as PipelineNode).id ?? stageName
+
+    let reviewNotes: string | null = null
+    // 跨轮累积：失败 path 持久化 reviewer notes 到 stepOutputs（PRD #6）
+    const reviewHistory: Array<{ round: number; output: Record<string, unknown> }> = []
+    let lastDevResult: Awaited<ReturnType<typeof runSkill>> | null = null
+    let lastReviewResult: Awaited<ReturnType<typeof runSkill>> | null = null
+
+    for (let round = 1; round <= maxRounds; round++) {
+      let devResult: Awaited<ReturnType<typeof runSkill>>
+      try {
+        devResult = await runSkill(
+          {
+            requirementId,
+            nodeId: `${nodeId}:dev:r${round}`,
+            skill: devSkill,
+            role: devRole,
+            worktreePath,
+            branch,
+            baseBranch,
+            artifactPath,
+            inputs: {
+              round,
+              reviewNotes,
+              ...((params.inputs as SkillContextInputs) ?? {}),
+            },
+            specSources: params.specSources as string[] | undefined,
+          },
+          skillExecutor,
+          ctxBase.mcpServerPath,
+        )
+      } catch (err) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `skill_with_review round ${round} dev generator failed: ${String(err)}`,
+          error: err instanceof Error ? err.message : String(err),
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        }
+      }
+
+      if (devResult.output.decision === 'fail') {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `skill_with_review round ${round} dev decision=fail: ${devResult.output.summary}`,
+          error: 'dev_fail',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        }
+      }
+
+      let reviewResult: Awaited<ReturnType<typeof runSkill>>
+      try {
+        reviewResult = await runSkill(
+          {
+            requirementId,
+            nodeId: `${nodeId}:review:r${round}`,
+            skill: reviewerSkill,
+            role: reviewerRole,
+            worktreePath,
+            branch,
+            baseBranch,
+            artifactPath,
+            inputs: {
+              round,
+              devOutput: devResult.output,
+              ...((params.reviewerInputs as SkillContextInputs) ?? {}),
+            },
+            specSources: params.specSources as string[] | undefined,
+          },
+          skillExecutor,
+          ctxBase.mcpServerPath,
+        )
+      } catch (err) {
+        if (err instanceof SkillOutputParseError && round < maxRounds) {
+          // reviewer JSON 格式错误 — 视为本轮无效，继续下一轮让 dev 重试
+          console.warn(`[skill-with-review] round ${round} reviewer parse error, retrying next round: ${err.message}`)
+          reviewNotes = `上一轮 reviewer 输出 JSON 格式解析失败，请本轮确保严格输出合法 JSON。`
+          continue
+        }
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `skill_with_review round ${round} reviewer failed: ${String(err)}`,
+          error: err instanceof Error ? err.message : String(err),
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        }
+      }
+
+      if (reviewResult.output.decision !== 'fail') {
+        if (params.statusOnSuccess && requirementId) {
+          setRequirementStatus(requirementId, params.statusOnSuccess as any).catch(() => {})
+        }
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: `skill_with_review passed at round ${round}: ${reviewResult.output.summary}`,
+        }
+        const extendedDevOutput = parseFencedJsonFromRaw(devResult.rawOutput) ?? devResult.output
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [(node as PipelineNode).id ?? stageName]: {
+              status: 'success' as const,
+              output: {
+                round,
+                review: reviewResult.output,
+                tasksDone: (devResult.output as { tasksDone?: unknown[] }).tasksDone ?? [],
+                fixRounds: round - 1,
+                lastArtifactPath: artifactPath,
+                skillOutput: extendedDevOutput,
+              },
+            },
+          },
+        }
+      }
+
+      // review 判 fail：累积历史，供 max_rounds_exceeded 的 stepOutputs 用（PRD #6）
+      lastDevResult = devResult
+      lastReviewResult = reviewResult
+      reviewHistory.push({ round, output: reviewResult.output as Record<string, unknown> })
+
+      reviewNotes =
+        reviewResult.output.notes?.map((n) => n.msg).join('\n') ??
+        reviewResult.output.summary
+    }
+
+    const exec: StageExecutionResult = {
+      status: 'failed',
+      output: `skill_with_review: max rounds (${maxRounds}) exceeded without passing review`,
+      error: 'max_rounds_exceeded',
+    }
+    // PRD #6：失败 path 也写 stepOutputs，让下游 plan_human_escalation
+    // 能通过 {{steps.<id>.output.review.notes}} 模板拿到 AI reviewer 拒绝原因。
+    const failedStepOutput: Record<string, unknown> = {
+      maxRoundsExceeded: true,
+      reviewHistory,
+      lastArtifactPath: artifactPath,
+    }
+    if (lastReviewResult) {
+      failedStepOutput.review = lastReviewResult.output
+    }
+    if (lastDevResult) {
+      const extendedLastDevOutput =
+        parseFencedJsonFromRaw(lastDevResult.rawOutput) ?? lastDevResult.output
+      failedStepOutput.skillOutput = extendedLastDevOutput
+      failedStepOutput.tasksDone =
+        (lastDevResult.output as { tasksDone?: unknown[] }).tasksDone ?? []
+    }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      stepOutputs: {
+        [(node as PipelineNode).id ?? stageName]: {
+          status: 'failed' as const,
+          output: failedStepOutput,
+        },
+      },
+    }
+  }
 }
 
 // skip_rest node: mark every stage at/after startIndex as skipped so the
@@ -1111,7 +2254,8 @@ export function buildGraphFromPipeline(
       case 'approval':
       case 'dm':
       case 'db_update':
-      case 'http': {
+      case 'http':
+      case 'mr_create': {
         // ---- Side-effect nodes: optionally wrapped with dryRunFlavor interrupt ----
         let realFn: (state: typeof PipelineStateAnnotation.State) => Promise<unknown>
         if (node.stageType === 'script') {
@@ -1119,7 +2263,7 @@ export function buildGraphFromPipeline(
         } else if (node.stageType === 'approval') {
           realFn = buildApprovalNode(node, i, stageContext, triggerParams) as typeof realFn
         } else {
-          // dm / db_update / http — generic NodeExecutor dispatch
+          // dm / db_update / http / mr_create — generic NodeExecutor dispatch
           realFn = buildExecutorNode(node, i, stageContext, triggerParams ?? {}) as typeof realFn
         }
         const nodeFn = hooks.dryRunFlavor
@@ -1145,8 +2289,27 @@ export function buildGraphFromPipeline(
       case 'template_render':
       case 'fan_out':
       case 'switch':
+      case 'init_qi_branch':
+      case 'e2e_stub':
+      case 'qi_e2e_runner':
         builder = builder.addNode(name, wrapWithSnapshot(node, i,
           buildExecutorNode(node, i, stageContext, triggerParams ?? {}) as (state: typeof PipelineStateAnnotation.State) => Promise<unknown>))
+        break
+
+      case 'skill_node':
+        builder = builder.addNode(name, buildSkillNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'skill_with_approval':
+        builder = builder.addNode(name, buildSkillWithApprovalNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'skill_with_review':
+        builder = builder.addNode(name, buildSkillWithReviewNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'im_input':
+        builder = builder.addNode(name, buildImInputNode(node, i, stageContext, triggerParams ?? {}))
         break
 
       default: {
