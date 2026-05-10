@@ -76,58 +76,72 @@ export const acceptanceSchema = z.union([
 
 pipeline-b 现有严格 kind playbook（如 [admin-first-login.playbook.yaml](../test-playbooks/admin-first-login.playbook.yaml)）一字不动；QI 链路 dev-loop 直接 dump string 也合法。
 
-### 2.2 dev-loop skill 简化（`.claude/skills/quick-impl-artifact-author/roles/dev-loop.md` L110-135）
+**TS 类型影响**：`Acceptance` 推断类型由 7-union 变成 8-union（多 `natural_language` 形态）。已 grep 确认 prod 代码无 `switch (a.kind)` / `case 'url_match'` 之类的穷举消费方——只有 LLM prompt 字符串里提及 `acceptance.kind`（[src/e2e/pipeline-a/nodes/llm-generator.ts](../../src/e2e/pipeline-a/nodes/llm-generator.ts)、[src/e2e/playbook-draft/llm-generator.ts](../../src/e2e/playbook-draft/llm-generator.ts)），不会因类型扩展破坏类型检查。
 
-只做**字段名对齐**，不做 kind 翻译：
+### 2.2 dev-loop skill 字段名修正（`.claude/skills/quick-impl-artifact-author/roles/dev-loop.md` L116-128）
 
-```yaml
-specPath: docs/specs/qi-{requirementId}.md
-specTitle: "{spec.title 或 summary 截前 80 字}"
-scenarios:
-  - id: {scenario.id}
-    name: "{scenario.name}"
-    tags: [{tags}]
-    steps:
-      - "{step}"           # 直接 dump
-    acceptance:
-      - "{acceptance}"     # 直接 dump（裸 string）
-```
+**仅做字段名对齐**，acceptance dump 部分本来就是 `- "{string}"`，不动。
 
-- 字段全 camelCase（删 `playbook_id` / `spec_path` 这俩 schema 不认的字段）
-- 删除所有 kind 决策表 / 翻译指令
-- 保留"作为独立 T0 commit"和"不重写 e2e playbook YAML"等流程性约束
+| 当前模板（L116-128） | 改成 |
+|---|---|
+| `playbook_id: qi-{requirementId}` | **删除**（`playbookSchema` 不认此字段） |
+| `spec_path: docs/specs/qi-{requirementId}.md` | `specPath: docs/specs/qi-{requirementId}.md` |
+| `spec_title: "{spec.title 或 spec.summary 截前 80 字}"` | `specTitle: "{spec.summary 截前 80 字}"`（`SpecAuthorOutputSchema` 没有 `title` 字段，仅 `summary`，原模板里的 `spec.title` 永远走 undefined 兜底） |
 
-### 2.3 scenario runner skill 升级（`src/agent/e2e-scenario/skill/SKILL.md` Phase 1 / 4）
+acceptance / steps / scenario 其他字段保持现状（dev-loop 本来就不做翻译，只是 dump）。"作为独立 T0 commit"和"不重写 e2e playbook YAML"等流程性约束保留。
 
-新增 NL acceptance 消费指南：
-- 当 `acceptance.kind === 'natural_language'`（或裸 string），LLM 读 `text`，**自由选工具**验证它（page.evaluate / curl / psql / docker logs / browser_take_screenshot 任选）
-- evidence 要求：
-  - `acceptanceResults[i].kind` 写 `'natural_language'`
-  - `acceptanceResults[i].expected` 写原 NL 文本
-  - `acceptanceResults[i].actual` 写实测值（URL / DOM 片段 / SQL 行 / page.evaluate 返回值）
-  - `acceptanceResults[i].reason` 写"用什么工具怎么验的"（一句话即可）
-  - `artifacts[]` 必须给到 reviewer 能独立判定的证据（截图 / sql 结果 / page.evaluate 返回值文本文件）
+### 2.3 scenario runner skill 升级（`src/agent/e2e-scenario/skill/SKILL.md`）
 
-现有 7 种 kind 的处理段保持不变（pipeline-b 链路零回归）。
+**改动是 additive + 总指引分支化**，不是简单"加一段"。3 处需改：
 
-### 2.4 qi-e2e-runner 不变
+**改 1：Phase 1 line 46 总指引分支化**
 
-[src/pipeline/node-types/qi-e2e-runner.ts:74-83](../../src/pipeline/node-types/qi-e2e-runner.ts#L74-L83) `readQiPlaybook` 维持现状（schema fail 仍 throw）。schema 加了 NL 支持后，不会再 fail 这条具体路径。throw 兜底留给 YAML 完全坏掉（语法错 / 顶层非对象）等系统级错误。
+当前：「For each `acceptance` item, identify which `kind` it is and what tool you'll use to verify it」+ 7 行 kind→tool 表。
 
-不新增 `result: 'playbook_invalid'` 路径，不修改 `e2e_router` 拓扑。
+改成：先判断形态——
+- 若 `acceptance` 是裸 string 或 `kind === 'natural_language'`：跳到 NL 消费段（改 3）
+- 否则按原 7 行 kind→tool 表
+
+**改 2：Phase 4 line ~159 "no downgrades" 边界澄清**
+
+当前：「`acceptance.kind` dictates the verification tool — no downgrades」。
+
+改成：「**对 7 种 strict kind 不允许 downgrade**（`dom_visible` 不能用 curl 替代）；NL 形态不在此约束内（自由选工具）」。
+
+**改 3：新增 NL acceptance 消费段**
+
+新章节"Phase 4.5: Verifying natural-language acceptance"。要点：
+- 读 `text` 字段（裸 string 直接读元素本身）
+- **自由选工具**：page.evaluate / curl / psql / docker logs / browser_snapshot / browser_take_screenshot
+- evidence 强制要求：
+  - `acceptanceResults[i].kind` = `'natural_language'`
+  - `acceptanceResults[i].expected` = NL 原文
+  - `acceptanceResults[i].actual` = 实测值（URL / DOM 片段 / SQL 行 / page.evaluate 返回值原值）
+  - `acceptanceResults[i].reason` = 一句话说"用什么工具怎么验的"
+  - `artifacts[]` 至少 1 条独立证据（截图 / sql_result / page.evaluate 返回值文本文件）让 reviewer 不依赖 LLM 自述就能判定真假
+
+### 2.4 qi-e2e-runner / e2e_router 拓扑不变
+
+[src/pipeline/node-types/qi-e2e-runner.ts:74-83](../../src/pipeline/node-types/qi-e2e-runner.ts#L74-L83) `readQiPlaybook` 维持现状（schema fail 仍 throw）。schema 加了 NL 支持后，dev-loop 产出的 acceptance 字段不会再因"string vs object"触发 schema fail；YAML 完全坏掉（语法错 / 顶层非对象 / 缺 `id`/`name`/`steps` 等结构性字段）的兜底 throw 留作系统级错误处理。
+
+**显式不做**：不新增 `result: 'playbook_invalid'` 路径，不修改 `e2e_router` 拓扑，不在 dev-loop inputs 加 `playbookErrors` 字段，不增加 schema-fail 自修回路。这些都是方案 B 的复杂度——方案 C 通过让 schema 容得下 spec_author 真实输出形态，从源头消除了 fail 的可能性。
 
 ### 2.5 测试
 
-| 层级 | 文件 | 新增用例 |
+| 层级 | 文件 | 用例 |
 |---|---|---|
-| schema | `src/__tests__/unit/playbook-schema.test.ts` | 1) `natural_language` kind 解析；2) 裸 string 自动 transform；3) 7 种 kind 仍合法（回归） |
-| qi-runner | `src/__tests__/unit/qi-e2e-runner.test.ts` 等 | dev-loop 风格 YAML（NL acceptance）能通过校验 |
+| schema 单测 | `src/__tests__/unit/playbook-schema.test.ts` | 1) `kind: 'natural_language'` 对象解析通过；2) 顶层裸 `string` 自动 transform 成 `{kind:'natural_language', text}`；3) 现有 7 种 kind 仍合法（回归 fixture） |
+| 解析集成 | `src/__tests__/unit/playbook-schema.test.ts` 同文件 | dev-loop 风格完整 YAML（具 `specPath`/`specTitle` + 全部 acceptance 为裸 string）通过 `parsePlaybookYaml` |
+| qi-runner | `src/__tests__/unit/qi-e2e-runner.test.ts`（如已存在）或新增 mock 文件 | `readQiPlaybook` 读 NL acceptance YAML 不 throw；YAML 缺 `specPath` / scenario `id` 时仍 throw（兜底回归） |
+
+`SKILL.md` 改动是文档（影响 LLM 行为），不进 unit 测试范围；后续 dogfood 一次 QI 跑通流程作为 E2E smoke 验证。
 
 不需要新增 e2e_router / bootstrap graph 测试（拓扑不变）。
 
 ## 3. 不变量
 
 - pipeline-b 现有严格 kind playbook **零改动**（`admin-first-login.playbook.yaml`、`poc-smoke.playbook.yaml` 等）
+- pipeline-a / playbook-draft 的 LLM 生成器 prompt **零改动**（[src/e2e/pipeline-a/nodes/llm-generator.ts](../../src/e2e/pipeline-a/nodes/llm-generator.ts)、[src/e2e/playbook-draft/llm-generator.ts](../../src/e2e/playbook-draft/llm-generator.ts) 仍要求 LLM 产 7 种 strict kind）。这两条链路生成的是要 commit 进 `docs/test-playbooks/` 反复跑的长期资产，严格 kind 是设计意图。schema 改成 union 后是"扩容"不"放松"，pipeline-a / playbook-draft 通过 prompt 约束继续产 strict kind 即可
 - spec_author skill / `E2eScenarioInlineSchema` **不动**——spec 层维持 NL，PM/产品 review 友好
 - `e2e_router` 拓扑、`qi_e2e_runner` attempt 计数、e2e fix-loop 入口 **不动**
 - v8 老 spec（无 `e2eScenarios`）：dev-loop.md L135 跳过逻辑保留
