@@ -231,6 +231,16 @@ const SCHEMA_FILES = [
   'schema-v58.sql',
   // v59: 给 diagnose_and_repair capability 补 run_remote_command 工具，纯 UPDATE catalog，安全加入。
   'schema-v59.sql',
+  // v60: quick-impl pipeline 新增 requirements / requirement_approval_waiters 两表 +
+  // test_pipelines.is_system 列 + pipeline_node_types CHECK 扩展 + 4 个新 quick_impl 节点类型。
+  // 全新表 + 纯 ALTER + ON CONFLICT 幂等 INSERT，安全加入。
+  'schema-v60.sql',
+  // v61: init_qi_branch and e2e_stub node types for Quick-Impl Phase 1
+  'schema-v61.sql',
+  // v62: qi_e2e_runner / im_input node types for Quick-Impl Phase 2 (real E2E + IM intervention)
+  'schema-v62.sql',
+  // v63: requirement_approval_waiters 加 target_task_id / cited_ai_notes（PRD §7 step 6 字段级反馈）
+  'schema-v63.sql',
   'schema-v1000.sql',
   // v1001: e2e_runs status 加 awaiting_human_review；evidence_manifest 容量 32K→64K。
   'schema-v1001.sql',

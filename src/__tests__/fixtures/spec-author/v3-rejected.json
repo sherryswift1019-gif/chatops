@@ -1,0 +1,33 @@
+{
+  "schemaVersion": "v2",
+  "summary": "v3 输出但 selfCheck 全 mechanical（缺 self-critique），用于触发 v3 superRefine fail 的反例 fixture",
+  "decision": "pass",
+  "notes": [],
+  "confidenceLevel": "high",
+  "reviewHints": [],
+  "noGos": [],
+  "evidence": {
+    "standardsConsulted": [],
+    "selfCheck": [
+      { "item": "AC 全部用 Given-When-Then 格式", "passed": true },
+      { "item": "至少 1 条 references", "passed": true }
+    ]
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "format": "given-when-then",
+      "text": "Given 用户访问，When 加载，Then 显示"
+    }
+  ],
+  "openQuestions": [],
+  "risks": [{ "desc": "无明显风险", "severity": "low" }],
+  "references": [{ "file": "web/src/pages/LoginPage.tsx", "purpose": "主组件" }],
+  "clarifications": [
+    {
+      "kind": "fact",
+      "q": "当前是否已有？",
+      "a": "无"
+    }
+  ]
+}

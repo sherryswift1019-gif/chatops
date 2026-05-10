@@ -33,6 +33,7 @@ const E2eTargetsPage         = lazy(() => import('./pages/E2eTargetsPage'))
 const E2eSpecsPage           = lazy(() => import('./pages/E2eSpecsPage'))
 const E2eRunsPage            = lazy(() => import('./pages/E2eRunsPage'))
 const E2eRunDetailPage       = lazy(() => import('./pages/E2eRunDetailPage'))
+const RequirementsPage       = lazy(() => import('./pages/RequirementsPage'))
 
 const FONT = "'Urbanist', -apple-system, BlinkMacSystemFont, sans-serif"
 
@@ -252,6 +253,10 @@ export default function App() {
             } />
             <Route path="/e2e-runs/:runId" element={
               <Suspense fallback={null}><E2eRunDetailPage /></Suspense>
+            } />
+            {/* Quick-Impl 需求管理 */}
+            <Route path="/requirements" element={
+              <Suspense fallback={null}><RequirementsPage /></Suspense>
             } />
           </Route>
         </Routes>

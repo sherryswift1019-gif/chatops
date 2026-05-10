@@ -35,4 +35,13 @@ export const nodeTypes = {
   file_read: makeSimpleNode('#52c41a', '文件读取', d => (d.params as { path?: string })?.path ?? '未配置 path'),
   template_render: makeSimpleNode('#fa8c16', '模板渲染', d => (d.params as { template?: string })?.template ? '模板 ✓' : '未配置 template'),
   fan_out: makeSimpleNode('#f5222d', '数组扇出', d => (d.params as { items?: string })?.items ?? '未配置 items'),
+  // Quick-Impl 专属节点类型
+  init_qi_branch: makeSimpleNode('#722ed1', '初始化分支'),
+  skill_with_approval: makeSimpleNode('#d4380d', '生成 + 审批'),
+  skill_with_review: makeSimpleNode('#096dd9', '生成 + 评审'),
+  skill_node: makeSimpleNode('#389e0d', 'Skill 调用'),
+  e2e_stub: makeSimpleNode('#7cb305', 'E2E Stub'),
+  qi_e2e_runner: makeSimpleNode('#7cb305', 'E2E 测试'),
+  im_input: makeSimpleNode('#531dab', 'IM 人工介入'),
+  mr_create: makeSimpleNode('#c41d7f', '创建 MR'),
 }

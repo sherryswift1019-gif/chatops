@@ -1,0 +1,337 @@
+{
+  "meta": {
+    "date": "2026-05-08",
+    "role": "spec-author",
+    "case": "login-remember-me",
+    "mode": "v2-full",
+    "worktreePath": "/var/folders/9m/158mh4rd7pz_xsm54qgg582c0000gn/T/qi-eval-login-remember-me-spec-author-2026-05-08T13-43-02-316Z",
+    "branch": "qi-eval/login-remember-me-spec-author-2026-05-08T13-43-02-316Z",
+    "durationMs": 214391,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "runStatus": "ok"
+  },
+  "inputs": {
+    "rawInput": "给登录页加记住密码 checkbox：勾选后下次访问自动回填用户名（不存密码）"
+  },
+  "output": {
+    "summary": "登录页「记住用户名」复选框需求规格：在 LoginPage.tsx 密码框与登录按钮之间新增 Checkbox，勾选后通过 localStorage 持久化用户名（不存密码），下次访问自动回填。纯前端改动，不涉及后端 API 或数据库变更。",
+    "decision": "pass",
+    "notes": [
+      {
+        "severity": "warn",
+        "msg": "项目 docs/standards/ 目录不存在，无可引用的 standards 文件，standardsConsulted 使用 CLAUDE.md 中的前端枚举规范作为替代",
+        "file": "docs/standards/"
+      }
+    ]
+  },
+  "extendedOutput": {
+    "summary": "登录页「记住用户名」复选框需求规格：在 LoginPage.tsx 密码框与登录按钮之间新增 Checkbox，勾选后通过 localStorage 持久化用户名（不存密码），下次访问自动回填。纯前端改动，不涉及后端 API 或数据库变更。",
+    "decision": "pass",
+    "notes": [
+      {
+        "severity": "warn",
+        "msg": "项目 docs/standards/ 目录不存在，无可引用的 standards 文件，standardsConsulted 使用 CLAUDE.md 中的前端枚举规范作为替代",
+        "file": "docs/standards/"
+      }
+    ],
+    "evidence": {
+      "standardsConsulted": [
+        "CLAUDE.md"
+      ],
+      "selfCheck": [
+        {
+          "item": "AC 全部用 Given-When-Then 格式",
+          "passed": true
+        },
+        {
+          "item": "每条 AC 都可测试（无模糊描述）",
+          "passed": true
+        },
+        {
+          "item": "至少 1 条 references 引用 codebase 现有实现（file:line 必须能 grep 找到）",
+          "passed": true
+        },
+        {
+          "item": "非功能需求 5 个维度（性能/安全/可观测/兼容/可访问性）都有结论",
+          "passed": true
+        },
+        {
+          "item": "风险与未知章节非空（2 条风险）",
+          "passed": true
+        },
+        {
+          "item": "evidence.standardsConsulted 至少包含 1 项",
+          "passed": true
+        },
+        {
+          "item": "JSON 字段值中所有双引号都用转义",
+          "passed": true
+        },
+        {
+          "item": "spec.md AC 数量(5) == JSON acceptanceCriteria 数量(5)",
+          "passed": true
+        },
+        {
+          "item": "spec.md references 数量(4) == JSON references 数量(4)",
+          "passed": true
+        },
+        {
+          "item": "spec.md 风险数量(2) == JSON risks 数量(2)",
+          "passed": true
+        }
+      ]
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-1",
+        "format": "given-when-then",
+        "text": "Given 用户首次访问登录页（localStorage 无 chatops_remembered_username），When 页面加载完成，Then 用户名输入框为空且「记住用户名」复选框未勾选"
+      },
+      {
+        "id": "AC-2",
+        "format": "given-when-then",
+        "text": "Given 用户勾选「记住用户名」并成功登录，When 用户下次访问登录页，Then 用户名输入框自动回填之前的用户名，且复选框为勾选状态"
+      },
+      {
+        "id": "AC-3",
+        "format": "given-when-then",
+        "text": "Given 用户已有记住的用户名，When 用户取消勾选「记住用户名」并成功登录，Then localStorage 中的 chatops_remembered_username 被清除"
+      },
+      {
+        "id": "AC-4",
+        "format": "given-when-then",
+        "text": "Given 用户勾选「记住用户名」但登录失败（密码错误），When 登录失败，Then localStorage 状态不变（不存储也不清除）"
+      },
+      {
+        "id": "AC-5",
+        "format": "given-when-then",
+        "text": "Given 用户勾选「记住用户名」并成功登录，When 检查 localStorage，Then 仅存储用户名字符串，不存储密码或任何凭证信息"
+      }
+    ],
+    "openQuestions": [],
+    "risks": [
+      {
+        "desc": "XSS 攻击可读取 localStorage 中的用户名，但用户名非机密信息且项目已使用 React 自动转义",
+        "severity": "low"
+      },
+      {
+        "desc": "多用户共用浏览器时，记住的用户名可能暴露给其他使用者",
+        "severity": "low"
+      }
+    ],
+    "references": [
+      {
+        "file": "web/src/pages/LoginPage.tsx",
+        "line": 44,
+        "purpose": "当前登录表单 Form 组件，需在密码字段和提交按钮之间插入 Checkbox"
+      },
+      {
+        "file": "web/src/pages/LoginPage.tsx",
+        "line": 10,
+        "purpose": "onFinish 回调函数，需在登录成功后根据 Checkbox 状态操作 localStorage"
+      },
+      {
+        "file": "web/src/api/auth.ts",
+        "line": 8,
+        "purpose": "login() 函数签名，确认无需改动（仍接受 username, password）"
+      },
+      {
+        "file": "src/admin/auth/session-plugin.ts",
+        "line": 7,
+        "purpose": "后端 session cookie 配置，确认「记住用户名」独立于 session 机制"
+      }
+    ],
+    "clarifications": [
+      {
+        "q": "当前登录认证方式是什么？",
+        "a": "后端使用 @fastify/secure-session，通过 httpOnly cookie 保持会话，有效期 7 天"
+      },
+      {
+        "q": "前端目前是否使用了 localStorage / sessionStorage？",
+        "a": "否，本次将首次引入 localStorage"
+      },
+      {
+        "q": "「记住密码」存的是什么？",
+        "a": "仅存用户名（rawInput 明确写「不存密码」）"
+      },
+      {
+        "q": "复选框默认状态是勾选还是不勾选？",
+        "a": "默认不勾选；若 localStorage 中已有存储的用户名则默认勾选"
+      },
+      {
+        "q": "取消勾选后再登录，是否需要清除已存储的用户名？",
+        "a": "是，取消勾选并成功登录后清除 localStorage"
+      },
+      {
+        "q": "是否需要后端改动？",
+        "a": "不需要，纯前端 localStorage 行为"
+      },
+      {
+        "q": "多用户共用同一浏览器场景怎么处理？",
+        "a": "只存最近一次勾选「记住密码」的用户名，与浏览器原生行为一致"
+      }
+    ]
+  },
+  "rawOutput": "Spec written. Now let me verify the consistency constraints (AC count, references count, risks count match between doc and JSON).\n\nDoc section 4 has 5 ACs (AC-1 through AC-5). Section 6 has 4 references. Section 7 has 2 risks. Let me ensure the JSON output matches.\n\n```json\n{\n  \"summary\": \"登录页「记住用户名」复选框需求规格：在 LoginPage.tsx 密码框与登录按钮之间新增 Checkbox，勾选后通过 localStorage 持久化用户名（不存密码），下次访问自动回填。纯前端改动，不涉及后端 API 或数据库变更。\",\n  \"decision\": \"pass\",\n  \"notes\": [\n    {\n      \"severity\": \"warn\",\n      \"msg\": \"项目 docs/standards/ 目录不存在，无可引用的 standards 文件，standardsConsulted 使用 CLAUDE.md 中的前端枚举规范作为替代\",\n      \"file\": \"docs/standards/\"\n    }\n  ],\n  \"evidence\": {\n    \"standardsConsulted\": [\"CLAUDE.md\"],\n    \"selfCheck\": [\n      { \"item\": \"AC 全部用 Given-When-Then 格式\", \"passed\": true },\n      { \"item\": \"每条 AC 都可测试（无模糊描述）\", \"passed\": true },\n      { \"item\": \"至少 1 条 references 引用 codebase 现有实现（file:line 必须能 grep 找到）\", \"passed\": true },\n      { \"item\": \"非功能需求 5 个维度（性能/安全/可观测/兼容/可访问性）都有结论\", \"passed\": true },\n      { \"item\": \"风险与未知章节非空（2 条风险）\", \"passed\": true },\n      { \"item\": \"evidence.standardsConsulted 至少包含 1 项\", \"passed\": true },\n      { \"item\": \"JSON 字段值中所有双引号都用转义\", \"passed\": true },\n      { \"item\": \"spec.md AC 数量(5) == JSON acceptanceCriteria 数量(5)\", \"passed\": true },\n      { \"item\": \"spec.md references 数量(4) == JSON references 数量(4)\", \"passed\": true },\n      { \"item\": \"spec.md 风险数量(2) == JSON risks 数量(2)\", \"passed\": true }\n    ]\n  },\n  \"acceptanceCriteria\": [\n    { \"id\": \"AC-1\", \"format\": \"given-when-then\", \"text\": \"Given 用户首次访问登录页（localStorage 无 chatops_remembered_username），When 页面加载完成，Then 用户名输入框为空且「记住用户名」复选框未勾选\" },\n    { \"id\": \"AC-2\", \"format\": \"given-when-then\", \"text\": \"Given 用户勾选「记住用户名」并成功登录，When 用户下次访问登录页，Then 用户名输入框自动回填之前的用户名，且复选框为勾选状态\" },\n    { \"id\": \"AC-3\", \"format\": \"given-when-then\", \"text\": \"Given 用户已有记住的用户名，When 用户取消勾选「记住用户名」并成功登录，Then localStorage 中的 chatops_remembered_username 被清除\" },\n    { \"id\": \"AC-4\", \"format\": \"given-when-then\", \"text\": \"Given 用户勾选「记住用户名」但登录失败（密码错误），When 登录失败，Then localStorage 状态不变（不存储也不清除）\" },\n    { \"id\": \"AC-5\", \"format\": \"given-when-then\", \"text\": \"Given 用户勾选「记住用户名」并成功登录，When 检查 localStorage，Then 仅存储用户名字符串，不存储密码或任何凭证信息\" }\n  ],\n  \"openQuestions\": [],\n  \"risks\": [\n    { \"desc\": \"XSS 攻击可读取 localStorage 中的用户名，但用户名非机密信息且项目已使用 React 自动转义\", \"severity\": \"low\" },\n    { \"desc\": \"多用户共用浏览器时，记住的用户名可能暴露给其他使用者\", \"severity\": \"low\" }\n  ],\n  \"references\": [\n    { \"file\": \"web/src/pages/LoginPage.tsx\", \"line\": 44, \"purpose\": \"当前登录表单 Form 组件，需在密码字段和提交按钮之间插入 Checkbox\" },\n    { \"file\": \"web/src/pages/LoginPage.tsx\", \"line\": 10, \"purpose\": \"onFinish 回调函数，需在登录成功后根据 Checkbox 状态操作 localStorage\" },\n    { \"file\": \"web/src/api/auth.ts\", \"line\": 8, \"purpose\": \"login() 函数签名，确认无需改动（仍接受 username, password）\" },\n    { \"file\": \"src/admin/auth/session-plugin.ts\", \"line\": 7, \"purpose\": \"后端 session cookie 配置，确认「记住用户名」独立于 session 机制\" }\n  ],\n  \"clarifications\": [\n    { \"q\": \"当前登录认证方式是什么？\", \"a\": \"后端使用 @fastify/secure-session，通过 httpOnly cookie 保持会话，有效期 7 天\" },\n    { \"q\": \"前端目前是否使用了 localStorage / sessionStorage？\", \"a\": \"否，本次将首次引入 localStorage\" },\n    { \"q\": \"「记住密码」存的是什么？\", \"a\": \"仅存用户名（rawInput 明确写「不存密码」）\" },\n    { \"q\": \"复选框默认状态是勾选还是不勾选？\", \"a\": \"默认不勾选；若 localStorage 中已有存储的用户名则默认勾选\" },\n    { \"q\": \"取消勾选后再登录，是否需要清除已存储的用户名？\", \"a\": \"是，取消勾选并成功登录后清除 localStorage\" },\n    { \"q\": \"是否需要后端改动？\", \"a\": \"不需要，纯前端 localStorage 行为\" },\n    { \"q\": \"多用户共用同一浏览器场景怎么处理？\", \"a\": \"只存最近一次勾选「记住密码」的用户名，与浏览器原生行为一致\" }\n  ]\n}\n```",
+  "runError": null,
+  "artifactPath": "/var/folders/9m/158mh4rd7pz_xsm54qgg582c0000gn/T/qi-eval-login-remember-me-spec-author-2026-05-08T13-43-02-316Z/docs/qi-eval-spec-author.md",
+  "artifactContent": "# 需求规格：登录页「记住密码」复选框\n\n## 1. 背景与目标\n\n当前 ChatOps 管理后台登录页（LoginPage.tsx）每次访问都需要手动输入用户名和密码。对于频繁使用管理后台的运维人员来说，重复输入用户名降低了效率。\n\n**目标：**\n1. 在登录表单中新增「记住密码」复选框（Checkbox）\n2. 勾选后，将用户名持久化到浏览器 localStorage；下次访问登录页时自动回填用户名字段\n3. 仅存储用户名，**不存储密码**，避免安全风险\n\n## 2. 澄清记录\n\n| # | 问题 | 自答 |\n|---|------|------|\n| Q1 | 当前登录认证方式是什么？ | 后端使用 `@fastify/secure-session`，通过 httpOnly cookie（`chatops_admin_session`）保持会话，有效期 7 天。见 `src/admin/auth/session-plugin.ts:7-8`。 |\n| Q2 | 前端目前是否使用了 localStorage / sessionStorage？ | 否，grep 确认前端无任何 localStorage/sessionStorage 使用，本次将首次引入 localStorage。 |\n| Q3 | 「记住密码」存的是什么？ | 仅存用户名（rawInput 明确写\"不存密码\"）。localStorage key 存用户名字符串即可。 |\n| Q4 | 复选框默认状态是勾选还是不勾选？ | 默认不勾选（首次访问），如果 localStorage 中已有存储的用户名则默认勾选。 |\n| Q5 | 取消勾选后再登录，是否需要清除已存储的用户名？ | 是，取消勾选并成功登录后应清除 localStorage 中的用户名。 |\n| Q6 | 是否需要后端改动？ | 不需要。记住用户名是纯前端行为，通过 localStorage 实现，不影响后端 session 或 cookie 机制。 |\n| Q7 | 多用户共用同一浏览器场景怎么处理？ | localStorage 只存最近一次勾选「记住密码」的用户名，新用户登录时若取消勾选则清除。这与浏览器原生\"记住密码\"行为一致。 |\n\n## 3. 功能描述\n\n### 3.1 UI 变更\n- 在密码输入框（`Form.Item name=\"password\"`）与登录按钮之间新增一行，包含 Ant Design `Checkbox` 组件，文案为「记住用户名」\n- Checkbox 与登录页整体深色主题保持一致（文字颜色 `#E6EAF3`）\n- 布局：Checkbox 左对齐，位于密码框下方 `marginBottom: 24` 区域内\n\n### 3.2 逻辑行为\n1. **页面加载时**：读取 `localStorage.getItem('chatops_remembered_username')`\n   - 若有值：自动回填到用户名字段，且 Checkbox 默认勾选\n   - 若无值：用户名字段为空，Checkbox 默认不勾选\n2. **用户提交登录表单时**：\n   - 若 Checkbox 勾选：`localStorage.setItem('chatops_remembered_username', username)`\n   - 若 Checkbox 未勾选：`localStorage.removeItem('chatops_remembered_username')`\n3. **存储时机**：在调用 `login()` API **成功之后**、页面跳转之前执行存储/清除操作（登录失败不改变 localStorage 状态）\n\n### 3.3 localStorage Key\n- Key 名：`chatops_remembered_username`\n- Value：用户名字符串（明文，因为用户名本身非敏感信息）\n\n## 4. 验收标准\n\n- AC-1: Given 用户首次访问登录页（localStorage 无 `chatops_remembered_username`），When 页面加载完成，Then 用户名输入框为空且「记住用户名」复选框未勾选\n- AC-2: Given 用户勾选「记住用户名」并成功登录，When 用户下次访问登录页，Then 用户名输入框自动回填之前的用户名，且复选框为勾选状态\n- AC-3: Given 用户已有记住的用户名，When 用户取消勾选「记住用户名」并成功登录，Then localStorage 中的 `chatops_remembered_username` 被清除\n- AC-4: Given 用户勾选「记住用户名」但登录失败（密码错误），When 登录失败，Then localStorage 状态不变（不存储也不清除）\n- AC-5: Given 用户勾选「记住用户名」并成功登录，When 检查 localStorage，Then 仅存储用户名字符串，不存储密码或任何凭证信息\n\n## 5. 非功能需求\n\n- **性能**：N/A — localStorage 读写为同步操作，单个 key 读写耗时可忽略（< 1ms），不影响页面加载性能\n- **安全**：localStorage 仅存储用户名（非敏感信息），不存储密码、token 或任何凭证。XSS 攻击可读取 localStorage 中的用户名，但该信息本身不构成安全威胁（用户名非机密）。现有 httpOnly cookie 机制不受影响\n- **可观测性**：N/A — 纯前端 UI 交互，无需后端日志或监控指标\n- **兼容性**：所有现代浏览器均支持 localStorage API。对不支持 localStorage 的环境（如隐私模式下某些旧浏览器），功能静默降级为不回填，不影响登录流程\n- **可访问性**：Checkbox 使用 Ant Design 原生组件，自带 aria 属性和键盘操作支持；文案「记住用户名」清晰描述功能含义\n\n## 6. 技术说明\n\n- `web/src/pages/LoginPage.tsx:44-78` — 当前登录表单，需在密码字段和提交按钮之间插入 Checkbox\n- `web/src/pages/LoginPage.tsx:10` — `onFinish` 回调，需在登录成功后根据 Checkbox 状态操作 localStorage\n- `web/src/api/auth.ts:8-11` — `login()` 函数签名，无需改动，仍接受 `(username, password)`\n- `src/admin/auth/session-plugin.ts:7-8` — 后端 session cookie 配置（`COOKIE_NAME` 和 `SESSION_MAX_AGE`），本次不改动，仅供参考确认「记住用户名」是独立于 session 的前端行为\n\n## 7. 风险与未知\n\n- 风险 1: XSS 攻击可读取 localStorage 中的用户名（severity: low）— 用户名非机密信息，且项目已使用 React 自动转义，XSS 风险本身较低\n- 风险 2: 多用户共用浏览器时，记住的用户名可能暴露给其他使用者（severity: low）— 与浏览器原生「记住密码」功能行为一致，可接受\n\n## 8. 回滚预案\n\n本次改动仅涉及前端组件 `LoginPage.tsx`，不涉及数据库 schema 变更或后端 API 改动。回滚方式：\n\n1. `git revert <commit-hash>` 撤销前端改动\n2. 重新构建并部署前端（`cd web && pnpm build`）\n3. 用户浏览器中残留的 `chatops_remembered_username` localStorage key 无副作用，会在下次登录时被忽略\n\n## 9. 超出范围\n\n- **密码存储**：明确不存储密码，需求原文已声明「不存密码」\n- **自动登录**：不实现自动提交登录表单的功能，仅回填用户名\n- **后端 session 延长**：不修改后端 session 有效期（当前 7 天），「记住用户名」是独立于 session 的前端功能\n- **加密存储**：用户名为非敏感信息，不需要加密后存入 localStorage\n- **多账号切换 UI**：不实现用户名下拉历史列表，仅记住最近一个用户名\n",
+  "consistency": {
+    "ok": true,
+    "details": [
+      "✓ spec.md AC count (5) === JSON.acceptanceCriteria.length (5)"
+    ]
+  },
+  "schemaValidation": {
+    "ok": true,
+    "data": {
+      "summary": "登录页「记住用户名」复选框需求规格：在 LoginPage.tsx 密码框与登录按钮之间新增 Checkbox，勾选后通过 localStorage 持久化用户名（不存密码），下次访问自动回填。纯前端改动，不涉及后端 API 或数据库变更。",
+      "decision": "pass",
+      "notes": [
+        {
+          "severity": "warn",
+          "msg": "项目 docs/standards/ 目录不存在，无可引用的 standards 文件，standardsConsulted 使用 CLAUDE.md 中的前端枚举规范作为替代",
+          "file": "docs/standards/"
+        }
+      ],
+      "evidence": {
+        "standardsConsulted": [
+          "CLAUDE.md"
+        ],
+        "selfCheck": [
+          {
+            "item": "AC 全部用 Given-When-Then 格式",
+            "passed": true
+          },
+          {
+            "item": "每条 AC 都可测试（无模糊描述）",
+            "passed": true
+          },
+          {
+            "item": "至少 1 条 references 引用 codebase 现有实现（file:line 必须能 grep 找到）",
+            "passed": true
+          },
+          {
+            "item": "非功能需求 5 个维度（性能/安全/可观测/兼容/可访问性）都有结论",
+            "passed": true
+          },
+          {
+            "item": "风险与未知章节非空（2 条风险）",
+            "passed": true
+          },
+          {
+            "item": "evidence.standardsConsulted 至少包含 1 项",
+            "passed": true
+          },
+          {
+            "item": "JSON 字段值中所有双引号都用转义",
+            "passed": true
+          },
+          {
+            "item": "spec.md AC 数量(5) == JSON acceptanceCriteria 数量(5)",
+            "passed": true
+          },
+          {
+            "item": "spec.md references 数量(4) == JSON references 数量(4)",
+            "passed": true
+          },
+          {
+            "item": "spec.md 风险数量(2) == JSON risks 数量(2)",
+            "passed": true
+          }
+        ]
+      },
+      "acceptanceCriteria": [
+        {
+          "id": "AC-1",
+          "format": "given-when-then",
+          "text": "Given 用户首次访问登录页（localStorage 无 chatops_remembered_username），When 页面加载完成，Then 用户名输入框为空且「记住用户名」复选框未勾选"
+        },
+        {
+          "id": "AC-2",
+          "format": "given-when-then",
+          "text": "Given 用户勾选「记住用户名」并成功登录，When 用户下次访问登录页，Then 用户名输入框自动回填之前的用户名，且复选框为勾选状态"
+        },
+        {
+          "id": "AC-3",
+          "format": "given-when-then",
+          "text": "Given 用户已有记住的用户名，When 用户取消勾选「记住用户名」并成功登录，Then localStorage 中的 chatops_remembered_username 被清除"
+        },
+        {
+          "id": "AC-4",
+          "format": "given-when-then",
+          "text": "Given 用户勾选「记住用户名」但登录失败（密码错误），When 登录失败，Then localStorage 状态不变（不存储也不清除）"
+        },
+        {
+          "id": "AC-5",
+          "format": "given-when-then",
+          "text": "Given 用户勾选「记住用户名」并成功登录，When 检查 localStorage，Then 仅存储用户名字符串，不存储密码或任何凭证信息"
+        }
+      ],
+      "openQuestions": [],
+      "risks": [
+        {
+          "desc": "XSS 攻击可读取 localStorage 中的用户名，但用户名非机密信息且项目已使用 React 自动转义",
+          "severity": "low"
+        },
+        {
+          "desc": "多用户共用浏览器时，记住的用户名可能暴露给其他使用者",
+          "severity": "low"
+        }
+      ],
+      "references": [
+        {
+          "file": "web/src/pages/LoginPage.tsx",
+          "line": 44,
+          "purpose": "当前登录表单 Form 组件，需在密码字段和提交按钮之间插入 Checkbox"
+        },
+        {
+          "file": "web/src/pages/LoginPage.tsx",
+          "line": 10,
+          "purpose": "onFinish 回调函数，需在登录成功后根据 Checkbox 状态操作 localStorage"
+        },
+        {
+          "file": "web/src/api/auth.ts",
+          "line": 8,
+          "purpose": "login() 函数签名，确认无需改动（仍接受 username, password）"
+        },
+        {
+          "file": "src/admin/auth/session-plugin.ts",
+          "line": 7,
+          "purpose": "后端 session cookie 配置，确认「记住用户名」独立于 session 机制"
+        }
+      ],
+      "clarifications": [
+        {
+          "q": "当前登录认证方式是什么？",
+          "a": "后端使用 @fastify/secure-session，通过 httpOnly cookie 保持会话，有效期 7 天"
+        },
+        {
+          "q": "前端目前是否使用了 localStorage / sessionStorage？",
+          "a": "否，本次将首次引入 localStorage"
+        },
+        {
+          "q": "「记住密码」存的是什么？",
+          "a": "仅存用户名（rawInput 明确写「不存密码」）"
+        },
+        {
+          "q": "复选框默认状态是勾选还是不勾选？",
+          "a": "默认不勾选；若 localStorage 中已有存储的用户名则默认勾选"
+        },
+        {
+          "q": "取消勾选后再登录，是否需要清除已存储的用户名？",
+          "a": "是，取消勾选并成功登录后清除 localStorage"
+        },
+        {
+          "q": "是否需要后端改动？",
+          "a": "不需要，纯前端 localStorage 行为"
+        },
+        {
+          "q": "多用户共用同一浏览器场景怎么处理？",
+          "a": "只存最近一次勾选「记住密码」的用户名，与浏览器原生行为一致"
+        }
+      ]
+    }
+  }
+}

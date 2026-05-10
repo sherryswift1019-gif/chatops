@@ -1,0 +1,535 @@
+{
+  "meta": {
+    "date": "2026-05-09",
+    "role": "spec-author",
+    "case": "login-remember-me",
+    "mode": "v2-compact",
+    "worktreePath": "/var/folders/9m/158mh4rd7pz_xsm54qgg582c0000gn/T/qi-eval-login-remember-me-spec-author-2026-05-09T08-41-19-522Z",
+    "branch": "qi-eval/login-remember-me-spec-author-2026-05-09T08-41-19-522Z",
+    "durationMs": 304333,
+    "inputTokens": 0,
+    "outputTokens": 0,
+    "runStatus": "ok"
+  },
+  "inputs": {
+    "rawInput": "给登录页加记住密码 checkbox：勾选后下次访问自动回填用户名（不存密码）"
+  },
+  "output": {
+    "summary": "完成登录页「记住用户名」需求规格撰写：5 条 AC（Given-When-Then）、5 个 E2E scenario（含 1 个 negative）、纯前端 localStorage 方案，无需后端改动",
+    "decision": "pass",
+    "notes": []
+  },
+  "extendedOutput": {
+    "schemaVersion": "v2",
+    "summary": "完成登录页「记住用户名」需求规格撰写：5 条 AC（Given-When-Then）、5 个 E2E scenario（含 1 个 negative）、纯前端 localStorage 方案，无需后端改动",
+    "decision": "pass",
+    "notes": [],
+    "confidenceLevel": "high",
+    "reviewHints": [
+      {
+        "severity": "low",
+        "point": "AC-5「深色主题协调」是视觉主观判断",
+        "reason": "E2E 只能验证 Checkbox 位置和可见性，颜色是否与深色主题协调需肉眼确认"
+      }
+    ],
+    "noGos": [
+      {
+        "desc": "不存储密码（任何形式：明文、加密、hash）",
+        "reason": "需求明确只保存用户名"
+      },
+      {
+        "desc": "不实现自动登录",
+        "reason": "用户仍需手动输入密码"
+      },
+      {
+        "desc": "不修改后端接口或数据库 schema",
+        "reason": "纯前端 localStorage 方案"
+      },
+      {
+        "desc": "不实现多用户名记忆/下拉选择",
+        "reason": "需求仅要求保存最近一次用户名"
+      }
+    ],
+    "evidence": {
+      "standardsConsulted": [
+        {
+          "file": "docs/standards/frontend-enum-select.md",
+          "usedFor": "确认 Checkbox 不属于枚举字段引用场景，无需改用 Select 下拉；localStorage key 是自由文本，不需要枚举下拉"
+        }
+      ],
+      "selfCheck": [
+        {
+          "item": "为什么把清除逻辑设计为「取消勾选 + 登录提交时清除」而非「取消勾选立即清除」？",
+          "answer": "登录提交时统一处理保留用户改主意的机会——用户可能误触取消后重新勾选，立即清除会导致不必要的 localStorage 写操作"
+        },
+        {
+          "item": "本 spec 最弱点是什么？",
+          "answer": "AC-5 的「深色主题协调」是主观视觉判断，E2E 无法客观断言颜色搭配是否合理，只能验证元素可见性和位置关系"
+        }
+      ]
+    },
+    "acceptanceCriteria": [
+      {
+        "id": "AC-1",
+        "format": "given-when-then",
+        "text": "Given 用户首次访问登录页（localStorage 无 chatops_remembered_username），When 页面加载完成，Then 用户名输入框为空、「记住用户名」复选框未勾选、焦点在用户名输入框"
+      },
+      {
+        "id": "AC-2",
+        "format": "given-when-then",
+        "text": "Given 用户在登录页勾选了「记住用户名」复选框并输入正确的用户名密码，When 点击登录按钮且登录成功，Then localStorage 中 chatops_remembered_username 的值等于输入的用户名"
+      },
+      {
+        "id": "AC-3",
+        "format": "given-when-then",
+        "text": "Given localStorage 中已存在 chatops_remembered_username 值为 admin，When 用户再次访问登录页，Then 用户名输入框自动回填 admin、复选框为勾选状态、焦点在密码输入框"
+      },
+      {
+        "id": "AC-4",
+        "format": "given-when-then",
+        "text": "Given 用户在登录页取消勾选「记住用户名」复选框，When 点击登录按钮且登录成功，Then localStorage 中 chatops_remembered_username 被移除"
+      },
+      {
+        "id": "AC-5",
+        "format": "given-when-then",
+        "text": "Given 登录页加载完成，When 查看「记住用户名」复选框的渲染效果，Then 复选框位于密码输入框下方、登录按钮上方，文字颜色与深色主题协调（文字可见且可读）"
+      }
+    ],
+    "e2eScenarios": [
+      {
+        "id": "first-login-remember-username",
+        "name": "首次登录勾选记住用户名",
+        "kind": "happy",
+        "coversAC": [
+          "AC-1",
+          "AC-2"
+        ],
+        "tags": [],
+        "steps": [
+          "清除浏览器 localStorage 中 chatops_remembered_username 键值",
+          "打开 /login 页面，等待登录表单渲染完成",
+          "断言用户名输入框的值为空字符串",
+          "断言「记住用户名」复选框 [data-testid=remember-username] 未勾选",
+          "在用户名输入框输入 'admin'，在密码输入框输入正确密码",
+          "勾选「记住用户名」复选框",
+          "点击登录按钮"
+        ],
+        "acceptance": [
+          "页面 URL 跳转到 / 或 /dashboard（非 /login）",
+          "通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值等于 'admin'"
+        ]
+      },
+      {
+        "id": "revisit-autofill-username",
+        "name": "回访自动回填用户名",
+        "kind": "happy",
+        "coversAC": [
+          "AC-3"
+        ],
+        "tags": [],
+        "steps": [
+          "通过 page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin')) 预置用户名",
+          "打开 /login 页面，等待登录表单渲染完成"
+        ],
+        "acceptance": [
+          "用户名输入框的值等于 'admin'",
+          "「记住用户名」复选框 [data-testid=remember-username] 处于勾选状态",
+          "密码输入框处于聚焦状态（document.activeElement 为密码输入框元素）"
+        ]
+      },
+      {
+        "id": "uncheck-clears-saved-username",
+        "name": "取消勾选后清除已保存用户名",
+        "kind": "happy",
+        "coversAC": [
+          "AC-4"
+        ],
+        "tags": [],
+        "steps": [
+          "通过 page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin')) 预置用户名",
+          "打开 /login 页面，等待登录表单渲染完成",
+          "断言复选框已勾选、用户名已回填 'admin'",
+          "取消勾选「记住用户名」复选框",
+          "在密码输入框输入正确密码",
+          "点击登录按钮"
+        ],
+        "acceptance": [
+          "页面 URL 跳转到 / 或 /dashboard（非 /login）",
+          "通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值为 null"
+        ]
+      },
+      {
+        "id": "no-check-no-save",
+        "name": "未勾选记住用户名时不保存",
+        "kind": "negative",
+        "coversAC": [
+          "AC-1",
+          "AC-2"
+        ],
+        "tags": [],
+        "steps": [
+          "清除浏览器 localStorage 中 chatops_remembered_username 键值",
+          "打开 /login 页面，等待登录表单渲染完成",
+          "在用户名输入框输入 'admin'，在密码输入框输入正确密码",
+          "确认「记住用户名」复选框未勾选（不勾选）",
+          "点击登录按钮"
+        ],
+        "acceptance": [
+          "页面 URL 跳转到 / 或 /dashboard（非 /login）",
+          "通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值为 null"
+        ]
+      },
+      {
+        "id": "checkbox-ui-position-visibility",
+        "name": "复选框 UI 位置与可见性",
+        "kind": "happy",
+        "coversAC": [
+          "AC-5"
+        ],
+        "tags": [],
+        "steps": [
+          "清除浏览器 localStorage 中 chatops_remembered_username 键值",
+          "打开 /login 页面，等待登录表单渲染完成",
+          "定位「记住用户名」复选框元素 [data-testid=remember-username]"
+        ],
+        "acceptance": [
+          "复选框元素可见（isVisible() 返回 true）",
+          "复选框文本包含「记住用户名」",
+          "复选框元素的 Y 坐标大于密码输入框的 Y 坐标（位于密码框下方）",
+          "复选框元素的 Y 坐标小于登录按钮的 Y 坐标（位于登录按钮上方）"
+        ]
+      }
+    ],
+    "openQuestions": [],
+    "risks": [
+      {
+        "desc": "localStorage 中的用户名可被同源 XSS 攻击读取，但用户名非高敏感信息且 session 在 httpOnly cookie 中已受保护",
+        "severity": "low"
+      },
+      {
+        "desc": "共享电脑场景下已保存的用户名可能被其他使用者看到，这是记住用户名功能的固有特性",
+        "severity": "low"
+      }
+    ],
+    "references": [
+      {
+        "file": "web/src/pages/LoginPage.tsx",
+        "line": 6,
+        "purpose": "现有登录页组件，需新增 Checkbox + localStorage 逻辑"
+      },
+      {
+        "file": "web/src/pages/LoginPage.tsx",
+        "line": 44,
+        "purpose": "Form 起始位置，Checkbox 插入到 password 和 submit 之间"
+      },
+      {
+        "file": "web/src/pages/LoginPage.tsx",
+        "line": 10,
+        "purpose": "onFinish 回调，需增加 localStorage 写入/清除逻辑"
+      },
+      {
+        "file": "web/src/app.css",
+        "line": 249,
+        "purpose": ".login-card 样式块，可能需补充 Checkbox 深色主题样式"
+      }
+    ],
+    "clarifications": [
+      {
+        "kind": "fact",
+        "q": "当前登录页是否已有「记住」功能？",
+        "a": "无。LoginPage.tsx 仅含 username/password 两个 Form.Item，无 Checkbox 引用，无 localStorage 调用"
+      },
+      {
+        "kind": "fact",
+        "q": "用户名保存到哪里？",
+        "a": "localStorage。当前登录流无 localStorage 使用先例，但 localStorage 是纯前端持久化最简方案，不涉及后端改动"
+      },
+      {
+        "kind": "assumption",
+        "q": "保存的用户名是否需要过期机制？",
+        "a": "默认不过期，localStorage 持久存储。用户可通过取消勾选主动清除",
+        "userMayDisagreeIf": "安全合规要求 N 天后自动清除已保存的用户名"
+      },
+      {
+        "kind": "assumption",
+        "q": "复选框默认状态如何？",
+        "a": "首次访问不勾选；localStorage 已有值时默认勾选并回填",
+        "userMayDisagreeIf": "认为首次访问就应默认勾选以引导用户使用该功能"
+      },
+      {
+        "kind": "assumption",
+        "q": "取消勾选后何时清除 localStorage？",
+        "a": "登录提交时清除，而非取消勾选立即清除，保留用户改主意的机会",
+        "userMayDisagreeIf": "认为取消勾选应立即清除以提供即时反馈"
+      },
+      {
+        "kind": "fact",
+        "q": "是否需要修改后端？",
+        "a": "不需要。纯前端 localStorage + Checkbox 方案，后端 POST /admin/auth/login 接口无需任何改动"
+      }
+    ]
+  },
+  "rawOutput": "```json\n{\n  \"schemaVersion\": \"v2\",\n  \"summary\": \"完成登录页「记住用户名」需求规格撰写：5 条 AC（Given-When-Then）、5 个 E2E scenario（含 1 个 negative）、纯前端 localStorage 方案，无需后端改动\",\n  \"decision\": \"pass\",\n  \"notes\": [],\n  \"confidenceLevel\": \"high\",\n  \"reviewHints\": [\n    {\n      \"severity\": \"low\",\n      \"point\": \"AC-5「深色主题协调」是视觉主观判断\",\n      \"reason\": \"E2E 只能验证 Checkbox 位置和可见性，颜色是否与深色主题协调需肉眼确认\"\n    }\n  ],\n  \"noGos\": [\n    { \"desc\": \"不存储密码（任何形式：明文、加密、hash）\", \"reason\": \"需求明确只保存用户名\" },\n    { \"desc\": \"不实现自动登录\", \"reason\": \"用户仍需手动输入密码\" },\n    { \"desc\": \"不修改后端接口或数据库 schema\", \"reason\": \"纯前端 localStorage 方案\" },\n    { \"desc\": \"不实现多用户名记忆/下拉选择\", \"reason\": \"需求仅要求保存最近一次用户名\" }\n  ],\n  \"evidence\": {\n    \"standardsConsulted\": [\n      {\n        \"file\": \"docs/standards/frontend-enum-select.md\",\n        \"usedFor\": \"确认 Checkbox 不属于枚举字段引用场景，无需改用 Select 下拉；localStorage key 是自由文本，不需要枚举下拉\"\n      }\n    ],\n    \"selfCheck\": [\n      {\n        \"item\": \"为什么把清除逻辑设计为「取消勾选 + 登录提交时清除」而非「取消勾选立即清除」？\",\n        \"answer\": \"登录提交时统一处理保留用户改主意的机会——用户可能误触取消后重新勾选，立即清除会导致不必要的 localStorage 写操作\"\n      },\n      {\n        \"item\": \"本 spec 最弱点是什么？\",\n        \"answer\": \"AC-5 的「深色主题协调」是主观视觉判断，E2E 无法客观断言颜色搭配是否合理，只能验证元素可见性和位置关系\"\n      }\n    ]\n  },\n  \"acceptanceCriteria\": [\n    { \"id\": \"AC-1\", \"format\": \"given-when-then\", \"text\": \"Given 用户首次访问登录页（localStorage 无 chatops_remembered_username），When 页面加载完成，Then 用户名输入框为空、「记住用户名」复选框未勾选、焦点在用户名输入框\" },\n    { \"id\": \"AC-2\", \"format\": \"given-when-then\", \"text\": \"Given 用户在登录页勾选了「记住用户名」复选框并输入正确的用户名密码，When 点击登录按钮且登录成功，Then localStorage 中 chatops_remembered_username 的值等于输入的用户名\" },\n    { \"id\": \"AC-3\", \"format\": \"given-when-then\", \"text\": \"Given localStorage 中已存在 chatops_remembered_username 值为 admin，When 用户再次访问登录页，Then 用户名输入框自动回填 admin、复选框为勾选状态、焦点在密码输入框\" },\n    { \"id\": \"AC-4\", \"format\": \"given-when-then\", \"text\": \"Given 用户在登录页取消勾选「记住用户名」复选框，When 点击登录按钮且登录成功，Then localStorage 中 chatops_remembered_username 被移除\" },\n    { \"id\": \"AC-5\", \"format\": \"given-when-then\", \"text\": \"Given 登录页加载完成，When 查看「记住用户名」复选框的渲染效果，Then 复选框位于密码输入框下方、登录按钮上方，文字颜色与深色主题协调（文字可见且可读）\" }\n  ],\n  \"e2eScenarios\": [\n    {\n      \"id\": \"first-login-remember-username\",\n      \"name\": \"首次登录勾选记住用户名\",\n      \"kind\": \"happy\",\n      \"coversAC\": [\"AC-1\", \"AC-2\"],\n      \"tags\": [],\n      \"steps\": [\n        \"清除浏览器 localStorage 中 chatops_remembered_username 键值\",\n        \"打开 /login 页面，等待登录表单渲染完成\",\n        \"断言用户名输入框的值为空字符串\",\n        \"断言「记住用户名」复选框 [data-testid=remember-username] 未勾选\",\n        \"在用户名输入框输入 'admin'，在密码输入框输入正确密码\",\n        \"勾选「记住用户名」复选框\",\n        \"点击登录按钮\"\n      ],\n      \"acceptance\": [\n        \"页面 URL 跳转到 / 或 /dashboard（非 /login）\",\n        \"通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值等于 'admin'\"\n      ]\n    },\n    {\n      \"id\": \"revisit-autofill-username\",\n      \"name\": \"回访自动回填用户名\",\n      \"kind\": \"happy\",\n      \"coversAC\": [\"AC-3\"],\n      \"tags\": [],\n      \"steps\": [\n        \"通过 page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin')) 预置用户名\",\n        \"打开 /login 页面，等待登录表单渲染完成\"\n      ],\n      \"acceptance\": [\n        \"用户名输入框的值等于 'admin'\",\n        \"「记住用户名」复选框 [data-testid=remember-username] 处于勾选状态\",\n        \"密码输入框处于聚焦状态（document.activeElement 为密码输入框元素）\"\n      ]\n    },\n    {\n      \"id\": \"uncheck-clears-saved-username\",\n      \"name\": \"取消勾选后清除已保存用户名\",\n      \"kind\": \"happy\",\n      \"coversAC\": [\"AC-4\"],\n      \"tags\": [],\n      \"steps\": [\n        \"通过 page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin')) 预置用户名\",\n        \"打开 /login 页面，等待登录表单渲染完成\",\n        \"断言复选框已勾选、用户名已回填 'admin'\",\n        \"取消勾选「记住用户名」复选框\",\n        \"在密码输入框输入正确密码\",\n        \"点击登录按钮\"\n      ],\n      \"acceptance\": [\n        \"页面 URL 跳转到 / 或 /dashboard（非 /login）\",\n        \"通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值为 null\"\n      ]\n    },\n    {\n      \"id\": \"no-check-no-save\",\n      \"name\": \"未勾选记住用户名时不保存\",\n      \"kind\": \"negative\",\n      \"coversAC\": [\"AC-1\", \"AC-2\"],\n      \"tags\": [],\n      \"steps\": [\n        \"清除浏览器 localStorage 中 chatops_remembered_username 键值\",\n        \"打开 /login 页面，等待登录表单渲染完成\",\n        \"在用户名输入框输入 'admin'，在密码输入框输入正确密码\",\n        \"确认「记住用户名」复选框未勾选（不勾选）\",\n        \"点击登录按钮\"\n      ],\n      \"acceptance\": [\n        \"页面 URL 跳转到 / 或 /dashboard（非 /login）\",\n        \"通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值为 null\"\n      ]\n    },\n    {\n      \"id\": \"checkbox-ui-position-visibility\",\n      \"name\": \"复选框 UI 位置与可见性\",\n      \"kind\": \"happy\",\n      \"coversAC\": [\"AC-5\"],\n      \"tags\": [],\n      \"steps\": [\n        \"清除浏览器 localStorage 中 chatops_remembered_username 键值\",\n        \"打开 /login 页面，等待登录表单渲染完成\",\n        \"定位「记住用户名」复选框元素 [data-testid=remember-username]\"\n      ],\n      \"acceptance\": [\n        \"复选框元素可见（isVisible() 返回 true）\",\n        \"复选框文本包含「记住用户名」\",\n        \"复选框元素的 Y 坐标大于密码输入框的 Y 坐标（位于密码框下方）\",\n        \"复选框元素的 Y 坐标小于登录按钮的 Y 坐标（位于登录按钮上方）\"\n      ]\n    }\n  ],\n  \"openQuestions\": [],\n  \"risks\": [\n    { \"desc\": \"localStorage 中的用户名可被同源 XSS 攻击读取，但用户名非高敏感信息且 session 在 httpOnly cookie 中已受保护\", \"severity\": \"low\" },\n    { \"desc\": \"共享电脑场景下已保存的用户名可能被其他使用者看到，这是记住用户名功能的固有特性\", \"severity\": \"low\" }\n  ],\n  \"references\": [\n    { \"file\": \"web/src/pages/LoginPage.tsx\", \"line\": 6, \"purpose\": \"现有登录页组件，需新增 Checkbox + localStorage 逻辑\" },\n    { \"file\": \"web/src/pages/LoginPage.tsx\", \"line\": 44, \"purpose\": \"Form 起始位置，Checkbox 插入到 password 和 submit 之间\" },\n    { \"file\": \"web/src/pages/LoginPage.tsx\", \"line\": 10, \"purpose\": \"onFinish 回调，需增加 localStorage 写入/清除逻辑\" },\n    { \"file\": \"web/src/app.css\", \"line\": 249, \"purpose\": \".login-card 样式块，可能需补充 Checkbox 深色主题样式\" }\n  ],\n  \"clarifications\": [\n    {\n      \"kind\": \"fact\",\n      \"q\": \"当前登录页是否已有「记住」功能？\",\n      \"a\": \"无。LoginPage.tsx 仅含 username/password 两个 Form.Item，无 Checkbox 引用，无 localStorage 调用\"\n    },\n    {\n      \"kind\": \"fact\",\n      \"q\": \"用户名保存到哪里？\",\n      \"a\": \"localStorage。当前登录流无 localStorage 使用先例，但 localStorage 是纯前端持久化最简方案，不涉及后端改动\"\n    },\n    {\n      \"kind\": \"assumption\",\n      \"q\": \"保存的用户名是否需要过期机制？\",\n      \"a\": \"默认不过期，localStorage 持久存储。用户可通过取消勾选主动清除\",\n      \"userMayDisagreeIf\": \"安全合规要求 N 天后自动清除已保存的用户名\"\n    },\n    {\n      \"kind\": \"assumption\",\n      \"q\": \"复选框默认状态如何？\",\n      \"a\": \"首次访问不勾选；localStorage 已有值时默认勾选并回填\",\n      \"userMayDisagreeIf\": \"认为首次访问就应默认勾选以引导用户使用该功能\"\n    },\n    {\n      \"kind\": \"assumption\",\n      \"q\": \"取消勾选后何时清除 localStorage？\",\n      \"a\": \"登录提交时清除，而非取消勾选立即清除，保留用户改主意的机会\",\n      \"userMayDisagreeIf\": \"认为取消勾选应立即清除以提供即时反馈\"\n    },\n    {\n      \"kind\": \"fact\",\n      \"q\": \"是否需要修改后端？\",\n      \"a\": \"不需要。纯前端 localStorage + Checkbox 方案，后端 POST /admin/auth/login 接口无需任何改动\"\n    }\n  ]\n}\n```",
+  "runError": null,
+  "artifactPath": "/var/folders/9m/158mh4rd7pz_xsm54qgg582c0000gn/T/qi-eval-login-remember-me-spec-author-2026-05-09T08-41-19-522Z/docs/qi-eval-spec-author.md",
+  "artifactContent": "# 需求规格：登录页「记住用户名」复选框\n\n## 1. 背景与目标\n\n管理后台（Mewtwo）当前的登录页仅包含用户名和密码两个字段，每次访问都需要重新输入。对于日常高频使用管理后台的运维人员，反复输入用户名是不必要的摩擦。\n\n**目标：**\n1. 在登录表单中增加「记住用户名」复选框，勾选后登录成功时将用户名持久保存到 localStorage\n2. 下次访问登录页时，若 localStorage 中存在已保存的用户名，自动回填到用户名输入框并默认勾选复选框\n3. 明确不存储密码（任何形式），仅保存用户名字符串\n\n## 2. 澄清记录\n\n| # | 问题 | 类型 | 回答 |\n|---|------|------|------|\n| Q1 | 当前登录页是否已有「记住」功能？ | fact | 无。`web/src/pages/LoginPage.tsx` 仅含 username / password 两个 Form.Item，无 Checkbox 组件引用，无 localStorage 调用 |\n| Q2 | 用户名保存到哪里？ | fact | localStorage。当前项目前端无 localStorage 使用先例（登录流），但 localStorage 是纯前端持久化最简方案，不涉及后端改动 |\n| Q3 | 保存的用户名是否需要过期机制？ | assumption | 默认不过期，localStorage 持久存储。用户可通过取消勾选主动清除。若安全合规要求 N 天过期，需另行约定 |\n| Q4 | 复选框默认状态（首次访问 vs 回访）？ | assumption | 首次访问（localStorage 无值）：不勾选。回访（localStorage 有值）：勾选并回填用户名。若用户认为「默认勾选 + 提示」更友好，可调整 |\n| Q5 | 取消勾选后行为？ | assumption | 取消勾选后点击登录，清除 localStorage 中保存的用户名。不是取消勾选立即清除，而是等提交时处理，保留用户改主意的机会 |\n| Q6 | 复选框在表单中的位置？ | assumption | 放在密码输入框下方、登录按钮上方，与现有深色主题视觉风格一致 |\n| Q7 | 是否需要修改后端？ | fact | 不需要。该功能完全在前端实现（localStorage + Checkbox），后端登录接口 `POST /admin/auth/login` 无需任何改动 |\n\n## 3. 功能描述\n\n### 3.1 复选框展示\n- 在登录表单的密码输入框（`Form.Item[name=\"password\"]`）与登录按钮之间，新增一个 Ant Design `<Checkbox>` 组件\n- 复选框文案：「记住用户名」\n- 复选框样式需与现有深色主题（背景 `#0B0E18`，文字 `#E6EAF3`）协调\n\n### 3.2 localStorage 持久化\n- **Key 名称**：`chatops_remembered_username`\n- **写入时机**：用户点击登录按钮提交表单且登录成功后\n  - 若复选框勾选：将用户名写入 `localStorage.setItem('chatops_remembered_username', username)`\n  - 若复选框未勾选：执行 `localStorage.removeItem('chatops_remembered_username')` 清除已保存值\n- **读取时机**：LoginPage 组件挂载时（`useEffect` 或初始 state），从 localStorage 读取\n  - 若存在值：设置用户名输入框初始值为该值，同时将复选框设为勾选状态\n  - 若不存在：用户名输入框为空，复选框不勾选\n\n### 3.3 焦点优化\n- 当 localStorage 有已保存的用户名（用户名已回填）时，自动聚焦到密码输入框而非用户名输入框\n- 当 localStorage 无值时，保持现有行为——自动聚焦用户名输入框\n\n## 4. 验收标准\n\n- AC-1: Given 用户首次访问登录页（localStorage 无 `chatops_remembered_username`），When 页面加载完成，Then 用户名输入框为空、「记住用户名」复选框未勾选、焦点在用户名输入框\n- AC-2: Given 用户在登录页勾选了「记住用户名」复选框并输入正确的用户名密码，When 点击登录按钮且登录成功，Then localStorage 中 `chatops_remembered_username` 的值等于输入的用户名\n- AC-3: Given localStorage 中已存在 `chatops_remembered_username` 值为 `admin`，When 用户再次访问登录页，Then 用户名输入框自动回填 `admin`、复选框为勾选状态、焦点在密码输入框\n- AC-4: Given 用户在登录页取消勾选「记住用户名」复选框，When 点击登录按钮且登录成功，Then localStorage 中 `chatops_remembered_username` 被移除\n- AC-5: Given 登录页加载完成，When 查看「记住用户名」复选框的渲染效果，Then 复选框位于密码输入框下方、登录按钮上方，文字颜色与深色主题协调（文字可见且可读）\n\n## 5. E2E 验收 Scenario\n\n### Scenario S-1: 首次登录勾选记住用户名（kind: happy）\n- **覆盖 AC**: AC-1, AC-2\n- **步骤**：\n  1. 清除浏览器 localStorage 中 `chatops_remembered_username` 键值\n  2. 打开 `/login` 页面，等待登录表单渲染完成\n  3. 断言用户名输入框的值为空字符串\n  4. 断言「记住用户名」复选框 `[data-testid=remember-username]` 未勾选\n  5. 在用户名输入框输入 `admin`，在密码输入框输入正确密码\n  6. 勾选「记住用户名」复选框\n  7. 点击登录按钮\n- **验收断言**：\n  - 页面 URL 跳转到 `/` 或 `/dashboard`（非 `/login`）\n  - 通过 `page.evaluate(() => localStorage.getItem('chatops_remembered_username'))` 获取值等于 `admin`\n\n### Scenario S-2: 回访自动回填用户名（kind: happy）\n- **覆盖 AC**: AC-3\n- **步骤**：\n  1. 通过 `page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin'))` 预置用户名\n  2. 打开 `/login` 页面，等待登录表单渲染完成\n- **验收断言**：\n  - 用户名输入框的值等于 `admin`\n  - 「记住用户名」复选框 `[data-testid=remember-username]` 处于勾选状态\n  - 密码输入框处于聚焦状态（`document.activeElement` 为密码输入框元素）\n\n### Scenario S-3: 取消勾选后清除已保存用户名（kind: happy）\n- **覆盖 AC**: AC-4\n- **步骤**：\n  1. 通过 `page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin'))` 预置用户名\n  2. 打开 `/login` 页面，等待登录表单渲染完成\n  3. 断言复选框已勾选、用户名已回填 `admin`\n  4. 取消勾选「记住用户名」复选框\n  5. 在密码输入框输入正确密码\n  6. 点击登录按钮\n- **验收断言**：\n  - 页面 URL 跳转到 `/` 或 `/dashboard`（非 `/login`）\n  - 通过 `page.evaluate(() => localStorage.getItem('chatops_remembered_username'))` 获取值为 `null`\n\n### Scenario S-4: 未勾选记住用户名时不保存（kind: negative）\n- **覆盖 AC**: AC-1, AC-2\n- **步骤**：\n  1. 清除浏览器 localStorage 中 `chatops_remembered_username` 键值\n  2. 打开 `/login` 页面，等待登录表单渲染完成\n  3. 在用户名输入框输入 `admin`，在密码输入框输入正确密码\n  4. 确认「记住用户名」复选框未勾选（不勾选）\n  5. 点击登录按钮\n- **验收断言**：\n  - 页面 URL 跳转到 `/` 或 `/dashboard`（非 `/login`）\n  - 通过 `page.evaluate(() => localStorage.getItem('chatops_remembered_username'))` 获取值为 `null`\n\n### Scenario S-5: 复选框 UI 位置与可见性（kind: happy）\n- **覆盖 AC**: AC-5\n- **步骤**：\n  1. 清除浏览器 localStorage 中 `chatops_remembered_username` 键值\n  2. 打开 `/login` 页面，等待登录表单渲染完成\n  3. 定位「记住用户名」复选框元素 `[data-testid=remember-username]`\n- **验收断言**：\n  - 复选框元素可见（`isVisible()` 返回 true）\n  - 复选框文本包含「记住用户名」\n  - 复选框元素的 Y 坐标大于密码输入框的 Y 坐标（位于密码框下方）\n  - 复选框元素的 Y 坐标小于登录按钮的 Y 坐标（位于登录按钮上方）\n\n## 6. 非功能需求\n\n- **性能**：N/A — localStorage 读写为同步微秒级操作，不影响页面加载性能\n- **安全**：仅存储用户名（非敏感信息），不存储密码或 token。localStorage 受同源策略保护，XSS 攻击理论上可读取用户名但不能获取密码或 session（session 在 httpOnly cookie 中）\n- **可观测性**：N/A — 纯前端 localStorage 操作，无需后端日志或监控\n- **兼容性**：所有现代浏览器均支持 localStorage API（Chrome/Firefox/Safari/Edge）\n- **可访问性**：Ant Design Checkbox 组件默认支持键盘导航（Tab/Space）和屏幕阅读器\n\n## 7. 技术说明\n\n本需求仅涉及前端改动，无需修改后端代码或数据库 schema。\n\n- **LoginPage 组件**：`web/src/pages/LoginPage.tsx:6` — 需在该组件中增加 Checkbox、localStorage 读写逻辑和焦点控制逻辑\n- **登录表单区域**：`web/src/pages/LoginPage.tsx:44` — Form 组件起始位置，Checkbox 应插入到 password Form.Item（line 60-72）和 submit Button Form.Item（line 74-78）之间\n- **登录提交处理**：`web/src/pages/LoginPage.tsx:10` — `onFinish` 回调函数，需在登录成功后根据 checkbox 状态写入/清除 localStorage\n- **登录页样式**：`web/src/app.css:249` — `.login-card` 样式块，可能需要为 Checkbox 补充深色主题样式\n\n## 8. 风险与未知\n\n- 风险 1：localStorage 中的用户名可被同源的 XSS 攻击读取（severity: low）。用户名本身不是高敏感信息，且项目已有 httpOnly cookie 保护 session，XSS 攻击获取用户名的额外危害有限\n- 风险 2：共享电脑场景下用户名可能被其他使用者看到（severity: low）。这是「记住用户名」功能的固有特性，用户可选择不勾选来规避\n\n## 9. 回滚预案\n\n纯前端改动，回滚方式：`git revert <commit>` + 重新发布前端资源。用户浏览器中残留的 `chatops_remembered_username` localStorage 条目不会造成副作用（仅是一个未被读取的字符串值）。\n\n## 10. 超出范围\n\n- **不存储密码**：任何形式的密码存储（明文、加密、hash）均不在范围内。需求明确只保存用户名\n- **不实现自动登录**：即使保存了用户名，用户仍需手动输入密码并点击登录按钮\n- **不修改后端**：不改动 `POST /admin/auth/login` 接口、session 机制或数据库 schema\n- **不实现多用户记忆**：仅保存最近一次勾选的用户名，不提供用户名下拉列表选择历史用户名\n- **不实现 cookie 方式**：使用 localStorage 而非 cookie 保存用户名，避免每次 HTTP 请求都携带该值\n",
+  "consistency": {
+    "ok": true,
+    "details": [
+      "✓ spec.md AC count (5) === JSON.acceptanceCriteria.length (5)"
+    ]
+  },
+  "schemaValidation": {
+    "ok": true,
+    "data": {
+      "summary": "完成登录页「记住用户名」需求规格撰写：5 条 AC（Given-When-Then）、5 个 E2E scenario（含 1 个 negative）、纯前端 localStorage 方案，无需后端改动",
+      "decision": "pass",
+      "notes": [],
+      "evidence": {
+        "standardsConsulted": [
+          {
+            "file": "docs/standards/frontend-enum-select.md",
+            "usedFor": "确认 Checkbox 不属于枚举字段引用场景，无需改用 Select 下拉；localStorage key 是自由文本，不需要枚举下拉"
+          }
+        ],
+        "selfCheck": [
+          {
+            "item": "为什么把清除逻辑设计为「取消勾选 + 登录提交时清除」而非「取消勾选立即清除」？",
+            "answer": "登录提交时统一处理保留用户改主意的机会——用户可能误触取消后重新勾选，立即清除会导致不必要的 localStorage 写操作"
+          },
+          {
+            "item": "本 spec 最弱点是什么？",
+            "answer": "AC-5 的「深色主题协调」是主观视觉判断，E2E 无法客观断言颜色搭配是否合理，只能验证元素可见性和位置关系"
+          }
+        ]
+      },
+      "schemaVersion": "v2",
+      "confidenceLevel": "high",
+      "reviewHints": [
+        {
+          "severity": "low",
+          "point": "AC-5「深色主题协调」是视觉主观判断",
+          "reason": "E2E 只能验证 Checkbox 位置和可见性，颜色是否与深色主题协调需肉眼确认"
+        }
+      ],
+      "noGos": [
+        {
+          "desc": "不存储密码（任何形式：明文、加密、hash）",
+          "reason": "需求明确只保存用户名"
+        },
+        {
+          "desc": "不实现自动登录",
+          "reason": "用户仍需手动输入密码"
+        },
+        {
+          "desc": "不修改后端接口或数据库 schema",
+          "reason": "纯前端 localStorage 方案"
+        },
+        {
+          "desc": "不实现多用户名记忆/下拉选择",
+          "reason": "需求仅要求保存最近一次用户名"
+        }
+      ],
+      "acceptanceCriteria": [
+        {
+          "id": "AC-1",
+          "format": "given-when-then",
+          "text": "Given 用户首次访问登录页（localStorage 无 chatops_remembered_username），When 页面加载完成，Then 用户名输入框为空、「记住用户名」复选框未勾选、焦点在用户名输入框"
+        },
+        {
+          "id": "AC-2",
+          "format": "given-when-then",
+          "text": "Given 用户在登录页勾选了「记住用户名」复选框并输入正确的用户名密码，When 点击登录按钮且登录成功，Then localStorage 中 chatops_remembered_username 的值等于输入的用户名"
+        },
+        {
+          "id": "AC-3",
+          "format": "given-when-then",
+          "text": "Given localStorage 中已存在 chatops_remembered_username 值为 admin，When 用户再次访问登录页，Then 用户名输入框自动回填 admin、复选框为勾选状态、焦点在密码输入框"
+        },
+        {
+          "id": "AC-4",
+          "format": "given-when-then",
+          "text": "Given 用户在登录页取消勾选「记住用户名」复选框，When 点击登录按钮且登录成功，Then localStorage 中 chatops_remembered_username 被移除"
+        },
+        {
+          "id": "AC-5",
+          "format": "given-when-then",
+          "text": "Given 登录页加载完成，When 查看「记住用户名」复选框的渲染效果，Then 复选框位于密码输入框下方、登录按钮上方，文字颜色与深色主题协调（文字可见且可读）"
+        }
+      ],
+      "openQuestions": [],
+      "risks": [
+        {
+          "desc": "localStorage 中的用户名可被同源 XSS 攻击读取，但用户名非高敏感信息且 session 在 httpOnly cookie 中已受保护",
+          "severity": "low"
+        },
+        {
+          "desc": "共享电脑场景下已保存的用户名可能被其他使用者看到，这是记住用户名功能的固有特性",
+          "severity": "low"
+        }
+      ],
+      "references": [
+        {
+          "file": "web/src/pages/LoginPage.tsx",
+          "line": 6,
+          "purpose": "现有登录页组件，需新增 Checkbox + localStorage 逻辑"
+        },
+        {
+          "file": "web/src/pages/LoginPage.tsx",
+          "line": 44,
+          "purpose": "Form 起始位置，Checkbox 插入到 password 和 submit 之间"
+        },
+        {
+          "file": "web/src/pages/LoginPage.tsx",
+          "line": 10,
+          "purpose": "onFinish 回调，需增加 localStorage 写入/清除逻辑"
+        },
+        {
+          "file": "web/src/app.css",
+          "line": 249,
+          "purpose": ".login-card 样式块，可能需补充 Checkbox 深色主题样式"
+        }
+      ],
+      "clarifications": [
+        {
+          "q": "当前登录页是否已有「记住」功能？",
+          "a": "无。LoginPage.tsx 仅含 username/password 两个 Form.Item，无 Checkbox 引用，无 localStorage 调用",
+          "kind": "fact"
+        },
+        {
+          "q": "用户名保存到哪里？",
+          "a": "localStorage。当前登录流无 localStorage 使用先例，但 localStorage 是纯前端持久化最简方案，不涉及后端改动",
+          "kind": "fact"
+        },
+        {
+          "q": "保存的用户名是否需要过期机制？",
+          "a": "默认不过期，localStorage 持久存储。用户可通过取消勾选主动清除",
+          "kind": "assumption",
+          "userMayDisagreeIf": "安全合规要求 N 天后自动清除已保存的用户名"
+        },
+        {
+          "q": "复选框默认状态如何？",
+          "a": "首次访问不勾选；localStorage 已有值时默认勾选并回填",
+          "kind": "assumption",
+          "userMayDisagreeIf": "认为首次访问就应默认勾选以引导用户使用该功能"
+        },
+        {
+          "q": "取消勾选后何时清除 localStorage？",
+          "a": "登录提交时清除，而非取消勾选立即清除，保留用户改主意的机会",
+          "kind": "assumption",
+          "userMayDisagreeIf": "认为取消勾选应立即清除以提供即时反馈"
+        },
+        {
+          "q": "是否需要修改后端？",
+          "a": "不需要。纯前端 localStorage + Checkbox 方案，后端 POST /admin/auth/login 接口无需任何改动",
+          "kind": "fact"
+        }
+      ],
+      "e2eScenarios": [
+        {
+          "id": "first-login-remember-username",
+          "name": "首次登录勾选记住用户名",
+          "kind": "happy",
+          "coversAC": [
+            "AC-1",
+            "AC-2"
+          ],
+          "tags": [],
+          "steps": [
+            "清除浏览器 localStorage 中 chatops_remembered_username 键值",
+            "打开 /login 页面，等待登录表单渲染完成",
+            "断言用户名输入框的值为空字符串",
+            "断言「记住用户名」复选框 [data-testid=remember-username] 未勾选",
+            "在用户名输入框输入 'admin'，在密码输入框输入正确密码",
+            "勾选「记住用户名」复选框",
+            "点击登录按钮"
+          ],
+          "acceptance": [
+            "页面 URL 跳转到 / 或 /dashboard（非 /login）",
+            "通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值等于 'admin'"
+          ]
+        },
+        {
+          "id": "revisit-autofill-username",
+          "name": "回访自动回填用户名",
+          "kind": "happy",
+          "coversAC": [
+            "AC-3"
+          ],
+          "tags": [],
+          "steps": [
+            "通过 page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin')) 预置用户名",
+            "打开 /login 页面，等待登录表单渲染完成"
+          ],
+          "acceptance": [
+            "用户名输入框的值等于 'admin'",
+            "「记住用户名」复选框 [data-testid=remember-username] 处于勾选状态",
+            "密码输入框处于聚焦状态（document.activeElement 为密码输入框元素）"
+          ]
+        },
+        {
+          "id": "uncheck-clears-saved-username",
+          "name": "取消勾选后清除已保存用户名",
+          "kind": "happy",
+          "coversAC": [
+            "AC-4"
+          ],
+          "tags": [],
+          "steps": [
+            "通过 page.evaluate(() => localStorage.setItem('chatops_remembered_username', 'admin')) 预置用户名",
+            "打开 /login 页面，等待登录表单渲染完成",
+            "断言复选框已勾选、用户名已回填 'admin'",
+            "取消勾选「记住用户名」复选框",
+            "在密码输入框输入正确密码",
+            "点击登录按钮"
+          ],
+          "acceptance": [
+            "页面 URL 跳转到 / 或 /dashboard（非 /login）",
+            "通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值为 null"
+          ]
+        },
+        {
+          "id": "no-check-no-save",
+          "name": "未勾选记住用户名时不保存",
+          "kind": "negative",
+          "coversAC": [
+            "AC-1",
+            "AC-2"
+          ],
+          "tags": [],
+          "steps": [
+            "清除浏览器 localStorage 中 chatops_remembered_username 键值",
+            "打开 /login 页面，等待登录表单渲染完成",
+            "在用户名输入框输入 'admin'，在密码输入框输入正确密码",
+            "确认「记住用户名」复选框未勾选（不勾选）",
+            "点击登录按钮"
+          ],
+          "acceptance": [
+            "页面 URL 跳转到 / 或 /dashboard（非 /login）",
+            "通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值为 null"
+          ]
+        },
+        {
+          "id": "checkbox-ui-position-visibility",
+          "name": "复选框 UI 位置与可见性",
+          "kind": "happy",
+          "coversAC": [
+            "AC-5"
+          ],
+          "tags": [],
+          "steps": [
+            "清除浏览器 localStorage 中 chatops_remembered_username 键值",
+            "打开 /login 页面，等待登录表单渲染完成",
+            "定位「记住用户名」复选框元素 [data-testid=remember-username]"
+          ],
+          "acceptance": [
+            "复选框元素可见（isVisible() 返回 true）",
+            "复选框文本包含「记住用户名」",
+            "复选框元素的 Y 坐标大于密码输入框的 Y 坐标（位于密码框下方）",
+            "复选框元素的 Y 坐标小于登录按钮的 Y 坐标（位于登录按钮上方）"
+          ]
+        }
+      ]
+    }
+  }
+}

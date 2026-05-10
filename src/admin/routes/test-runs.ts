@@ -3,7 +3,7 @@ import { Command } from '@langchain/langgraph'
 import { listTestRuns, getTestRunById } from '../../db/repositories/test-runs.js'
 import { getDingTalkUserById, getDingTalkUsersByIds } from '../../db/repositories/dingtalk-users.js'
 import { runPipeline, manualTrigger, apiTrigger } from '../../pipeline/executor.js'
-import { getPendingInterrupt, resumeRun } from '../../pipeline/graph-runner.js'
+import { getPendingInterrupt, resumeRun, resumeOrphanedRun } from '../../pipeline/graph-runner.js'
 import { APPROVAL_INTERRUPT, WEBHOOK_INTERRUPT } from '../../pipeline/graph-builder.js'
 import { autoResolveServersByRole } from '../../pipeline/server-resolver.js'
 import { readFile, stat } from 'fs/promises'
@@ -239,6 +239,27 @@ export async function registerTestRunRoutes(app: FastifyInstance): Promise<void>
     return reply
       .status(500)
       .send({ error: `unknown interrupt type: ${String((pending as { type?: unknown }).type)}` })
+  })
+
+  // Replay a run from its LangGraph checkpoint. Used to unstick orphaned runs
+  // that were paused at a QI_APPROVAL_INTERRUPT where the waiter was already
+  // claimed (approved/rejected) before a server restart but the graph never
+  // resumed. The replay re-triggers dispatchInterrupt, which auto-resumes if
+  // the waiter is claimed.
+  app.post<{ Params: { id: string } }>('/test-runs/:id/replay', async (req, reply) => {
+    const runId = Number(req.params.id)
+    if (!Number.isFinite(runId) || runId <= 0) {
+      return reply.status(400).send({ error: 'invalid run id' })
+    }
+    const run = await getTestRunById(runId)
+    if (!run) return reply.status(404).send({ error: 'run not found' })
+    if (run.status !== 'running') {
+      return reply.status(409).send({ error: `run is not running (${run.status})` })
+    }
+    void resumeOrphanedRun(runId).catch((err) => {
+      req.log.error({ err, runId }, 'replay: resumeOrphanedRun failed')
+    })
+    return reply.send({ ok: true, runId })
   })
 
   // ─── Stage 日志（一次性 + SSE 实时） ──────────────────────────────────────────

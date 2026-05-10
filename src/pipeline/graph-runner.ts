@@ -17,16 +17,31 @@
 import { join } from 'path'
 import { Command } from '@langchain/langgraph'
 import { getCheckpointer } from './graph-runtime.js'
+import { createProductionSkillExecutor } from '../quick-impl/skill-executor.js'
 import {
   buildGraphFromStages,
   buildGraphFromPipeline,
   APPROVAL_INTERRUPT,
   WEBHOOK_INTERRUPT,
+  QI_APPROVAL_INTERRUPT,
+  QI_IM_INPUT_INTERRUPT,
   type StageHooks,
   type StageContextBase,
   type ApprovalInterruptValue,
   type WebhookInterruptValue,
+  type QiApprovalInterruptValue,
+  type QiImInputInterruptValue,
+  type QiApprovalResume,
 } from './graph-builder.js'
+import {
+  getQiApprovalInfo,
+  removeQiApprovalWaiter,
+  registerQiApprovalWaiter,
+} from './qi-approval-waiter.js'
+import {
+  type RequirementApprovalWaiter,
+  getWaiterById,
+} from '../db/repositories/requirement-approval-waiters.js'
 import { linearizeStages } from './graph-migration.js'
 import type { StageDefinition, ServerInfo, PipelineGraph } from './types.js'
 import type { StageResult } from '../db/repositories/test-runs.js'
@@ -49,6 +64,7 @@ import { generateHtmlReport, generateZipArchive } from './report-generator.js'
 import { analyzeFailure } from './failure-analyzer.js'
 import { PipelineApprovalManager } from './approval-manager.js'
 import { WebhookWaiter } from './webhook-waiter.js'
+import { sendQiApprovalCard } from './qi-approval-manager.js'
 import { buildDefaultHooks } from './executor-hooks.js'
 import { resolveDataDir } from './data-dir.js'
 
@@ -174,6 +190,74 @@ export async function resumeRun(runId: number, command: Command): Promise<void> 
 }
 
 /**
+ * Resume a pipeline run that was interrupted by a process crash (e.g. server
+ * restart mid-execution). For QI_APPROVAL_INTERRUPT runs: reads the interrupt
+ * value from the checkpoint and directly re-arms the in-memory waiter WITHOUT
+ * re-streaming the graph (which would re-run earlier nodes from checkpoint).
+ * If the waiter is already claimed (approved/rejected before restart), the
+ * auto-resume path in dispatchInterrupt fires via setImmediate.
+ *
+ * For all other interrupt types: falls back to re-streaming (legacy path).
+ */
+export async function resumeOrphanedRun(runId: number): Promise<void> {
+  const ctx = await reloadContext(runId)
+  if (!ctx) {
+    console.warn(`[graph-runner] resumeOrphanedRun: run ${runId} not resumable (no context)`)
+    return
+  }
+
+  // Try to re-arm by reading the interrupt value from checkpoint directly.
+  // This avoids re-streaming the graph (which would re-run nodes from the
+  // interrupted checkpoint, overwriting already-completed stage results).
+  const saver = await getCheckpointer()
+  const graphBuilder = ctx.pipelineGraph
+    ? buildGraphFromPipeline({
+        graph: ctx.pipelineGraph,
+        stageContext: ctx.stageContext,
+        hooks: ctx.hooks,
+        triggerParams: ctx.triggerParams,
+      })
+    : buildGraphFromStages({
+        stages: ctx.stages,
+        stageContext: ctx.stageContext,
+        hooks: ctx.hooks,
+        triggerParams: ctx.triggerParams,
+      })
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const compiled = (graphBuilder as any).compile({ checkpointer: saver })
+  const config = { configurable: { thread_id: String(runId) } }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const snapshot: any = await compiled.getState(config).catch(() => null)
+
+  if (snapshot) {
+    const tasks = snapshot.tasks as Array<{ interrupts?: Array<{ value?: unknown }> }> | undefined
+    if (Array.isArray(tasks)) {
+      for (const task of tasks) {
+        const interrupts = task.interrupts
+        if (!Array.isArray(interrupts) || interrupts.length === 0) continue
+        const value = interrupts[0]?.value
+        if (!value || typeof value !== 'object') continue
+        const type = (value as { type?: unknown }).type
+
+        if (type === QI_APPROVAL_INTERRUPT || type === QI_IM_INPUT_INTERRUPT) {
+          // Re-arm the in-memory handler directly — no re-stream needed.
+          await dispatchInterrupt(ctx, value)
+          console.log(`[graph-runner] resumeOrphanedRun: re-armed QI waiter (${type}) for run ${runId}`)
+          return
+        }
+        // Other interrupt types: fall through to legacy stream path below.
+        break
+      }
+    }
+  }
+
+  // Legacy path: non-QI interrupts (APPROVAL_INTERRUPT, WEBHOOK_INTERRUPT)
+  // or graph has no checkpoint yet. Re-stream from current checkpoint.
+  console.log(`[graph-runner] resuming orphaned run ${runId} from checkpoint (stream)`)
+  await streamGraph(ctx, { runId })
+}
+
+/**
  * Wire resume handlers onto the Task 3 adapters. Call once at server startup
  * after PipelineApprovalManager.initialize().
  */
@@ -199,6 +283,35 @@ export function initGraphRunnerDispatchers(): void {
       await resumeRun(runId, new Command({ resume: payload }))
     },
   )
+}
+
+/**
+ * Resume a skill_with_approval interrupt from an external approval claim.
+ *
+ * Called by the admin approval endpoint after successfully claiming a waiter.
+ * Looks up the pending runId from the in-memory qi-approval-waiter registry,
+ * bundles the claimed waiter + loopState into a QiApprovalResume, and calls
+ * resumeRun to continue the graph.
+ *
+ * Returns true if the waiter was found and resume was dispatched; false if the
+ * waiter is not registered (already resolved or never registered).
+ */
+export async function resumeFromQiApproval(
+  waiterId: number,
+  claimedWaiter: RequirementApprovalWaiter,
+): Promise<boolean> {
+  const info = getQiApprovalInfo(waiterId)
+  if (!info) return false
+  removeQiApprovalWaiter(waiterId)
+  const resume: QiApprovalResume = {
+    claimedWaiter,
+    prevState: info.loopState,
+  }
+  // Fire-and-forget: the graph may run for minutes/hours; don't block the caller
+  void resumeRun(info.runId, new Command({ resume })).catch(err =>
+    console.error(`[graph-runner] resumeFromQiApproval run ${info.runId} error:`, err),
+  )
+  return true
 }
 
 // --- Core streaming loop ----------------------------------------------------
@@ -326,6 +439,70 @@ async function dispatchInterrupt(ctx: RunContext, value: unknown): Promise<void>
     scheduleTimeout(ctx.runId, p.stageIndex, timeoutMs, new Command({ resume: { timeout: true } }))
     return
   }
+
+  if (v.type === QI_APPROVAL_INTERRUPT) {
+    const p = value as QiApprovalInterruptValue
+    registerQiApprovalWaiter(p.waiterId, { runId: ctx.runId, loopState: p.loopState })
+
+    // After server restart: waiter may already be claimed — resume immediately.
+    getWaiterById(p.waiterId).then(w => {
+      if (w?.claimedBy) {
+        setImmediate(() => {
+          resumeFromQiApproval(p.waiterId, w).catch(err =>
+            console.error(`[graph-runner] auto-resume claimed waiter ${p.waiterId} failed:`, err),
+          )
+        })
+      }
+    }).catch(() => {})
+
+    // 向钉钉审批人发互动卡片（approverIds 为空则静默跳过，仅 Web 审批）
+    if (p.approverIds.length > 0) {
+      sendQiApprovalCard({
+        waiterId: p.waiterId,
+        requirementId: p.requirementId,
+        requirementTitle: p.requirementTitle,
+        contextSummary: p.contextSummary,
+        imSummary: p.imSummary ?? null,
+        approvalKind: p.approvalKind,
+        decisionSet: p.decisionSet,
+        approverIds: p.approverIds,
+      }).catch(err => {
+        console.error(`[graph-runner] sendQiApprovalCard failed for waiterId=${p.waiterId}:`, err)
+      })
+    }
+    return
+  }
+
+  if (v.type === QI_IM_INPUT_INTERRUPT) {
+    const p = value as QiImInputInterruptValue
+    // im_input 复用 qi-approval-waiter 注册机制，但 loopState 不需要（单次 interrupt）
+    registerQiApprovalWaiter(p.waiterId, { runId: ctx.runId, loopState: { budgetUsed: 0, rejectHistory: [] } })
+
+    // 重启后 waiter 可能已被 claim → 立即 resume
+    getWaiterById(p.waiterId).then(w => {
+      if (w?.claimedBy) {
+        setImmediate(() => {
+          resumeFromQiApproval(p.waiterId, w).catch(err =>
+            console.error(`[graph-runner] auto-resume im_input waiter ${p.waiterId} failed:`, err),
+          )
+        })
+      }
+    }).catch(() => {})
+
+    if (p.approverIds.length > 0) {
+      sendQiApprovalCard({
+        waiterId: p.waiterId,
+        requirementId: p.requirementId,
+        requirementTitle: p.requirementTitle,
+        contextSummary: p.contextSummary,
+        approvalKind: p.kind, // 'qi_e2e_intervention' | 'qi_sandbox_failed'
+        approverIds: p.approverIds,
+      }).catch(err => {
+        console.error(`[graph-runner] sendQiApprovalCard (im_input) failed for waiterId=${p.waiterId}:`, err)
+      })
+    }
+    return
+  }
 }
 
 function scheduleTimeout(
@@ -359,9 +536,15 @@ function scheduleTimeout(
 
 // --- Finalize ---------------------------------------------------------------
 
-/** Fold stageResults into a single (status, errorMessage) tuple. */
+/** Fold stageResults into a single (status, errorMessage) tuple.
+ *
+ * onFailure: 'continue' 的 stage 失败不应让整个 run 失败 —— pipeline 设计上把这类 fail
+ * 当作正常分支信号（典型用例：plan_review_loop AI 审失败 → escalate 到 human）。
+ * 仅当某个 onFailure='stop' (默认) 的 stage 失败时才把 run 标 failed。
+ */
 function summarizeStatus(
   stageResults: StageResult[],
+  stages: StageDefinition[],
   fatalError?: string,
 ): { status: 'success' | 'failed'; errorMessage: string } {
   // Fatal errors (compile / stream throws before any stage finished) must
@@ -370,12 +553,15 @@ function summarizeStatus(
   if (fatalError) {
     return { status: 'failed', errorMessage: fatalError }
   }
-  for (const r of stageResults) {
-    if (r.status === 'failed') {
-      return {
-        status: 'failed',
-        errorMessage: `Stage "${r.name}" failed: ${r.error ?? r.output ?? ''}`,
-      }
+  for (let i = 0; i < stageResults.length; i++) {
+    const r = stageResults[i]
+    if (r.status !== 'failed') continue
+    const stage = stages[i]
+    // 默认 onFailure='stop'；显式 'continue' 时容忍失败（pipeline 已自行 escalate 到下游 stage）
+    if (stage?.onFailure === 'continue') continue
+    return {
+      status: 'failed',
+      errorMessage: `Stage "${r.name}" failed: ${r.error ?? r.output ?? ''}`,
     }
   }
   return { status: 'success', errorMessage: '' }
@@ -422,7 +608,7 @@ async function finalize(
     stageResults = (await getTestRunById(ctx.runId))?.stageResults ?? []
   } catch { /* ignore */ }
 
-  const { status: finalStatus, errorMessage } = summarizeStatus(stageResults, opts.fatalError)
+  const { status: finalStatus, errorMessage } = summarizeStatus(stageResults, ctx.stages, opts.fatalError)
 
   if (finalStatus === 'failed') await annotateFailuresWithAi(ctx, stageResults)
 
@@ -597,6 +783,7 @@ async function reloadContext(runId: number): Promise<RunContext | null> {
     pipeline: { id: pipeline.id, name: pipeline.name },
     run: { id: runId, triggeredBy: run.triggeredBy, triggerType: run.triggerType },
     variables: { ...(pipeline.variables ?? {}), ...(run.runtimeVars ?? {}) },
+    skillExecutor: createProductionSkillExecutor(),
   }
 
   return {
@@ -606,12 +793,13 @@ async function reloadContext(runId: number): Promise<RunContext | null> {
     pipelineGraph,
     stageContext,
     hooks,
-    // reload triggerParams 合并策略：
+    // reload triggerParams 合并策略（优先级由低到高）：
     //   1. pipeline.triggerParams（pipeline 模板级默认，seed.sql 定义）
-    //   2. run.runtimeVars（本次 run 启动时塞入的运行时变量，用于业务动态参数
-    //      跨 resume 持久化；见 coordinator.ts handleAnalysisComplete）
-    // 对 approval/capability node 的模板展开 / resolver 调用，runtime 参数
-    // （如 reportId）必须在 resume 时仍可用。
-    triggerParams: { ...(pipeline.triggerParams ?? {}), ...(run.runtimeVars ?? {}) },
+    //   2. run.triggerParams（本次 run 启动时由 worker/coordinator 传入，
+    //      如 requirementId / gitlabProject 等业务参数）
+    //   3. run.runtimeVars（运行时动态变量，见 coordinator.ts handleAnalysisComplete）
+    // 对 approval/capability/skill_with_approval node 的模板展开，所有参数
+    // 必须在 resume 时仍可用。
+    triggerParams: { ...(pipeline.triggerParams ?? {}), ...(run.triggerParams ?? {}), ...(run.runtimeVars ?? {}) },
   }
 }

@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "v2",
+  "summary": "最小合法 v3 输出 — 单文件 trivial spec",
+  "decision": "pass",
+  "notes": [],
+  "confidenceLevel": "high",
+  "reviewHints": [],
+  "noGos": [],
+  "evidence": {
+    "standardsConsulted": [],
+    "selfCheck": [
+      { "item": "本 spec 最弱点是什么？", "answer": "trivial 改动无明显隐患可述" }
+    ]
+  },
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "format": "given-when-then",
+      "text": "Given 用户访问页面，When 加载完成，Then banner 文案显示为 'Welcome'"
+    }
+  ],
+  "openQuestions": [],
+  "risks": [
+    { "desc": "纯文案改动可能影响 SEO meta 描述长度", "severity": "low" }
+  ],
+  "references": [
+    { "file": "web/src/components/Banner.tsx", "line": 1, "purpose": "Banner 主组件" }
+  ],
+  "clarifications": [
+    {
+      "kind": "assumption",
+      "q": "文案语言是否需要 i18n？",
+      "a": "默认仅中文（项目当前未启用 i18n）",
+      "userMayDisagreeIf": "项目计划近期上 i18n"
+    }
+  ],
+  "e2eScenarios": [
+    {
+      "id": "banner-shows-welcome",
+      "name": "banner 显示 Welcome 文案",
+      "kind": "happy",
+      "coversAC": ["AC-1"],
+      "tags": [],
+      "steps": [
+        "打开 / 首页",
+        "等待 [data-testid=banner] 元素出现"
+      ],
+      "acceptance": [
+        "[data-testid=banner] 文本内容等于 'Welcome'"
+      ]
+    },
+    {
+      "id": "banner-fallback-on-load-fail",
+      "name": "Banner 资源加载失败时降级",
+      "kind": "negative",
+      "coversAC": ["AC-1"],
+      "tags": [],
+      "steps": [
+        "拦截 Banner 组件依赖的样式资源返回 503",
+        "打开 / 首页"
+      ],
+      "acceptance": [
+        "页面不抛 React error boundary",
+        "[data-testid=banner] 元素存在（即使样式降级）"
+      ]
+    }
+  ]
+}
+

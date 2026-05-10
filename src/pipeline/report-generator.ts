@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile, stat } from 'fs/promises'
+import { readFile, readdir, writeFile, stat, mkdir } from 'fs/promises'
 import { createWriteStream } from 'fs'
 import { join, basename } from 'path'
 import archiver from 'archiver'
@@ -173,6 +173,7 @@ export async function generateHtmlReport(data: ReportData, logDir: string): Prom
 </body></html>`
 
   const reportPath = join(logDir, 'report.html')
+  await mkdir(logDir, { recursive: true })
   await writeFile(reportPath, html, 'utf8')
   return reportPath
 }

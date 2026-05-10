@@ -21,6 +21,14 @@ export interface StageDefinition {
     | 'approval'
     | 'llm_agent'
     | 'wait_webhook'
+    | 'skill_node'
+    | 'skill_with_approval'
+    | 'skill_with_review'
+    | 'mr_create'
+    | 'init_qi_branch'
+    | 'e2e_stub'
+    | 'qi_e2e_runner'
+    | 'im_input'
     | ExecutorNodeStageType
   targetRoles: string[]
   parallel: boolean
