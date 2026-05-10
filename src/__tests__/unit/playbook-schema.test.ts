@@ -186,6 +186,53 @@ describe('acceptance 类型', () => {
   it('kind 缺失 → 报错', () => {
     expect(pb({ value: '/x' }).ok).toBe(false)
   })
+
+  it('natural_language kind 对象合法', () => {
+    const r = validatePlaybook({
+      specPath: 'docs/specs/qi-1.md',
+      scenarios: [{
+        id: 's1',
+        name: 'NL 形态',
+        steps: ['步骤'],
+        acceptance: [{ kind: 'natural_language', text: '页面跳转到 /dashboard' }],
+      }],
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.scenarios[0].acceptance[0]).toEqual({
+      kind: 'natural_language',
+      text: '页面跳转到 /dashboard',
+    })
+  })
+
+  it('裸 string acceptance 自动 transform 为 natural_language', () => {
+    const r = validatePlaybook({
+      specPath: 'docs/specs/qi-1.md',
+      scenarios: [{
+        id: 's1',
+        name: 'string 形态',
+        steps: ['步骤'],
+        acceptance: ['用户名输入框值等于 admin'],
+      }],
+    })
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.scenarios[0].acceptance[0]).toEqual({
+      kind: 'natural_language',
+      text: '用户名输入框值等于 admin',
+    })
+  })
+
+  it('natural_language 必须有非空 text（空串 → 报错）', () => {
+    const r = validatePlaybook({
+      specPath: 'docs/specs/qi-1.md',
+      scenarios: [{
+        id: 's1', name: 's', steps: ['x'],
+        acceptance: [{ kind: 'natural_language', text: '' }],
+      }],
+    })
+    expect(r.ok).toBe(false)
+  })
 })
 
 describe('parseManifestJson', () => {

@@ -79,14 +79,27 @@ const dbQuerySchema = z.object({
   timeout_ms: z.number().int().positive().optional(),
 })
 
-export const acceptanceSchema = z.discriminatedUnion('kind', [
-  urlMatchSchema,
-  urlRegexSchema,
-  domVisibleSchema,
-  domTextContainsSchema,
-  apiResponseSchema,
-  logContainsSchema,
-  dbQuerySchema,
+const naturalLanguageAcceptanceSchema = z.object({
+  kind: z.literal('natural_language'),
+  text: z.string().min(1),
+})
+
+export const acceptanceSchema = z.union([
+  z.discriminatedUnion('kind', [
+    urlMatchSchema,
+    urlRegexSchema,
+    domVisibleSchema,
+    domTextContainsSchema,
+    apiResponseSchema,
+    logContainsSchema,
+    dbQuerySchema,
+    naturalLanguageAcceptanceSchema,
+  ]),
+  // 顶级裸 string —— 自动包成 {kind: 'natural_language', text}
+  z.string().min(1).transform((s) => ({
+    kind: 'natural_language' as const,
+    text: s,
+  })),
 ])
 
 export type Acceptance = z.infer<typeof acceptanceSchema>
