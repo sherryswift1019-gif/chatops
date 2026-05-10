@@ -93,6 +93,35 @@ scenarios:
     if (r.ok) return
     expect(r.issues?.some((i) => /重复/.test(i.message))).toBe(true)
   })
+
+  it('dev-loop 风格 YAML（specTitle + 全 NL string acceptance）解析通过', () => {
+    const yaml = `
+specPath: docs/specs/qi-42.md
+specTitle: 用户登录记住用户名
+scenarios:
+  - id: remember-username
+    name: 勾选记住用户名后下次自动填充
+    tags: [happy]
+    steps:
+      - "打开 /login"
+      - "输入用户名 admin 并勾选「记住用户名」"
+      - "点击登录按钮"
+    acceptance:
+      - "页面 URL 跳转到 /dashboard"
+      - "通过 page.evaluate(() => localStorage.getItem('chatops_remembered_username')) 获取值等于 'admin'"
+`
+    const r = parsePlaybookYaml(yaml)
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.value.specPath).toBe('docs/specs/qi-42.md')
+    expect(r.value.specTitle).toBe('用户登录记住用户名')
+    expect(r.value.scenarios[0].acceptance).toHaveLength(2)
+    expect(r.value.scenarios[0].acceptance[0]).toEqual({
+      kind: 'natural_language',
+      text: '页面 URL 跳转到 /dashboard',
+    })
+    expect(r.value.scenarios[0].acceptance[1].kind).toBe('natural_language')
+  })
 })
 
 describe('acceptance 类型', () => {
