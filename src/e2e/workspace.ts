@@ -12,6 +12,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { dirname, join } from 'path'
 import { resolveGitlabConfig } from '../config/gitlab.js'
 import { extractGitlabPath } from '../db/repositories/e2e-target-projects.js'
+import { resolveDataDir } from '../pipeline/data-dir.js'
 
 export interface WorkspacePaths {
   /** 容器内可见的 workspace 路径（pipeline-b 节点 cwd 用这个） */
@@ -21,7 +22,7 @@ export interface WorkspacePaths {
 }
 
 export function getWorkspacePaths(targetProjectId: string): WorkspacePaths {
-  const testDataDir = process.env.TEST_DATA_DIR ?? '/data/chatops/test-runs'
+  const testDataDir = resolveDataDir()
   const hostTestDataDir = process.env.HOST_TEST_DATA_DIR ?? '/srv/chatops/test-runs'
   return {
     containerPath: join(testDataDir, 'workspaces', targetProjectId),
