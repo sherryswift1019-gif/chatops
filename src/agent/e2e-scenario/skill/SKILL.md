@@ -43,7 +43,12 @@ You execute a single test scenario defined in a playbook YAML. You run **on the 
 
 ## Phase 1: Understand the Scenario
 
-Read the YAML scenario in your input. For each `acceptance` item, identify which `kind` it is and what tool you'll use to verify it:
+Read the YAML scenario in your input. Each `acceptance` item is one of two shapes:
+
+**Shape A — strict kind** (object with `kind` field, 7 enumerated types). Identify the `kind` and use the mandated tool below.
+**Shape B — natural language** (`kind: 'natural_language'` with `text`, OR a bare string in YAML). Skip the table and jump to **Phase 4.5** for free-form verification.
+
+For Shape A:
 
 | kind | Tool |
 |---|---|
@@ -72,6 +77,29 @@ For each `acceptance` item, verify and record the result:
 - **Always run all acceptance items**, even if an earlier one failed. Human reviewers need the full picture.
 - Record `expected` and `actual` whenever feasible (e.g. for `url_match`, actual = the URL you observed).
 - If you cannot evaluate an item (sandbox unreachable, DSN missing, etc.), set `result=error` and explain in `reason`.
+
+## Phase 4.5: Verifying natural-language acceptance
+
+When `acceptance.kind === 'natural_language'` (or the YAML wrote it as a bare string, which is automatically wrapped to that shape), read `text` and pick the right verification tool yourself. Examples:
+
+| `text` says... | Pick |
+|---|---|
+| "页面 URL 是 X" / "跳转到 Y" | Playwright MCP read URL |
+| "看到元素 / 文字 X" | `browser_snapshot` + element search |
+| "input 的 value 等于 X" / "焦点在 X" / 任何需要跑 JS 的 | Playwright MCP `browser_evaluate` (page.evaluate) |
+| "API 返回 X" / "HTTP 状态 X" | `curl` (or `browser_network_requests`) |
+| "数据库表 X 里 Y 等于 Z" | `psql` against the named DSN in `sandboxHandle.endpoints` |
+| "日志里出现 X" | `docker logs <containerId>` + grep |
+| "元素 A 的 Y 坐标大于 B 的" / 视觉/几何 | `browser_evaluate` 读 `getBoundingClientRect` |
+
+**Evidence requirements** (so a human reviewer can verify without trusting your narration):
+- `acceptanceResults[i].kind` MUST be `'natural_language'`
+- `acceptanceResults[i].expected` MUST be the original NL `text` verbatim
+- `acceptanceResults[i].actual` MUST be the raw observed value (the URL string, the DOM snippet, the SQL row, the page.evaluate return value)
+- `acceptanceResults[i].reason` MUST be one sentence stating the tool you used (e.g. `"page.evaluate read localStorage.getItem('chatops_remembered_username') = 'admin'"`)
+- At least 1 entry in `artifacts[]` for this acceptance: a screenshot, a `db-N.sql.txt`, or a text file with the page.evaluate return value. Reviewer must be able to judge pass/fail from the artifact alone, without re-running anything.
+
+If `text` is too vague to verify (e.g. "用户体验良好"), set `result=error` with `reason` explaining what's missing — do not pretend to verify.
 
 ## Phase 5: Collect Artifacts
 
@@ -156,7 +184,7 @@ Write `<evidenceDir>/manifest.json` matching this schema (all fields required un
   `reason`/`actual`. **Do NOT** "auto-correct" the port, swap to a different host, or fall back
   to any other URL. The whole point of e2e is to verify *the deployed sandbox*, not whatever
   service happens to be listening nearby.
-- **`acceptance.kind` dictates the verification tool — no downgrades.**
+- **For the 7 strict kinds, `acceptance.kind` dictates the verification tool — no downgrades** (`dom_visible` cannot be replaced by `curl`). The `natural_language` shape is exempt: pick whatever tool fits the assertion (Phase 4.5).
   - `dom_visible` / `dom_text` / `url_match` → MUST use Playwright MCP (`mcp__playwright__browser_*`).
     If Playwright MCP is unavailable for any reason (permission error, server crash, missing dep),
     record `result=error` with the failure in `reason`. **Do NOT** substitute `curl` + text grep —
