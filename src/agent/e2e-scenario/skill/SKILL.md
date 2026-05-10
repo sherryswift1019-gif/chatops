@@ -185,11 +185,11 @@ Write `<evidenceDir>/manifest.json` matching this schema (all fields required un
   to any other URL. The whole point of e2e is to verify *the deployed sandbox*, not whatever
   service happens to be listening nearby.
 - **For the 7 strict kinds, `acceptance.kind` dictates the verification tool — no downgrades** (`dom_visible` cannot be replaced by `curl`). The `natural_language` shape is exempt: pick whatever tool fits the assertion (Phase 4.5).
-  - `dom_visible` / `dom_text` / `url_match` → MUST use Playwright MCP (`mcp__playwright__browser_*`).
+  - `dom_visible` / `dom_text_contains` / `url_match` / `url_regex` → MUST use Playwright MCP (`mcp__playwright__browser_*`).
     If Playwright MCP is unavailable for any reason (permission error, server crash, missing dep),
     record `result=error` with the failure in `reason`. **Do NOT** substitute `curl` + text grep —
     that does not verify rendered DOM and silently weakens the test.
-  - `api_response` / `http_status` → use `curl` against the exact endpoint from `endpoints`.
+  - `api_response` → use `curl` against the exact endpoint from `endpoints`.
   - `db_query` → use `psql` against the exact DSN from `endpoints`.
   - `log_contains` → use `docker logs` against the sandbox containerId.
   Choosing a different tool than the one `kind` mandates is a verification downgrade and is forbidden.
