@@ -14,18 +14,6 @@ type CleanupReport = {
   failed: Array<CleanupTarget & { ok: false; error: string }>
 }
 
-async function cleanWorktree(p: string): Promise<void> {
-  await fs.rm(p, { recursive: true, force: true })
-}
-
-async function cleanSandbox(p: string): Promise<void> {
-  await fs.rm(p, { recursive: true, force: true })
-}
-
-async function cleanBareRepo(p: string): Promise<void> {
-  await fs.rm(p, { recursive: true, force: true })
-}
-
 async function cleanRemoteBranch(_project: string, _branch: string): Promise<void> {
   throw new Error('remote_branch cleanup pending Sub-plan C (GitLab branch delete API)')
 }
@@ -50,19 +38,21 @@ registerNodeType({
     for (const t of targets) {
       try {
         switch (t.kind) {
-          case 'worktree':      await cleanWorktree(t.path);                  break
-          case 'sandbox':       await cleanSandbox(t.path);                   break
-          case 'bare_repo':     await cleanBareRepo(t.path);                  break
+          case 'worktree':
+          case 'sandbox':
+          case 'bare_repo':
+            await fs.rm(t.path, { recursive: true, force: true })
+            break
           case 'remote_branch': await cleanRemoteBranch(t.project, t.branch); break
           case 'draft_mr':      await cleanDraftMr(t.project, t.mrIid);       break
           default:
             report.failed.push({ ...(t as CleanupTarget), ok: false, error: 'unknown kind' })
             continue
         }
-        report.cleaned.push({ ...(t as CleanupTarget), ok: true })
+        report.cleaned.push({ ...t, ok: true })
       } catch (err) {
         report.failed.push({
-          ...(t as CleanupTarget),
+          ...t,
           ok: false,
           error: err instanceof Error ? err.message : String(err),
         })
