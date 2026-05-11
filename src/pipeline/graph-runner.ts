@@ -285,33 +285,37 @@ export async function retryFromNode(
     )
   }
 
-  // 校验 fromNodeId 在 pipeline graph
+  // 校验 fromNodeId 在 pipeline graph（支持 id 或 name 任一匹配）
   const pipeline = await getTestPipelineById(run.pipelineId)
   if (!pipeline) throw new Error(`retryFromNode: pipeline ${run.pipelineId} not found`)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const nodes: any[] = (pipeline.graph as any)?.nodes ?? []
-  const nodeExists = nodes.some((n) => n.id === fromNodeId)
-  if (!nodeExists) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const matchingNode = nodes.find((n: any) => n.id === fromNodeId || n.name === fromNodeId)
+  if (!matchingNode) {
     throw new Error(
-      `retryFromNode: fromNodeId '${fromNodeId}' not found in pipeline graph`,
+      `retryFromNode: fromNodeId '${fromNodeId}' not found in pipeline graph (by id or name)`,
     )
   }
 
   // cap check + increment（仅在 requirement 关联时执行）
+  // retry_counters key 用 matchingNode.id（规范化，避免 display name 改动导致计数断裂）
   const req = await getRequirementByPipelineRunId(runId)
   if (req) {
-    const count = await getNodeRetryCount(req.id, fromNodeId)
+    const count = await getNodeRetryCount(req.id, matchingNode.id)
     if (count >= NODE_RETRY_CAP) {
       throw new Error(
         `retryFromNode: node '${fromNodeId}' has been retried ${count} times (cap=${NODE_RETRY_CAP})`,
       )
     }
-    await incrementNodeRetryCount(req.id, fromNodeId)
+    await incrementNodeRetryCount(req.id, matchingNode.id)
   }
 
   // 截断 stage_results：保留 fromNode 之前的结果，fromNode 自身由 LangGraph 重新产生
+  // 用 matchingNode.name 匹配（nodeStageResultName 优先返回 node.name，与 reducer 一致）
+  const stageResultName = matchingNode.name ?? matchingNode.id
   const currentResults = run.stageResults ?? []
-  const fromIdx = currentResults.findIndex((s) => s.name === fromNodeId)
+  const fromIdx = currentResults.findIndex((s) => s.name === stageResultName)
   if (fromIdx < 0) {
     // fromNode 在 stage_results 中未找到（可能还未执行过），清空全部让 graph 从头
     await getPool().query(

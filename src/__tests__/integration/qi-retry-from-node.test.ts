@@ -41,6 +41,7 @@ const { getTestPipelineById } = await import('../../db/repositories/test-pipelin
 const mockGetPipeline = getTestPipelineById as ReturnType<typeof vi.fn>
 
 // 有效 pipeline 结构（含 graph.nodes）
+// 节点无 name 字段 → nodeStageResultName 回退用 id；stage_results.name 与 id 一致，保留测试 coverage
 function makeValidPipeline(pipelineId: number) {
   return {
     id: pipelineId,
@@ -49,9 +50,9 @@ function makeValidPipeline(pipelineId: number) {
     stages: [],
     graph: {
       nodes: [
-        { id: 'node-a', type: 'skill', name: 'Node A', params: {}, position: { x: 0, y: 0 } },
-        { id: 'node-b', type: 'skill', name: 'Node B', params: {}, position: { x: 0, y: 0 } },
-        { id: 'node-c', type: 'skill', name: 'Node C', params: {}, position: { x: 0, y: 0 } },
+        { id: 'node-a', type: 'skill', params: {}, position: { x: 0, y: 0 } },
+        { id: 'node-b', type: 'skill', params: {}, position: { x: 0, y: 0 } },
+        { id: 'node-c', type: 'skill', params: {}, position: { x: 0, y: 0 } },
       ],
       edges: [],
     },
@@ -79,9 +80,9 @@ describe('retryFromNode', () => {
       stages: [],
       graph: {
         nodes: [
-          { id: 'node-a', type: 'skill', name: 'Node A', params: {}, position: { x: 0, y: 0 } },
-          { id: 'node-b', type: 'skill', name: 'Node B', params: {}, position: { x: 0, y: 0 } },
-          { id: 'node-c', type: 'skill', name: 'Node C', params: {}, position: { x: 0, y: 0 } },
+          { id: 'node-a', type: 'skill', params: {}, position: { x: 0, y: 0 } },
+          { id: 'node-b', type: 'skill', params: {}, position: { x: 0, y: 0 } },
+          { id: 'node-c', type: 'skill', params: {}, position: { x: 0, y: 0 } },
         ],
         edges: [],
       } as any,
@@ -205,6 +206,63 @@ describe('retryFromNode', () => {
     const counters = row.rows[0].retry_counters as { node_retry_counts: Record<string, number> }
     expect(counters.node_retry_counts?.['node-b']).toBe(1)
   })
+
+  it('matches by display name (stage_results.name) too', async () => {
+    // pipeline mock 含 node.id='spec_ai_review' + node.name='Spec AI Review'
+    mockGetPipeline.mockReset()
+    mockGetPipeline
+      .mockResolvedValueOnce({
+        id: pipelineId,
+        name: 'test',
+        description: '',
+        stages: [],
+        graph: {
+          nodes: [
+            { id: 'spec_author', type: 'skill', name: 'Spec Author', params: {}, position: { x: 0, y: 0 } },
+            { id: 'spec_ai_review', type: 'skill', name: 'Spec AI Review', params: {}, position: { x: 0, y: 0 } },
+            { id: 'plan_author', type: 'skill', name: 'Plan Author', params: {}, position: { x: 0, y: 0 } },
+          ],
+          edges: [],
+        },
+        enabled: true,
+        variables: {},
+        productLineId: 0,
+        serverRoles: null,
+        triggerParams: null,
+        artifactInputs: null,
+        containerImage: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .mockResolvedValue(null)
+
+    // stage_results 用 display name（真实场景：nodeStageResultName 优先返回 node.name）
+    await getPool().query(
+      `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
+      [
+        JSON.stringify([
+          { name: 'Spec Author', status: 'success', type: 'llm_author' },
+          { name: 'Spec AI Review', status: 'success', type: 'llm_review' },
+          { name: 'Plan Author', status: 'failed', type: 'llm_author', error: 'boom' },
+        ]),
+        runId,
+      ],
+    )
+
+    // 用 display name 调用（前端 timeline 传 sr.name）
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await retryFromNode(runId, 'Spec AI Review')
+    } finally {
+      warnSpy.mockRestore()
+    }
+
+    const after = await getTestRunById(runId)
+    expect(after?.status).toBe('running')
+    // 截断到 'Spec AI Review' 之前，保留 ['Spec Author']
+    const names = (after?.stageResults ?? []).map((s: any) => s.name)
+    expect(names).toEqual(['Spec Author'])
+  })
 })
 
 describe('POST /requirements/:id/retry-from-node', () => {
@@ -220,7 +278,7 @@ describe('POST /requirements/:id/retry-from-node', () => {
       stages: [],
       graph: {
         nodes: [
-          { id: 'node-x', type: 'skill', name: 'Node X', params: {}, position: { x: 0, y: 0 } },
+          { id: 'node-x', type: 'skill', params: {}, position: { x: 0, y: 0 } },
         ],
         edges: [],
       } as any,
@@ -245,7 +303,7 @@ describe('POST /requirements/:id/retry-from-node', () => {
         ...makeValidPipeline(pipelineId),
         graph: {
           nodes: [
-            { id: 'node-x', type: 'skill', name: 'Node X', params: {}, position: { x: 0, y: 0 } },
+            { id: 'node-x', type: 'skill', params: {}, position: { x: 0, y: 0 } },
           ],
           edges: [],
         },
@@ -321,7 +379,7 @@ describe('POST /requirements/:id/retry-from-node', () => {
         ...makeValidPipeline(pipelineId),
         graph: {
           nodes: [
-            { id: 'node-x', type: 'skill', name: 'Node X', params: {}, position: { x: 0, y: 0 } },
+            { id: 'node-x', type: 'skill', params: {}, position: { x: 0, y: 0 } },
           ],
           edges: [],
         },
