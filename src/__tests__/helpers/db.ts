@@ -214,6 +214,8 @@ const SCHEMA_FILES = [
   'schema-v48.sql',
   // v49: capabilities 业务分类自动预填，纯 UPDATE，安全加入。
   'schema-v49.sql',
+  // v50: test_pipelines 新增 container_image 列，纯 ALTER，无 seed 数据，安全加入。
+  'schema-v50.sql',
   // v51: diagnose_and_repair capability，纯 INSERT catalog，安全加入测试库。
   'schema-v51.sql',
   // v53: test_pipelines 新增 param_schema/im_prompt 列 + pipeline_schedules 纯 DDL，安全加入。

@@ -16,8 +16,10 @@ import type { PipelineGraph, PipelineNode, PipelineEdge } from '../pipeline/type
 /**
  * v8 → v9: e2e_stub 替换为 qi_e2e_runner 子机（含 fix-loop / IM 人工介入）。
  * v8 in-flight QI run 仍走 v8 graph 快照（test_pipelines.graph 在 run 启动时绑定）。
+ * v11 → v12: spec/plan/dev 阶段拆为原子节点（author/ai_review/human_gate/commit_push），
+ * final_approval 改用 human_gate，mr_create_skip 替换为 cleanup + done。共 25 节点。
  */
-export const QUICK_IMPL_TEMPLATE_VERSION = 11
+export const QUICK_IMPL_TEMPLATE_VERSION = 12
 export const QUICK_IMPL_PIPELINE_NAME = 'quick-impl'
 
 // ─── Node definitions ────────────────────────────────────────────────────────
@@ -575,7 +577,7 @@ export async function bootstrapQuickImpl(): Promise<void> {
   if (!existing) {
     await createTestPipeline({
       name: QUICK_IMPL_PIPELINE_NAME,
-      description: 'Quick-Impl：一句话需求 → 自动产出 MR（v10 plan AI review + human escalation）',
+      description: 'Quick-Impl：25 节点新拓扑（spec/plan/dev 拆 author/ai_review/human_gate/commit_push）',
       stages: [],
       graph,
       enabled: true,
