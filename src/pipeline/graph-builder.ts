@@ -175,6 +175,14 @@ export interface QiApprovalInterruptValue {
   contextSummary: string | null
   /** v3 IM 卡片精简摘要（≤ 250 字符，由 buildSpec/FinalApprovalSummary 拼装）；缺失时 IM 走 contextSummary 截断 */
   imSummary?: string | null
+  /**
+   * human_gate 超时秒数（来自 params.timeoutSeconds，默认 86400）。
+   * graph-runner.dispatchInterrupt 据此调 scheduleQiApprovalTimeout。
+   * skill_with_approval 节点不设此字段（由 graph context 读 stage.timeoutSeconds）。
+   */
+  timeoutSeconds?: number
+  /** 超时后的自动决策方向：'reject'（默认）| 'approve' */
+  onTimeout?: 'approve' | 'reject'
 }
 
 /** resume 值：由 resumeFromQiApproval 打包后通过 Command({resume:...}) 送回节点。 */
@@ -2444,10 +2452,6 @@ function buildLlmReviewNode(
  *   source      原始 source 字段
  *   decidedBy   审批人 id（string | null）
  */
-// TODO(Sub-plan B): human_gate timeoutSeconds/onTimeout 是 dead config —
-// dispatchInterrupt 对 QI_APPROVAL_INTERRUPT 没调 scheduleTimeout。
-// 接入真实 pipeline 前必须补定时器：在 graph-runner.ts 的 QI_APPROVAL_INTERRUPT 分支
-// 加上 scheduleTimeout 调用，timeout 后按 onTimeout (approve/reject) auto-decide claimedWaiter。
 function buildHumanGateNode(
   node: PipelineNode,
   index: number,
@@ -2494,6 +2498,8 @@ function buildHumanGateNode(
     const source = String(params.source ?? 'final') as 'ai_pass' | 'ai_escalation' | 'final'
     const requirementTitle = String(params.title ?? triggerParams?.title ?? '')
     const nodeId = (node as PipelineNode).id ?? stageName
+    const timeoutSeconds = Number(params.timeoutSeconds ?? 86400)
+    const onTimeout = (String(params.onTimeout ?? 'reject') === 'approve' ? 'approve' : 'reject') as 'approve' | 'reject'
 
     // 解析 approverIds：逗号分隔字符串或数组
     const rawApprovers = params.approverIds
@@ -2580,6 +2586,8 @@ function buildHumanGateNode(
       requirementTitle,
       contextSummary: waiterRow.contextSummary,
       imSummary: null,
+      timeoutSeconds,
+      onTimeout,
     }
     const resume = interrupt(interruptPayload) as QiApprovalResume
 

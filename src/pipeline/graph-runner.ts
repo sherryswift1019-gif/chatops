@@ -41,6 +41,7 @@ import {
 import {
   type RequirementApprovalWaiter,
   getWaiterById,
+  claimWaiter,
 } from '../db/repositories/requirement-approval-waiters.js'
 import { linearizeStages } from './graph-migration.js'
 import type { StageDefinition, ServerInfo, PipelineGraph } from './types.js'
@@ -112,6 +113,11 @@ const interruptTimers = new Map<string, NodeJS.Timeout>()
 // timeout both firing resumeRun in the same window.
 const resolvedInterrupts = new Set<string>()
 
+// QI human_gate / approval timers — indexed by waiterId (no stageIndex).
+// Separate from interruptTimers because QI interrupts don't carry stageIndex
+// and the timeout path is claim-then-resume-via-waiter, not resumeRun(Command).
+const qiApprovalTimers = new Map<number, NodeJS.Timeout>()
+
 const interruptKey = (runId: number, stageIndex: number) => `${runId}:${stageIndex}`
 
 function clearInterruptTimer(key: string): void {
@@ -119,6 +125,14 @@ function clearInterruptTimer(key: string): void {
   if (t) {
     clearTimeout(t)
     interruptTimers.delete(key)
+  }
+}
+
+function clearQiApprovalTimer(waiterId: number): void {
+  const t = qiApprovalTimers.get(waiterId)
+  if (t) {
+    clearTimeout(t)
+    qiApprovalTimers.delete(waiterId)
   }
 }
 
@@ -147,6 +161,8 @@ export function purgeRunMeta(runId: number): void {
   for (const key of Array.from(interruptTimers.keys())) {
     if (key.startsWith(`${runId}:`)) clearInterruptTimer(key)
   }
+  // QI timers are indexed by waiterId, no runId prefix to scan; on purge any
+  // late-firing timer will just claim a stale waiter (race-loser), no harm.
 }
 
 /** Test-only helper: number of runs currently tracked in the meta registry. */
@@ -165,6 +181,8 @@ export function resetGraphRunnerForTesting(): void {
   resolvedInterrupts.clear()
   for (const t of interruptTimers.values()) clearTimeout(t)
   interruptTimers.clear()
+  for (const t of qiApprovalTimers.values()) clearTimeout(t)
+  qiApprovalTimers.clear()
 }
 
 /**
@@ -302,6 +320,9 @@ export async function resumeFromQiApproval(
 ): Promise<boolean> {
   const info = getQiApprovalInfo(waiterId)
   if (!info) return false
+  // Cancel any pending timeout — IM / Web / timeout itself all funnel here, and
+  // a late timer firing after this point would attempt a duplicate resume.
+  clearQiApprovalTimer(waiterId)
   removeQiApprovalWaiter(waiterId)
   const resume: QiApprovalResume = {
     claimedWaiter,
@@ -455,6 +476,16 @@ async function dispatchInterrupt(ctx: RunContext, value: unknown): Promise<void>
       }
     }).catch(() => {})
 
+    // human_gate: schedule timeout that auto-claims the waiter when fired.
+    // skill_with_approval doesn't set timeoutSeconds (it manages its own
+    // stage.timeoutSeconds via the legacy approval path), so this is gated on
+    // the field being present and positive.
+    const timeoutSeconds = Number(p.timeoutSeconds ?? 0)
+    if (timeoutSeconds > 0) {
+      const onTimeout = p.onTimeout === 'approve' ? 'approve' : 'reject'
+      scheduleQiApprovalTimeout(p.waiterId, timeoutSeconds * 1000, onTimeout)
+    }
+
     // 向钉钉审批人发互动卡片（approverIds 为空则静默跳过，仅 Web 审批）
     if (p.approverIds.length > 0) {
       sendQiApprovalCard({
@@ -532,6 +563,48 @@ function scheduleTimeout(
   // Don't pin the Node process alive.
   if (typeof timer.unref === 'function') timer.unref()
   interruptTimers.set(key, timer)
+}
+
+/**
+ * Schedule a timeout for a Quick-Impl human_gate / approval interrupt.
+ *
+ * Distinct from scheduleTimeout because QI interrupts route through the waiter
+ * table, not a Command resume: on fire we race-claim the waiter with source
+ * 'timeout' and decision per `onTimeout` ('approve' → 'approved', else
+ * 'rejected'). If the claim wins, drive the graph via resumeFromQiApproval
+ * (same path IM / Web callbacks use). If the claim loses (a human got there
+ * first), do nothing — the human path has already resumed the graph and
+ * clearQiApprovalTimer should have removed this timer.
+ *
+ * Exported for unit testing the timeout path without standing up a full graph.
+ */
+export function scheduleQiApprovalTimeout(
+  waiterId: number,
+  timeoutMs: number,
+  onTimeout: 'approve' | 'reject',
+): void {
+  // Replace any prior timer for this waiter (idempotent under re-arm).
+  clearQiApprovalTimer(waiterId)
+  const timer = setTimeout(() => {
+    qiApprovalTimers.delete(waiterId)
+    void (async () => {
+      const decision = onTimeout === 'approve' ? 'approved' : 'rejected'
+      const result = await claimWaiter(waiterId, 'timeout', {
+        decision,
+        rejectReason: `timeout (${onTimeout}) auto-decided`,
+        decidedBy: 'system:timeout',
+      })
+      if (!result.claimed || !result.waiter) {
+        // Human / IM / Web already claimed — nothing to do.
+        return
+      }
+      await resumeFromQiApproval(waiterId, result.waiter)
+    })().catch(err => {
+      console.error(`[graph-runner] qi timeout resume failed for waiter ${waiterId}:`, err)
+    })
+  }, timeoutMs)
+  if (typeof timer.unref === 'function') timer.unref()
+  qiApprovalTimers.set(waiterId, timer)
 }
 
 // --- Finalize ---------------------------------------------------------------
