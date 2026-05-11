@@ -217,10 +217,31 @@ export async function resumeRun(runId: number, command: Command): Promise<void> 
 }
 
 /**
+ * Restart a run from its current checkpoint position.
+ *
+ * Used by retryFailedRun / retryFromNode — after status reset + stage_results
+ * mutation, this helper:
+ * 1. Re-loads RunContext from DB
+ * 2. Calls streamGraph with InitialInput {runId} (same as startRun)
+ * 3. LangGraph picks up at snapshot.next (which is the failed/stuck node)
+ *
+ * 不要用 resumeRun(runId, new Command({})) — 空 Command 会被 LangGraph 拒
+ * （"Received empty Command input"）。Command 仅用于真 interrupt resume 场景。
+ */
+export async function restartRunFromCheckpoint(runId: number): Promise<void> {
+  const ctx = await reloadContext(runId)
+  if (!ctx) {
+    console.warn(`[graph-runner] restartRunFromCheckpoint: run ${runId} not resumable`)
+    return
+  }
+  await streamGraph(ctx, { runId: ctx.runId })
+}
+
+/**
  * Retry a failed pipeline run from its last stuck node.
  *
  * Semantics: graph 在 failed 节点处停留（LangGraph checkpoint 没动），
- * 重置 test_runs.status 为 'running' + 调 resumeRun(Command({}))，
+ * 重置 test_runs.status 为 'running' + 调 restartRunFromCheckpoint，
  * LangGraph re-stream 会重试该节点。
  *
  * Spec §5.5 'resume' 模式。任意 fromNode 回退是 'invalidate_downstream'
@@ -254,7 +275,7 @@ export async function retryFailedRun(runId: number): Promise<void> {
   }
 
   await updateTestRunStatus(runId, 'running')
-  await resumeRun(runId, new Command({}))
+  await restartRunFromCheckpoint(runId)
 }
 
 /**
@@ -267,7 +288,7 @@ export async function retryFailedRun(runId: number): Promise<void> {
  *     让 LangGraph 重 run 产新 entry）
  *  4. increment retry_counters.node_retry_counts[fromNodeId]
  *  5. 重置 test_runs.status='running'
- *  6. 调 resumeRun(runId, Command({}))
+ *  6. 调 restartRunFromCheckpoint(runId)
  *
  * 已知限制：不 mutate LangGraph checkpoint internal state，依赖 reducer mergeStageResults
  * 自然合并新结果。如 LangGraph 不从 fromNode 真重启，需 follow-up 补
@@ -331,7 +352,7 @@ export async function retryFromNode(
   }
 
   await updateTestRunStatus(runId, 'running')
-  await resumeRun(runId, new Command({}))
+  await restartRunFromCheckpoint(runId)
 }
 
 /**

@@ -66,12 +66,12 @@ describe('retryFailedRun', () => {
     await expect(retryFailedRun(999999)).rejects.toThrow(/not found/i)
   })
 
-  it('resets failed run to running (smoke: resumeRun called but not asserted due to ESM binding)', async () => {
+  it('resets failed run to running (smoke: restartRunFromCheckpoint called but not asserted due to ESM binding)', async () => {
     // 注：此测试只 verify 可观测的 DB 副作用（status='running'）。
-    // retryFailedRun 内部确实调 resumeRun，但 ESM same-module binding 让
+    // retryFailedRun 内部确实调 restartRunFromCheckpoint，但 ESM same-module binding 让
     // vi.mock('graph-runner.js') 无法拦截，所以 mock 改为让 reloadContext 提前
-    // return null（mock getTestPipelineById 返回 null），resumeRun 静默 return。
-    // 真实 LangGraph 行为（"在 failed 节点 checkpoint 处 resume 是否真重试该节点"）
+    // return null（mock getTestPipelineById 返回 null），restartRunFromCheckpoint 静默 return。
+    // 真实 LangGraph 行为（"在 failed 节点 checkpoint 处 restart 是否真重试该节点"）
     // 留手动 smoke verify。Plan §Risks 已记录。
     await updateTestRunStatus(runId, 'failed')
 

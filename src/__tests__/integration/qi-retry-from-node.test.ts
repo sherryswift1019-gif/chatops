@@ -20,15 +20,15 @@ import { getPool } from '../../db/client.js'
 // mock strategy：
 // - getTestPipelineById 默认 vi.fn()，可按测试按需控制。
 //   在 retryFromNode 内部首次调用时需返回含 graph.nodes 的有效 pipeline（为了校验 fromNodeId）。
-//   然而 resumeRun 内部的 reloadContext 也会调 getTestPipelineById。
+//   然而 restartRunFromCheckpoint 内部的 reloadContext 也会调 getTestPipelineById。
 //   为避免 LangGraph 真实执行，让第一次返回 valid pipeline，第二次返回 null
 //   (reloadContext 提前 return)。
 //   简化方案：让 mock 始终返回含 graph.nodes 的 pipeline；
 //   reloadContext 不会 throw（返回 ctx），但 streamGraph 在 start 阶段无 checkpoint 时静默退出。
-//   故 mock 返回 null 是更安全选择（reloadContext 拿到 null → resumeRun 提前 return）。
+//   故 mock 返回 null 是更安全选择（reloadContext 拿到 null → restartRunFromCheckpoint 提前 return）。
 //   conflict: retryFromNode 需要 getTestPipelineById 返回有效 pipeline 来校验 fromNodeId。
 //   解决方案：用 mockResolvedValueOnce 按调用次序控制：第一次（retryFromNode 校验用）返回 valid，
-//   第二次（reloadContext 内）返回 null（resumeRun 静默）。
+//   第二次（reloadContext 内）返回 null（restartRunFromCheckpoint 静默）。
 vi.mock('../../db/repositories/test-pipelines.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../db/repositories/test-pipelines.js')>()
   return {
