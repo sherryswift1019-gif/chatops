@@ -206,12 +206,12 @@ describe('POST /requirements/:id/retry', () => {
     expect(resp.json().error).toMatch(/no pipelineRunId/i)
   })
 
-  it('returns 200 + retried:true on valid failed requirement', async () => {
+  it('returns 202 + retried:true + async:true on valid failed requirement', async () => {
     await getPool().query(
       `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
       [JSON.stringify([{ name: 'spec_author', status: 'failed', type: 'llm_author' }]), runId],
     )
-    // 第一次：retryFailedRun 校验节点；第二次：restartRunFromNode → reloadContext → null
+    // 第一次：retryFailedRun 校验节点；第二次：restartRunFromNode（async）→ reloadContext → null
     mockGetPipeline
       .mockResolvedValueOnce(makePipelineWithNode(pipelineId, 'spec_author', 'Spec Author'))
       .mockResolvedValue(null)
@@ -224,8 +224,9 @@ describe('POST /requirements/:id/retry', () => {
       warnSpy.mockRestore()
     }
 
-    expect(resp!.statusCode).toBe(200)
-    expect(resp!.json()).toMatchObject({ ok: true, retried: true })
+    // Sub-plan E.2 final review: retry helper fire-and-forget → endpoint 202 instead of 200
+    expect(resp!.statusCode).toBe(202)
+    expect(resp!.json()).toMatchObject({ ok: true, retried: true, async: true })
 
     const after = await getTestRunById(runId)
     expect(after?.status).toBe('running')

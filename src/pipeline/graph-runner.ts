@@ -268,14 +268,19 @@ export async function restartRunFromNode(
 }
 
 /**
- * Retry a failed pipeline run from its last stuck node.
+ * Retry a failed pipeline run from its last failed stage.
  *
- * Semantics: graph 在 failed 节点处停留（LangGraph checkpoint 没动），
- * 重置 test_runs.status 为 'running' + 调 restartRunFromCheckpoint，
- * LangGraph re-stream 会重试该节点。
+ * Sub-plan E.2 'invalidate_downstream' 模式：
+ * 1. 校验 run status='failed' + 找最后失败的 stage
+ * 2. 映射 stage_results.name (display name) → node.id
+ * 3. cap check + increment retry counter
+ * 4. 调 restartRunFromNode(runId, failedNode.id) 让 LangGraph 从 failedNode 重 run
+ *    (updateState({}, asNode=predecessor) + stream(null))
  *
- * Spec §5.5 'resume' 模式。任意 fromNode 回退是 'invalidate_downstream'
- * 模式留给 Sub-plan E.1。
+ * Returns immediately after kicking off async graph restart (fire-and-forget)，
+ * 不等 graph 跑完。Errors during async run go to console.error + test_runs.error_message
+ * via finalize()。Admin endpoint 因此能立即拿到 sync 校验结果 (200/400)，
+ * HTTP 客户端不会被 10+ 分钟的 QI pipeline 拖到 timeout。
  */
 export async function retryFailedRun(runId: number): Promise<void> {
   const run = await getTestRunById(runId)
@@ -320,7 +325,13 @@ export async function retryFailedRun(runId: number): Promise<void> {
   }
 
   await updateTestRunStatus(runId, 'running')
-  await restartRunFromNode(runId, failedNode.id)
+  // Fire-and-forget：QI pipeline 可能跑 10+ 分钟，HTTP 调用方不能等
+  void restartRunFromNode(runId, failedNode.id).catch((err) => {
+    console.error(
+      `[graph-runner] retryFailedRun async restart failed for run ${runId}:`,
+      err instanceof Error ? err.message : String(err),
+    )
+  })
 }
 
 /**
@@ -329,6 +340,9 @@ export async function retryFailedRun(runId: number): Promise<void> {
  * Sub-plan E.2：调 restartRunFromNode(runId, matchingNode.id) 做 LangGraph state mutation，
  * 让 LangGraph 真正从 fromNode 重 run。mergeStageResults reducer 按 name 覆盖旧结果，
  * 无需手动截断 stage_results。
+ *
+ * Returns immediately after kicking off async graph restart (fire-and-forget)，
+ * 不等 graph 跑完。HTTP 调用方拿到 sync 校验结果 (cap / node-exists) 即返回。
  */
 export async function retryFromNode(
   runId: number,
@@ -368,8 +382,13 @@ export async function retryFromNode(
   }
 
   await updateTestRunStatus(runId, 'running')
-  // Sub-plan E.2: LangGraph state mutation + restart（reducer 按 name 覆盖，无需手动截断）
-  await restartRunFromNode(runId, matchingNode.id)
+  // Fire-and-forget：QI pipeline 可能跑 10+ 分钟，HTTP 调用方不能等
+  void restartRunFromNode(runId, matchingNode.id).catch((err) => {
+    console.error(
+      `[graph-runner] retryFromNode async restart failed for run ${runId} node '${matchingNode.id}':`,
+      err instanceof Error ? err.message : String(err),
+    )
+  })
 }
 
 /**

@@ -333,7 +333,7 @@ describe('POST /requirements/:id/retry-from-node', () => {
     expect(resp.json().error).toMatch(/fromNodeId is required/i)
   })
 
-  it('returns 200 + retriedFromNode on success', async () => {
+  it('returns 202 + retriedFromNode + async:true on success', async () => {
     await getPool().query(
       `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
       [
@@ -354,8 +354,9 @@ describe('POST /requirements/:id/retry-from-node', () => {
       warnSpy.mockRestore()
     }
 
-    expect(resp!.statusCode).toBe(200)
-    expect(resp!.json()).toMatchObject({ ok: true, retriedFromNode: 'node-x' })
+    // Sub-plan E.2 final review: retry helper fire-and-forget → endpoint 202 instead of 200
+    expect(resp!.statusCode).toBe(202)
+    expect(resp!.json()).toMatchObject({ ok: true, retriedFromNode: 'node-x', async: true })
 
     const after = await getTestRunById(runId)
     expect(after?.status).toBe('running')

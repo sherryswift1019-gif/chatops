@@ -191,6 +191,8 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
   })
 
   // ── Retry: 从失败节点 retry（resume 模式，Sub-plan E）─────────────────────
+  // retryFailedRun 内部 fire-and-forget restartRunFromNode（QI pipeline 10+ min，HTTP
+  // 客户端不能等）。sync 部分仍 throw on 校验失败 → 400；成功 → 202 async:true。
   app.post<{ Params: { id: string } }>('/requirements/:id/retry', async (req, reply) => {
     const id = Number(req.params.id)
     if (isNaN(id)) return reply.status(400).send({ error: 'invalid id' })
@@ -206,7 +208,7 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
 
     try {
       await retryFailedRun(requirement.pipelineRunId)
-      return { ok: true, retried: true }
+      return reply.status(202).send({ ok: true, retried: true, async: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return reply.status(400).send({ error: msg })
@@ -214,6 +216,8 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
   })
 
   // ── Retry from node: 从任意节点回退重跑（invalidate_downstream 模式，Sub-plan E.1）──
+  // retryFromNode 同样 fire-and-forget restartRunFromNode。sync 部分 throw → 400；
+  // sync 通过 → 202 async:true，graph 在后台跑。
   app.post<{
     Params: { id: string }
     Body: { fromNodeId: string }
@@ -237,7 +241,7 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
 
     try {
       await retryFromNode(requirement.pipelineRunId, fromNodeId)
-      return { ok: true, retriedFromNode: fromNodeId }
+      return reply.status(202).send({ ok: true, retriedFromNode: fromNodeId, async: true })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return reply.status(400).send({ error: msg })
