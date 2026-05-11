@@ -43,7 +43,7 @@ export interface ApprovalWaiterDTO {
   requirementId: number
   pipelineRunId: number
   nodeId: string
-  approvalKind: 'spec' | 'plan' | 'final' | 'escalation' | 'qi_e2e_intervention' | 'qi_sandbox_failed'
+  approvalKind: 'spec' | 'plan' | 'final' | 'escalation' | 'human_gate' | 'qi_e2e_intervention' | 'qi_sandbox_failed'
   round: number
   decisionSet: 'binary' | 'escalation' | 'qi_e2e_intervention' | 'qi_sandbox_failed' | 'plan_escalation' | 'human_gate'
   imPlatform: string | null

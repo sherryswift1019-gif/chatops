@@ -122,6 +122,50 @@ describe('qi-approval-manager Phase 2 扩展', () => {
       })
       expect(adapter.cards).toHaveLength(0)
     })
+
+    it('approvalKind=human_gate + kindMeta.source=ai_escalation → 卡片标题含 "人工裁决"', async () => {
+      await sendQiApprovalCard({
+        waiterId: 6,
+        requirementId: 105,
+        requirementTitle: 't',
+        contextSummary: 'ctx',
+        approvalKind: 'human_gate',
+        approverIds: ['user-e'],
+        kindMeta: { source: 'ai_escalation' },
+      })
+      const card = adapter.cards[0].card as unknown as { title: string; templateParams: { title: string } }
+      expect(card.title).toContain('人工裁决（AI 多轮未过）')
+      expect(card.templateParams.title).toContain('人工裁决（AI 多轮未过）')
+      // 仍走 binary（decisionSet 缺省）
+      expect(adapter.cards[0].card.actions!.map((a) => a.value)).toEqual(['agree', 'reject'])
+    })
+
+    it('approvalKind=human_gate 无 kindMeta → 标题 "人工审批"', async () => {
+      await sendQiApprovalCard({
+        waiterId: 7,
+        requirementId: 106,
+        requirementTitle: 't',
+        contextSummary: 'ctx',
+        approvalKind: 'human_gate',
+        approverIds: ['user-f'],
+      })
+      const card = adapter.cards[0].card as unknown as { title: string }
+      expect(card.title).toContain('人工审批')
+    })
+
+    it('approvalKind=human_gate + kindMeta.source=final → 标题 "最终批准"', async () => {
+      await sendQiApprovalCard({
+        waiterId: 8,
+        requirementId: 107,
+        requirementTitle: 't',
+        contextSummary: 'ctx',
+        approvalKind: 'human_gate',
+        approverIds: ['user-g'],
+        kindMeta: { source: 'final' },
+      })
+      const card = adapter.cards[0].card as unknown as { title: string }
+      expect(card.title).toContain('最终批准')
+    })
   })
 
   describe('handleQiCardCallback - 多值 decision 解析', () => {

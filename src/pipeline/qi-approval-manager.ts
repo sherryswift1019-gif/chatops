@@ -36,6 +36,33 @@ export function initQiApprovalManager(
 }
 
 /**
+ * 把 approvalKind（+ 可选 kindMeta）映射为 IM 卡片标题里的中文标签。
+ *
+ * human_gate 是通用人审节点，按 kindMeta.source（'ai_pass'/'ai_escalation'/'final'）
+ * 推子标签；其它 approvalKind 走固定字典。未识别的 kind 回退 '升级审批'。
+ *
+ * 调用方：sendQiApprovalCard（IM 卡片）；测试可直接 import 验证标签。
+ */
+export function getKindLabel(
+  approvalKind: string,
+  kindMeta?: Record<string, unknown> | null,
+): string {
+  if (approvalKind === 'spec') return 'Spec 评审'
+  if (approvalKind === 'plan') return 'Plan 评审'
+  if (approvalKind === 'final') return '最终确认'
+  if (approvalKind === 'qi_e2e_intervention') return 'E2E 失败人工介入'
+  if (approvalKind === 'qi_sandbox_failed') return 'Sandbox 启动失败'
+  if (approvalKind === 'human_gate') {
+    const source = String((kindMeta?.source as string) ?? '')
+    if (source === 'ai_pass') return '人工审核'
+    if (source === 'ai_escalation') return '人工裁决（AI 多轮未过）'
+    if (source === 'final') return '最终批准'
+    return '人工审批'
+  }
+  return '升级审批'
+}
+
+/**
  * 发送钉钉互动卡片给每个 approverId。
  * 无 adapter 时静默跳过（纯 Web 审批模式）。
  *
@@ -55,6 +82,8 @@ export async function sendQiApprovalCard(params: {
   /** 决定按钮集；缺省回退按 approvalKind 推（向后兼容）。PRD §7 step 4 起新增 'plan_escalation'。 */
   decisionSet?: string
   approverIds: string[]
+  /** human_gate 子标签元数据（source: 'ai_pass' | 'ai_escalation' | 'final'），供 kindLabel 推子标题。 */
+  kindMeta?: Record<string, unknown> | null
 }): Promise<void> {
   const adapter = _adapters[0]
   if (!adapter || params.approverIds.length === 0) return
@@ -62,12 +91,7 @@ export async function sendQiApprovalCard(params: {
   const trackId = randomUUID()
   cardToWaiter.set(trackId, params.waiterId)
 
-  const kindLabel =
-    params.approvalKind === 'spec' ? 'Spec 评审' :
-    params.approvalKind === 'final' ? '最终确认' :
-    params.approvalKind === 'qi_e2e_intervention' ? 'E2E 失败人工介入' :
-    params.approvalKind === 'qi_sandbox_failed' ? 'Sandbox 启动失败' :
-    '升级审批'
+  const kindLabel = getKindLabel(params.approvalKind, params.kindMeta)
 
   // body 优先 imSummary（v3 精简版 ≤ 250 字符，移动端一屏可见）；否则降级 contextSummary 截断 1500
   const body = params.imSummary

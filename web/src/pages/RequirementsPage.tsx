@@ -55,8 +55,10 @@ const DECISION_CONFIG: Record<ApprovalDecision, { color: string; label: string }
 
 const KIND_LABEL: Record<string, string> = {
   spec:       '需求评审',
+  plan:       'Plan 评审',
   final:      '最终审批',
   escalation: '升级审批',
+  human_gate: '人工审批',
 }
 
 const ALL_STATUSES: RequirementStatus[] = [

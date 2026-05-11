@@ -498,6 +498,7 @@ async function dispatchInterrupt(ctx: RunContext, value: unknown): Promise<void>
         approvalKind: p.approvalKind,
         decisionSet: p.decisionSet,
         approverIds: p.approverIds,
+        kindMeta: p.kindMeta ?? null,
       }).catch(err => {
         console.error(`[graph-runner] sendQiApprovalCard failed for waiterId=${p.waiterId}:`, err)
       })

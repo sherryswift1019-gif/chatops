@@ -183,6 +183,8 @@ export interface QiApprovalInterruptValue {
   timeoutSeconds?: number
   /** 超时后的自动决策方向：'reject'（默认）| 'approve' */
   onTimeout?: 'approve' | 'reject'
+  /** human_gate 子标签元数据（source: 'ai_pass' | 'ai_escalation' | 'final'），供 kindLabel 推子标题。 */
+  kindMeta?: Record<string, unknown> | null
 }
 
 /** resume 值：由 resumeFromQiApproval 打包后通过 Command({resume:...}) 送回节点。 */
@@ -2549,21 +2551,20 @@ function buildHumanGateNode(
         ].filter(Boolean).join('\n\n')
 
     // 复用 / 创建 waiter（replay 时可能已存在，getActiveWaiter 按 (requirementId, nodeId) 查）
+    // approvalKind 从 params 取（默认 'human_gate'）→ sendQiApprovalCard 据此推 IM 卡片标题。
+    // pipeline 定义可显式传 'spec'/'plan'/'final' 之类覆盖（向后兼容 Sub-plan A 之前的硬编码）。
+    const approvalKind = (String(params.approvalKind ?? 'human_gate')) as ApprovalKind
+    const kindMeta: Record<string, unknown> = { source }
     let waiterRow: RequirementApprovalWaiter
     const existing = await getActiveWaiter(requirementId, nodeId)
     if (existing) {
       waiterRow = existing
     } else {
-      // TODO(Sub-plan B): approvalKind='spec' 是占位 — sendQiApprovalCard 会把卡片标题
-      // 渲染为 "🤖 Quick-Impl Spec 评审"。在 plan/dev/final 阶段用 human_gate 时标题错位。
-      // 修复方案：扩展 ApprovalKind union 加 'human_gate'，并在 sendQiApprovalCard 的 kindLabel
-      // 分支加对应标签；或允许 pipeline 定义里通过 params.approvalKind 覆盖（推荐后者，
-      // 让 spec_human_gate / plan_human_gate / dev_human_gate / final_approval 各自配置标题）。
       waiterRow = await createWaiter({
         requirementId,
         pipelineRunId: ctxBase.runId,
         nodeId,
-        approvalKind: 'spec',  // human_gate 走 binary binary 卡片；approvalKind 用 'spec' 作通用标签
+        approvalKind,
         round: 1,
         decisionSet: 'human_gate',
         contextSummary,
@@ -2571,14 +2572,15 @@ function buildHumanGateNode(
     }
 
     // interrupt()：QI_APPROVAL_INTERRUPT 让 graph-runner.dispatchInterrupt 推卡片 + 注册等待。
-    // approvalKind='spec' → buildCardActions fallback → binary agree/reject 按钮。
+    // approvalKind 来自 params（默认 'human_gate'），decisionSet='human_gate' →
+    // buildCardActions fallback → binary agree/reject 按钮。kindMeta.source 给 IM 卡片标题加子标签。
     const interruptPayload: QiApprovalInterruptValue = {
       type: QI_APPROVAL_INTERRUPT,
       waiterId: waiterRow.id,
       runId: ctxBase.runId,
       nodeId,
       round: 1,
-      approvalKind: 'spec',
+      approvalKind,
       decisionSet: 'human_gate',
       loopState: { budgetUsed: 0, rejectHistory: [] },
       approverIds,
@@ -2588,6 +2590,7 @@ function buildHumanGateNode(
       imSummary: null,
       timeoutSeconds,
       onTimeout,
+      kindMeta,
     }
     const resume = interrupt(interruptPayload) as QiApprovalResume
 
