@@ -2030,6 +2030,210 @@ function buildSkillWithReviewNode(
   }
 }
 
+/**
+ * llm_author — 调一次 runSkill() 跑 author role，输出 artifact 文件 + skillOutput。
+ * 不在节点内 commit（commit 留给 git_commit_push 节点）。
+ * round 从 graph state 的 stageResults 计算；上轮 reviewer/human notes 从同前缀节点读取。
+ */
+function buildLlmAuthorNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_author param resolve failed: ${String(err)}`,
+        error: String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!ctxBase.skillExecutor) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'llm_author: skillExecutor not configured',
+        error: 'no_skill_executor',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+    const skillExecutor = ctxBase.skillExecutor
+
+    const requirementId = Number(params.requirementId ?? triggerParams?.requirementId)
+    const skill = String(params.skill ?? '')
+    const role = String(params.role ?? '')
+    const worktreePath = String(params.worktreePath ?? '')
+    const branch = String(params.branch ?? '')
+    const baseBranch = String(params.baseBranch ?? 'main')
+    const artifactPath = String(params.artifactPath ?? '')
+
+    if (!requirementId) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'llm_author: requirementId required',
+        error: 'missing_requirement_id',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!skill || !role) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_author: skill and role required (skill=${skill}, role=${role})`,
+        error: 'missing_skill_or_role',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!worktreePath || !branch || !artifactPath) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_author: worktreePath, branch, artifactPath required`,
+        error: 'missing_path_params',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    // round 计算：数 stageResults 中本节点 name 已出现几次
+    const past = (state.stageResults ?? []).filter(r => r.name === stageName)
+    const round = past.length + 1
+
+    // 上轮 notes 读取（从 state 找对应的 ai_review / human_gate 节点最新输出）
+    // 约定：authorNodeName 形如 `spec_author` → 对应 `spec_ai_review` / `spec_human_gate`
+    const phasePrefix = node.name.replace(/_author$/, '')
+    const aiReviewNodeName = nodeStageResultName({ name: `${phasePrefix}_ai_review` } as PipelineNode)
+    const humanGateNodeName = nodeStageResultName({ name: `${phasePrefix}_human_gate` } as PipelineNode)
+
+    let priorReviewerNotes: string | null = null
+    let priorHumanNotes: string | null = null
+    for (let i = (state.stageResults ?? []).length - 1; i >= 0; i--) {
+      const r = (state.stageResults ?? [])[i]
+      if (priorReviewerNotes === null && r.name === aiReviewNodeName) {
+        priorReviewerNotes = (r.output as { notes?: string })?.notes ?? null
+      }
+      if (priorHumanNotes === null && r.name === humanGateNodeName) {
+        priorHumanNotes = (r.output as { humanNotes?: string })?.humanNotes ?? null
+      }
+      if (priorReviewerNotes !== null && priorHumanNotes !== null) break
+    }
+
+    const inputs: SkillContextInputs = {
+      round,
+      priorReviewerNotes,
+      priorHumanNotes,
+      ...((params.inputs as SkillContextInputs) ?? {}),
+    }
+
+    try {
+      const result = await runSkill(
+        {
+          requirementId,
+          nodeId: `${node.name}:r${round}`,
+          skill,
+          role,
+          worktreePath,
+          branch,
+          baseBranch,
+          artifactPath,
+          inputs,
+          specSources: params.specSources as string[] | undefined,
+          previousRound: round > 1 && (priorReviewerNotes !== null || priorHumanNotes !== null)
+            ? {
+                round: round - 1,
+                decision: 'rejected',
+                reviewerNotes: priorReviewerNotes
+                  ? [{ severity: 'error' as const, msg: priorReviewerNotes }]
+                  : undefined,
+                rejectReason: priorHumanNotes ?? undefined,
+              }
+            : undefined,
+        },
+        skillExecutor,
+        ctxBase.mcpServerPath,
+      )
+
+      if (result.output.decision === 'fail') {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `llm_author decision=fail: ${result.output.summary}`,
+          error: 'llm_author_fail',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [(node as PipelineNode).id ?? stageName]: {
+              status: 'failed' as const,
+              output: {
+                artifactPath,
+                skillOutput: parseFencedJsonFromRaw(result.rawOutput) ?? result.output,
+                round,
+              },
+            },
+          },
+        }
+      }
+
+      const exec: StageExecutionResult = {
+        status: 'success',
+        output: `llm_author round ${round} succeeded: ${result.output.summary ?? ''}`,
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        stepOutputs: {
+          [(node as PipelineNode).id ?? stageName]: {
+            status: 'success' as const,
+            output: {
+              artifactPath,
+              skillOutput: parseFencedJsonFromRaw(result.rawOutput) ?? result.output,
+              round,
+              lastArtifactPath: artifactPath,
+            },
+          },
+        },
+      }
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_author round ${round} failed: ${String(err)}`,
+        error: err instanceof Error ? err.message : String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+  }
+}
+
 // skip_rest node: mark every stage at/after startIndex as skipped so the
 // StageResult list reflects the truncation, then flow to END.
 function buildSkipRestNode(stages: StageDefinition[], startIndex: number) {
@@ -2313,6 +2517,10 @@ export function buildGraphFromPipeline(
 
       case 'im_input':
         builder = builder.addNode(name, buildImInputNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'llm_author':
+        builder = builder.addNode(name, buildLlmAuthorNode(node, i, stageContext, triggerParams ?? {}))
         break
 
       default: {

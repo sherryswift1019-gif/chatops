@@ -61,6 +61,8 @@ describe('node-type barrel', () => {
       'cleanup',
       // Pipeline Stage Types Sub-plan A: idempotent git commit + push
       'git_commit_push',
+      // Pipeline Stage Types Sub-plan A: LLM 生成 artifact（不 commit）
+      'llm_author',
     ]))
   })
 })

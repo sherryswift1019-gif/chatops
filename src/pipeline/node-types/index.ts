@@ -33,6 +33,8 @@ import './end.js'
 import './cleanup.js'
 // Pipeline Stage Types Sub-plan A: idempotent git commit + push
 import './git-commit-push.js'
+// Pipeline Stage Types Sub-plan A: LLM 生成 artifact（不 commit）
+import './llm-author.js'
 
 export * from './registry.js'
 export * from './types.js'
