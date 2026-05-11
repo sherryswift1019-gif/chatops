@@ -27,6 +27,8 @@ import './e2e-stub.js'
 import './qi-e2e-runner.js'
 // Quick-Impl Phase 2 IM 卡片人工介入节点
 import './im-input.js'
+// Pipeline Stage Types Sub-plan A: explicit END sink
+import './end.js'
 
 export * from './registry.js'
 export * from './types.js'

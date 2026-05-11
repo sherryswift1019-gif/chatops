@@ -13,6 +13,7 @@ export type ExecutorNodeStageType =
   | 'template_render'
   | 'fan_out'
   | 'switch'
+  | 'end'
 
 export interface StageDefinition {
   name: string

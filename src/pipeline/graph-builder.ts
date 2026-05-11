@@ -2312,6 +2312,12 @@ export function buildGraphFromPipeline(
         builder = builder.addNode(name, buildImInputNode(node, i, stageContext, triggerParams ?? {}))
         break
 
+      // Explicit END sink: no-op executor, terminal node wiring to LangGraph END handled below.
+      case 'end':
+        builder = builder.addNode(name, wrapWithSnapshot(node, i,
+          buildExecutorNode(node, i, stageContext, triggerParams ?? {}) as (state: typeof PipelineStateAnnotation.State) => Promise<unknown>))
+        break
+
       default: {
         const unknown: never = node.stageType
         throw new Error(`Unsupported stage type: ${String(unknown)}`)

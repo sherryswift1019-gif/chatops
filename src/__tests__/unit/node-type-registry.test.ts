@@ -36,7 +36,7 @@ describe('node-type registry', () => {
 })
 
 describe('node-type barrel', () => {
-  it('registers all 13 stage types when index is imported (T17 capability → llm_agent + switch + invoke_target_script)', async () => {
+  it('registers all expected stage types when index is imported', async () => {
     __resetRegistryForTesting()
     // 动态 import barrel 触发自注册
     await import('../../pipeline/node-types/index.js')
@@ -45,6 +45,18 @@ describe('node-type barrel', () => {
       'script','approval','llm_agent','wait_webhook',
       'http','dm','db_update','sql_query','file_read','template_render','fan_out','switch',
       'invoke_target_script',
+      // Quick-Impl Phase 1 skill nodes
+      'skill_node','skill_with_approval','skill_with_review',
+      // Quick-Impl Phase 1 MR creation
+      'mr_create',
+      // Quick-Impl Phase 1 init branch + e2e stub
+      'init_qi_branch','e2e_stub',
+      // Quick-Impl Phase 2 real E2E runner
+      'qi_e2e_runner',
+      // Quick-Impl Phase 2 IM 卡片人工介入
+      'im_input',
+      // Pipeline Stage Types Sub-plan A: explicit END sink
+      'end',
     ]))
   })
 })
