@@ -1081,6 +1081,15 @@ export default function RequirementsPage() {
               <StageResultsTimeline
                 stageResults={detail.stageResults ?? []}
                 pipelineNodes={undefined}
+                onRetry={detail?.status === 'failed' ? async (nodeId) => {
+                  try {
+                    await requirementsApi.retryFromNode(detail.id, nodeId)
+                    message.success(`已从节点「${nodeId}」重试`)
+                    await openDetail(detail.id)
+                  } catch (err: any) {
+                    message.error(`重试失败：${err?.response?.data?.error ?? err.message}`)
+                  }
+                } : undefined}
               />
             </div>
           </Space>

@@ -1,11 +1,12 @@
 import React from 'react'
-import { Timeline, Tag, Tooltip, Space, Typography } from 'antd'
+import { Timeline, Tag, Tooltip, Space, Typography, Button, Popconfirm } from 'antd'
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
   SyncOutlined,
   ClockCircleOutlined,
   MinusCircleOutlined,
+  ReloadOutlined,
 } from '@ant-design/icons'
 
 type StageResult = {
@@ -43,9 +44,13 @@ function fmtDuration(ms?: number): string {
 export function StageResultsTimeline({
   stageResults,
   pipelineNodes,
+  onRetry,
+  isRetryDisabled,
 }: {
   stageResults: StageResult[]
   pipelineNodes?: PipelineNode[]
+  onRetry?: (nodeId: string) => Promise<void>
+  isRetryDisabled?: (nodeId: string) => boolean
 }) {
   const nodeNameMap = new Map<string, string>()
   for (const n of pipelineNodes ?? []) {
@@ -83,6 +88,25 @@ export function StageResultsTimeline({
                   </Typography.Text>
                 </Tooltip>
               ) : null}
+              {onRetry && (sr.status === 'failed' || sr.status === 'success') && (
+                <Popconfirm
+                  title={`确定从「${displayName}」节点重试？`}
+                  description="将截断该节点之后的所有结果，从此节点重新执行。"
+                  onConfirm={() => onRetry(sr.name)}
+                  okText="重试"
+                  cancelText="取消"
+                  disabled={isRetryDisabled?.(sr.name)}
+                >
+                  <Button
+                    size="small"
+                    icon={<ReloadOutlined />}
+                    disabled={isRetryDisabled?.(sr.name)}
+                    title={isRetryDisabled?.(sr.name) ? '已达 retry 上限' : ''}
+                  >
+                    重试此节点
+                  </Button>
+                </Popconfirm>
+              )}
             </Space>
           </Timeline.Item>
         )

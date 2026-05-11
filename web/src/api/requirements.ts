@@ -208,6 +208,10 @@ export const requirementsApi = {
     return client.post(`/requirements/${id}/retry`).then(r => r.data)
   },
 
+  retryFromNode(id: number, fromNodeId: string): Promise<{ ok: boolean; retriedFromNode: string }> {
+    return client.post(`/requirements/${id}/retry-from-node`, { fromNodeId }).then(r => r.data)
+  },
+
   decide(
     requirementId: number,
     waiterId: number,
