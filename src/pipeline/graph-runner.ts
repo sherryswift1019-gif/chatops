@@ -76,6 +76,7 @@ import {
   incrementNodeRetryCount,
   NODE_RETRY_CAP,
 } from '../db/repositories/requirements.js'
+import { getPool } from '../db/client.js'
 
 // --- Public types -----------------------------------------------------------
 
@@ -250,6 +251,79 @@ export async function retryFailedRun(runId: number): Promise<void> {
       }
       await incrementNodeRetryCount(req.id, lastFailed.name)
     }
+  }
+
+  await updateTestRunStatus(runId, 'running')
+  await resumeRun(runId, new Command({}))
+}
+
+/**
+ * 从任意 fromNode 回退重跑（spec §5.5 'invalidate_downstream' 模式）。
+ *
+ * 步骤：
+ *  1. 校验 fromNodeId 在 pipeline.graph.nodes 中
+ *  2. 校验 run.status='failed' + retry cap
+ *  3. 截断 test_runs.stage_results 数组（保留 [0, fromIdx)，不含 fromNode 自身那条，
+ *     让 LangGraph 重 run 产新 entry）
+ *  4. increment retry_counters.node_retry_counts[fromNodeId]
+ *  5. 重置 test_runs.status='running'
+ *  6. 调 resumeRun(runId, Command({}))
+ *
+ * 已知限制：不 mutate LangGraph checkpoint internal state，依赖 reducer mergeStageResults
+ * 自然合并新结果。如 LangGraph 不从 fromNode 真重启，需 follow-up 补
+ * compiled.updateState({}, asNode)（plan §Risks）。
+ */
+export async function retryFromNode(
+  runId: number,
+  fromNodeId: string,
+): Promise<void> {
+  const run = await getTestRunById(runId)
+  if (!run) throw new Error(`retryFromNode: run ${runId} not found`)
+  if (run.status !== 'failed') {
+    throw new Error(
+      `retryFromNode: run ${runId} status is '${run.status}', expected 'failed'`,
+    )
+  }
+
+  // 校验 fromNodeId 在 pipeline graph
+  const pipeline = await getTestPipelineById(run.pipelineId)
+  if (!pipeline) throw new Error(`retryFromNode: pipeline ${run.pipelineId} not found`)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodes: any[] = (pipeline.graph as any)?.nodes ?? []
+  const nodeExists = nodes.some((n) => n.id === fromNodeId)
+  if (!nodeExists) {
+    throw new Error(
+      `retryFromNode: fromNodeId '${fromNodeId}' not found in pipeline graph`,
+    )
+  }
+
+  // cap check + increment（仅在 requirement 关联时执行）
+  const req = await getRequirementByPipelineRunId(runId)
+  if (req) {
+    const count = await getNodeRetryCount(req.id, fromNodeId)
+    if (count >= NODE_RETRY_CAP) {
+      throw new Error(
+        `retryFromNode: node '${fromNodeId}' has been retried ${count} times (cap=${NODE_RETRY_CAP})`,
+      )
+    }
+    await incrementNodeRetryCount(req.id, fromNodeId)
+  }
+
+  // 截断 stage_results：保留 fromNode 之前的结果，fromNode 自身由 LangGraph 重新产生
+  const currentResults = run.stageResults ?? []
+  const fromIdx = currentResults.findIndex((s) => s.name === fromNodeId)
+  if (fromIdx < 0) {
+    // fromNode 在 stage_results 中未找到（可能还未执行过），清空全部让 graph 从头
+    await getPool().query(
+      `UPDATE test_runs SET stage_results = '[]'::jsonb WHERE id = $1`,
+      [runId],
+    )
+  } else {
+    const truncated = currentResults.slice(0, fromIdx)
+    await getPool().query(
+      `UPDATE test_runs SET stage_results = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(truncated), runId],
+    )
   }
 
   await updateTestRunStatus(runId, 'running')

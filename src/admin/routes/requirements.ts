@@ -20,7 +20,7 @@ import {
   claimWaiter,
   type ApprovalDecision,
 } from '../../db/repositories/requirement-approval-waiters.js'
-import { resumeFromQiApproval, retryFailedRun } from '../../pipeline/graph-runner.js'
+import { resumeFromQiApproval, retryFailedRun, retryFromNode } from '../../pipeline/graph-runner.js'
 import { getTestRunById, deleteTestRun } from '../../db/repositories/test-runs.js'
 import { sanitizeRawInput, logSanitizeHits } from '../../quick-impl/security.js'
 
@@ -207,6 +207,37 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
     try {
       await retryFailedRun(requirement.pipelineRunId)
       return { ok: true, retried: true }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return reply.status(400).send({ error: msg })
+    }
+  })
+
+  // ── Retry from node: 从任意节点回退重跑（invalidate_downstream 模式，Sub-plan E.1）──
+  app.post<{
+    Params: { id: string }
+    Body: { fromNodeId: string }
+  }>('/requirements/:id/retry-from-node', async (req, reply) => {
+    const id = Number(req.params.id)
+    if (isNaN(id)) return reply.status(400).send({ error: 'invalid id' })
+
+    const fromNodeId = String(req.body?.fromNodeId ?? '').trim()
+    if (!fromNodeId) {
+      return reply.status(400).send({ error: 'fromNodeId is required in body' })
+    }
+
+    const requirement = await getRequirementById(id)
+    if (!requirement) return reply.status(404).send({ error: 'requirement not found' })
+
+    if (!requirement.pipelineRunId) {
+      return reply.status(400).send({
+        error: 'requirement has no pipelineRunId; cannot retry-from-node',
+      })
+    }
+
+    try {
+      await retryFromNode(requirement.pipelineRunId, fromNodeId)
+      return { ok: true, retriedFromNode: fromNodeId }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       return reply.status(400).send({ error: msg })
