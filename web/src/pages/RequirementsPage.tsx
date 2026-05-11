@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   Card, Table, Tag, Button, Space, Drawer, Descriptions, Timeline,
   Modal, Form, Input, message, Select, Badge, Typography, Popconfirm, Collapse,
-  Checkbox,
+  Checkbox, Divider,
 } from 'antd'
 import {
   PlusOutlined, ReloadOutlined, CheckOutlined,
@@ -22,6 +22,7 @@ import {
 } from '../api/requirements'
 import { findStageForWaiter, shouldWarnPlanRework } from './requirements-helpers'
 import { QiE2eProgress } from './QiE2eProgress'
+import { StageResultsTimeline } from '../components/StageResultsTimeline'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
@@ -1074,6 +1075,14 @@ export default function RequirementsPage() {
             </div>
 
             <QiE2eProgress stageResults={detail.stageResults} />
+
+            <div>
+              <Divider orientation="left">节点执行记录</Divider>
+              <StageResultsTimeline
+                stageResults={detail.stageResults ?? []}
+                pipelineNodes={undefined}
+              />
+            </div>
           </Space>
         )}
       </Drawer>
