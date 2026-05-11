@@ -1,6 +1,8 @@
 import * as fs from 'node:fs/promises'
+import axios from 'axios'
 import { registerNodeType } from './registry.js'
 import type { NodeExecutionResult, ExecutionContext } from './types.js'
+import { resolveGitlabConfig } from '../../config/gitlab.js'
 
 type CleanupTarget =
   | { kind: 'worktree'; path: string }
@@ -14,12 +16,56 @@ type CleanupReport = {
   failed: Array<CleanupTarget & { ok: false; error: string }>
 }
 
-async function cleanRemoteBranch(_project: string, _branch: string): Promise<void> {
-  throw new Error('remote_branch cleanup pending Sub-plan C (GitLab branch delete API)')
+async function cleanRemoteBranch(project: string, branch: string): Promise<void> {
+  const { url, token } = await resolveGitlabConfig()
+  if (!url || !token) {
+    throw new Error('GitLab config (url/token) missing')
+  }
+  try {
+    await axios.delete(
+      `${url}/api/v4/projects/${encodeURIComponent(project)}/repository/branches/${encodeURIComponent(branch)}`,
+      {
+        headers: { 'PRIVATE-TOKEN': token },
+        timeout: 30_000,
+      },
+    )
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      return
+    }
+    const msg = axios.isAxiosError(err)
+      ? `${err.response?.status ?? ''} ${JSON.stringify(err.response?.data ?? err.message)}`
+      : String(err)
+    throw new Error(`GitLab DELETE branch failed: ${msg}`)
+  }
 }
 
-async function cleanDraftMr(_project: string, _mrIid: number): Promise<void> {
-  throw new Error('draft_mr cleanup pending Sub-plan C (GitLab MR close API)')
+async function cleanDraftMr(project: string, mrIid: number): Promise<void> {
+  if (!mrIid || mrIid <= 0) {
+    return
+  }
+  const { url, token } = await resolveGitlabConfig()
+  if (!url || !token) {
+    throw new Error('GitLab config (url/token) missing')
+  }
+  try {
+    await axios.put(
+      `${url}/api/v4/projects/${encodeURIComponent(project)}/merge_requests/${mrIid}`,
+      { state_event: 'close' },
+      {
+        headers: { 'PRIVATE-TOKEN': token },
+        timeout: 30_000,
+      },
+    )
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      return
+    }
+    const msg = axios.isAxiosError(err)
+      ? `${err.response?.status ?? ''} ${JSON.stringify(err.response?.data ?? err.message)}`
+      : String(err)
+    throw new Error(`GitLab close MR failed: ${msg}`)
+  }
 }
 
 registerNodeType({
