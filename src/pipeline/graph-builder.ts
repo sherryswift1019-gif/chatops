@@ -2444,6 +2444,10 @@ function buildLlmReviewNode(
  *   source      原始 source 字段
  *   decidedBy   审批人 id（string | null）
  */
+// TODO(Sub-plan B): human_gate timeoutSeconds/onTimeout 是 dead config —
+// dispatchInterrupt 对 QI_APPROVAL_INTERRUPT 没调 scheduleTimeout。
+// 接入真实 pipeline 前必须补定时器：在 graph-runner.ts 的 QI_APPROVAL_INTERRUPT 分支
+// 加上 scheduleTimeout 调用，timeout 后按 onTimeout (approve/reject) auto-decide claimedWaiter。
 function buildHumanGateNode(
   node: PipelineNode,
   index: number,
@@ -2544,6 +2548,11 @@ function buildHumanGateNode(
     if (existing) {
       waiterRow = existing
     } else {
+      // TODO(Sub-plan B): approvalKind='spec' 是占位 — sendQiApprovalCard 会把卡片标题
+      // 渲染为 "🤖 Quick-Impl Spec 评审"。在 plan/dev/final 阶段用 human_gate 时标题错位。
+      // 修复方案：扩展 ApprovalKind union 加 'human_gate'，并在 sendQiApprovalCard 的 kindLabel
+      // 分支加对应标签；或允许 pipeline 定义里通过 params.approvalKind 覆盖（推荐后者，
+      // 让 spec_human_gate / plan_human_gate / dev_human_gate / final_approval 各自配置标题）。
       waiterRow = await createWaiter({
         requirementId,
         pipelineRunId: ctxBase.runId,
