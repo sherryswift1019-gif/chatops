@@ -11,7 +11,7 @@ VALUES (
   'Git Commit + Push',
   '幂等 git add → commit → push origin；无改动跳过 commit；HEAD 已同步 origin 跳过 push；支持 pushOnly 模式（dev_push 用）',
   'flow',
-  '{"type":"object","properties":{"worktreePath":{"type":"string"},"branch":{"type":"string"},"artifactPaths":{"type":"array","items":{"type":"string"}},"commitMessage":{"type":"string"},"pushOnly":{"type":"boolean"}},"required":["worktreePath","branch"]}'::jsonb,
+  '{"type":"object","properties":{"worktreePath":{"type":"string"},"branch":{"type":"string"},"artifactPaths":{"type":"array","items":{"type":"string"}},"commitMessage":{"type":"string","description":"Required unless pushOnly is true"},"pushOnly":{"type":"boolean"}},"required":["worktreePath","branch"]}'::jsonb,
   '{"type":"object","properties":{"commitSha":{"type":"string"},"pushedAt":{"type":"string"},"skipped":{"type":"boolean"}}}'::jsonb,
   TRUE,
   TRUE

@@ -2264,7 +2264,7 @@ export function buildGraphFromPipeline(
         } else if (node.stageType === 'approval') {
           realFn = buildApprovalNode(node, i, stageContext, triggerParams) as typeof realFn
         } else {
-          // dm / db_update / http / mr_create — generic NodeExecutor dispatch
+          // dm / db_update / http / mr_create / git_commit_push — generic NodeExecutor dispatch
           realFn = buildExecutorNode(node, i, stageContext, triggerParams ?? {}) as typeof realFn
         }
         const nodeFn = hooks.dryRunFlavor

@@ -36,7 +36,7 @@ registerNodeType({
     const branch = String(params.branch ?? '')
     const artifactPaths = (params.artifactPaths ?? []) as string[]
     const commitMessage = String(params.commitMessage ?? '')
-    const pushOnly = Boolean(params.pushOnly ?? false)
+    const pushOnly = params.pushOnly === true
 
     if (!worktreePath) return { status: 'failed', output: {}, error: 'git_commit_push: worktreePath required' }
     if (!branch)       return { status: 'failed', output: {}, error: 'git_commit_push: branch required' }
