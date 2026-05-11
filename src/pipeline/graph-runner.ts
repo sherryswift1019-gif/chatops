@@ -21,6 +21,7 @@ import { createProductionSkillExecutor } from '../quick-impl/skill-executor.js'
 import {
   buildGraphFromStages,
   buildGraphFromPipeline,
+  findPredecessorStageName,
   APPROVAL_INTERRUPT,
   WEBHOOK_INTERRUPT,
   QI_APPROVAL_INTERRUPT,
@@ -76,7 +77,6 @@ import {
   incrementNodeRetryCount,
   NODE_RETRY_CAP,
 } from '../db/repositories/requirements.js'
-import { getPool } from '../db/client.js'
 
 // --- Public types -----------------------------------------------------------
 
@@ -217,23 +217,52 @@ export async function resumeRun(runId: number, command: Command): Promise<void> 
 }
 
 /**
- * Restart a run from its current checkpoint position.
+ * Restart a pipeline run from a specific node (LangGraph state-mutating retry).
  *
- * Used by retryFailedRun / retryFromNode — after status reset + stage_results
- * mutation, this helper:
- * 1. Re-loads RunContext from DB
- * 2. Calls streamGraph with InitialInput {runId} (same as startRun)
- * 3. LangGraph picks up at snapshot.next (which is the failed/stuck node)
+ * Used by retryFromNode / retryFailedRun. Implements Sub-plan E.2 fix:
+ * Sub-plan E.1 smoke verify 发现 streamGraph(InitialInput) on a "done" graph 直接退出。
+ * 本 helper 调用 compiled.updateState(config, {}, asNode: predecessor) 让 LangGraph 重算
+ * `snapshot.next=[fromNode]` 再 stream，强制重 run。
  *
- * 不要用 resumeRun(runId, new Command({})) — 空 Command 会被 LangGraph 拒
- * （"Received empty Command input"）。Command 仅用于真 interrupt resume 场景。
+ * mergeStageResults reducer 按 name 合并，所以新 run 产生的 entry 会覆盖旧的
+ * (same name → shallow merge new wins)。无需手动截断 stage_results。
+ *
+ * Throws if:
+ * - run not resumable (no context)
+ * - pipeline.graph not loaded
+ * - fromNodeId is entry node (no predecessor — v1 not supported)
  */
-export async function restartRunFromCheckpoint(runId: number): Promise<void> {
+export async function restartRunFromNode(
+  runId: number,
+  fromNodeId: string,
+): Promise<void> {
   const ctx = await reloadContext(runId)
   if (!ctx) {
-    console.warn(`[graph-runner] restartRunFromCheckpoint: run ${runId} not resumable`)
+    console.warn(`[graph-runner] restartRunFromNode: run ${runId} not resumable`)
     return
   }
+  if (!ctx.pipelineGraph) {
+    throw new Error(
+      `restartRunFromNode: run ${runId} has no pipelineGraph (legacy stages mode not supported)`,
+    )
+  }
+
+  const predecessorStageName = findPredecessorStageName(ctx.pipelineGraph, fromNodeId)
+  if (!predecessorStageName) {
+    throw new Error(
+      `restartRunFromNode: fromNodeId '${fromNodeId}' has no predecessor in pipeline graph (entry-node retry not supported in v1)`,
+    )
+  }
+
+  const saver = await getCheckpointer()
+  const compiled = compileGraph(ctx, saver)
+  const config = { configurable: { thread_id: String(runId) } }
+
+  // updateState with empty values + asNode=predecessor → LangGraph re-computes next=[fromNode-langgraph-name]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (compiled as any).updateState(config, {}, predecessorStageName)
+
+  // Stream picks up at fromNode (the new next)
   await streamGraph(ctx, { runId: ctx.runId })
 }
 
@@ -249,50 +278,56 @@ export async function restartRunFromCheckpoint(runId: number): Promise<void> {
  */
 export async function retryFailedRun(runId: number): Promise<void> {
   const run = await getTestRunById(runId)
-  if (!run) {
-    throw new Error(`retryFailedRun: run ${runId} not found`)
-  }
+  if (!run) throw new Error(`retryFailedRun: run ${runId} not found`)
   if (run.status !== 'failed') {
     throw new Error(
       `retryFailedRun: run ${runId} status is '${run.status}', expected 'failed'`,
     )
   }
 
-  // Sub-plan E.1：cap check — 找最后失败节点，校验 + 递增计数
   const stageResults = run.stageResults ?? []
   const lastFailed = [...stageResults].reverse().find((s) => s.status === 'failed')
-  if (lastFailed) {
-    const req = await getRequirementByPipelineRunId(runId)
-    if (req) {
-      const count = await getNodeRetryCount(req.id, lastFailed.name)
-      if (count >= NODE_RETRY_CAP) {
-        throw new Error(
-          `retryFailedRun: node '${lastFailed.name}' has been retried ${count} times (cap=${NODE_RETRY_CAP})`,
-        )
-      }
-      await incrementNodeRetryCount(req.id, lastFailed.name)
+  if (!lastFailed) {
+    throw new Error(
+      `retryFailedRun: run ${runId} has no failed stage to retry from`,
+    )
+  }
+
+  // 映射 stage_results.name (display name or id) → node in pipeline graph
+  const pipeline = await getTestPipelineById(run.pipelineId)
+  if (!pipeline) throw new Error(`retryFailedRun: pipeline ${run.pipelineId} not found`)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const nodes = (pipeline.graph as any)?.nodes ?? []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const failedNode = nodes.find((n: any) => n.id === lastFailed.name || n.name === lastFailed.name)
+  if (!failedNode) {
+    throw new Error(
+      `retryFailedRun: failed stage name '${lastFailed.name}' not found in pipeline graph`,
+    )
+  }
+
+  // cap check + increment
+  const req = await getRequirementByPipelineRunId(runId)
+  if (req) {
+    const count = await getNodeRetryCount(req.id, failedNode.id)
+    if (count >= NODE_RETRY_CAP) {
+      throw new Error(
+        `retryFailedRun: node '${failedNode.id}' has been retried ${count} times (cap=${NODE_RETRY_CAP})`,
+      )
     }
+    await incrementNodeRetryCount(req.id, failedNode.id)
   }
 
   await updateTestRunStatus(runId, 'running')
-  await restartRunFromCheckpoint(runId)
+  await restartRunFromNode(runId, failedNode.id)
 }
 
 /**
  * 从任意 fromNode 回退重跑（spec §5.5 'invalidate_downstream' 模式）。
  *
- * 步骤：
- *  1. 校验 fromNodeId 在 pipeline.graph.nodes 中
- *  2. 校验 run.status='failed' + retry cap
- *  3. 截断 test_runs.stage_results 数组（保留 [0, fromIdx)，不含 fromNode 自身那条，
- *     让 LangGraph 重 run 产新 entry）
- *  4. increment retry_counters.node_retry_counts[fromNodeId]
- *  5. 重置 test_runs.status='running'
- *  6. 调 restartRunFromCheckpoint(runId)
- *
- * 已知限制：不 mutate LangGraph checkpoint internal state，依赖 reducer mergeStageResults
- * 自然合并新结果。如 LangGraph 不从 fromNode 真重启，需 follow-up 补
- * compiled.updateState({}, asNode)（plan §Risks）。
+ * Sub-plan E.2：调 restartRunFromNode(runId, matchingNode.id) 做 LangGraph state mutation，
+ * 让 LangGraph 真正从 fromNode 重 run。mergeStageResults reducer 按 name 覆盖旧结果，
+ * 无需手动截断 stage_results。
  */
 export async function retryFromNode(
   runId: number,
@@ -319,8 +354,7 @@ export async function retryFromNode(
     )
   }
 
-  // cap check + increment（仅在 requirement 关联时执行）
-  // retry_counters key 用 matchingNode.id（规范化，避免 display name 改动导致计数断裂）
+  // cap check + increment（用 matchingNode.id 作 stable key）
   const req = await getRequirementByPipelineRunId(runId)
   if (req) {
     const count = await getNodeRetryCount(req.id, matchingNode.id)
@@ -332,27 +366,9 @@ export async function retryFromNode(
     await incrementNodeRetryCount(req.id, matchingNode.id)
   }
 
-  // 截断 stage_results：保留 fromNode 之前的结果，fromNode 自身由 LangGraph 重新产生
-  // 用 matchingNode.name 匹配（nodeStageResultName 优先返回 node.name，与 reducer 一致）
-  const stageResultName = matchingNode.name ?? matchingNode.id
-  const currentResults = run.stageResults ?? []
-  const fromIdx = currentResults.findIndex((s) => s.name === stageResultName)
-  if (fromIdx < 0) {
-    // fromNode 在 stage_results 中未找到（可能还未执行过），清空全部让 graph 从头
-    await getPool().query(
-      `UPDATE test_runs SET stage_results = '[]'::jsonb WHERE id = $1`,
-      [runId],
-    )
-  } else {
-    const truncated = currentResults.slice(0, fromIdx)
-    await getPool().query(
-      `UPDATE test_runs SET stage_results = $1::jsonb WHERE id = $2`,
-      [JSON.stringify(truncated), runId],
-    )
-  }
-
   await updateTestRunStatus(runId, 'running')
-  await restartRunFromCheckpoint(runId)
+  // Sub-plan E.2: LangGraph state mutation + restart（reducer 按 name 覆盖，无需手动截断）
+  await restartRunFromNode(runId, matchingNode.id)
 }
 
 /**
@@ -376,21 +392,7 @@ export async function resumeOrphanedRun(runId: number): Promise<void> {
   // This avoids re-streaming the graph (which would re-run nodes from the
   // interrupted checkpoint, overwriting already-completed stage results).
   const saver = await getCheckpointer()
-  const graphBuilder = ctx.pipelineGraph
-    ? buildGraphFromPipeline({
-        graph: ctx.pipelineGraph,
-        stageContext: ctx.stageContext,
-        hooks: ctx.hooks,
-        triggerParams: ctx.triggerParams,
-      })
-    : buildGraphFromStages({
-        stages: ctx.stages,
-        stageContext: ctx.stageContext,
-        hooks: ctx.hooks,
-        triggerParams: ctx.triggerParams,
-      })
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const compiled = (graphBuilder as any).compile({ checkpointer: saver })
+  const compiled = compileGraph(ctx, saver)
   const config = { configurable: { thread_id: String(runId) } }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const snapshot: any = await compiled.getState(config).catch(() => null)
@@ -487,11 +489,8 @@ export async function resumeFromQiApproval(
 
 type InitialInput = { runId: number }
 
-async function streamGraph(
-  ctx: RunContext,
-  inputOrCommand: InitialInput | Command,
-): Promise<void> {
-  const saver = await getCheckpointer()
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function compileGraph(ctx: RunContext, saver: any): any {
   const graphBuilder = ctx.pipelineGraph
     ? buildGraphFromPipeline({
         graph: ctx.pipelineGraph,
@@ -506,7 +505,15 @@ async function streamGraph(
         triggerParams: ctx.triggerParams,
       })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const compiled = (graphBuilder as any).compile({ checkpointer: saver })
+  return (graphBuilder as any).compile({ checkpointer: saver })
+}
+
+async function streamGraph(
+  ctx: RunContext,
+  inputOrCommand: InitialInput | Command,
+): Promise<void> {
+  const saver = await getCheckpointer()
+  const compiled = compileGraph(ctx, saver)
   const config = { configurable: { thread_id: String(ctx.runId) } }
 
   try {
@@ -933,21 +940,7 @@ export async function getPendingInterrupt(
   const ctx = await reloadContext(runId)
   if (!ctx) return null
   const saver = await getCheckpointer()
-  const graphBuilder = ctx.pipelineGraph
-    ? buildGraphFromPipeline({
-        graph: ctx.pipelineGraph,
-        stageContext: ctx.stageContext,
-        hooks: ctx.hooks,
-        triggerParams: ctx.triggerParams,
-      })
-    : buildGraphFromStages({
-        stages: ctx.stages,
-        stageContext: ctx.stageContext,
-        hooks: ctx.hooks,
-        triggerParams: ctx.triggerParams,
-      })
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const compiled = (graphBuilder as any).compile({ checkpointer: saver })
+  const compiled = compileGraph(ctx, saver)
   const config = { configurable: { thread_id: String(runId) } }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const snapshot: any = await compiled.getState(config).catch(() => null)

@@ -17,9 +17,11 @@ import {
 } from '../../db/repositories/requirements.js'
 import { getPool } from '../../db/client.js'
 
-// getTestPipelineById mock：让 retryFailedRun 内部 reloadContext 在调 streamGraph 之前 return null，
-// 避免触发真实 LangGraph 执行（测试库无真实 checkpoint，会抛 EmptyInputError）。
-// createTestPipeline 走 actual（写 DB 用），getTestPipelineById 默认 vi.fn() 可按测试按需控制。
+// mock strategy (Sub-plan E.2):
+// retryFailedRun 现在：
+//   第一次调 getTestPipelineById：校验 failed node 在 pipeline.graph.nodes 中
+//   第二次调 getTestPipelineById：restartRunFromNode → reloadContext → 返回 null → 静默退出
+// 因此默认 mock 返回 null，各测试按需用 mockResolvedValueOnce 控制第一次返回值。
 vi.mock('../../db/repositories/test-pipelines.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../db/repositories/test-pipelines.js')>()
   return {
@@ -27,6 +29,33 @@ vi.mock('../../db/repositories/test-pipelines.js', async (importOriginal) => {
     getTestPipelineById: vi.fn().mockResolvedValue(null),
   }
 })
+
+const { getTestPipelineById } = await import('../../db/repositories/test-pipelines.js')
+const mockGetPipeline = getTestPipelineById as ReturnType<typeof vi.fn>
+
+function makePipelineWithNode(pipelineId: number, nodeId: string, nodeName?: string) {
+  return {
+    id: pipelineId,
+    name: 'test',
+    description: '',
+    stages: [],
+    graph: {
+      nodes: [
+        { id: nodeId, name: nodeName ?? nodeId, type: 'skill', params: {}, position: { x: 0, y: 0 } },
+      ],
+      edges: [],
+    },
+    enabled: true,
+    variables: {},
+    productLineId: 0,
+    serverRoles: null,
+    triggerParams: null,
+    artifactInputs: null,
+    containerImage: null,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }
+}
 
 describe('retryFailedRun', () => {
   let pipelineId: number
@@ -38,7 +67,12 @@ describe('retryFailedRun', () => {
       name: 'test-retry-pipeline',
       description: 'test',
       stages: [],
-      graph: { nodes: [], edges: [] } as any,
+      graph: {
+        nodes: [
+          { id: 'spec_author', type: 'skill', name: 'Spec Author', params: {}, position: { x: 0, y: 0 } },
+        ],
+        edges: [],
+      } as any,
       enabled: true,
       variables: {},
     })
@@ -46,6 +80,9 @@ describe('retryFailedRun', () => {
   })
 
   beforeEach(async () => {
+    mockGetPipeline.mockReset()
+    mockGetPipeline.mockResolvedValue(null)
+
     const run = await createTestRun({
       pipelineId,
       triggerType: 'manual',
@@ -58,7 +95,7 @@ describe('retryFailedRun', () => {
   })
 
   it('rejects retry when run is not failed', async () => {
-    // createTestRun 默认 status='running'，直接测
+    // createTestRun 默认 status='running'
     await expect(retryFailedRun(runId)).rejects.toThrow(/expected 'failed'/i)
   })
 
@@ -66,14 +103,23 @@ describe('retryFailedRun', () => {
     await expect(retryFailedRun(999999)).rejects.toThrow(/not found/i)
   })
 
-  it('resets failed run to running (smoke: restartRunFromCheckpoint called but not asserted due to ESM binding)', async () => {
-    // 注：此测试只 verify 可观测的 DB 副作用（status='running'）。
-    // retryFailedRun 内部确实调 restartRunFromCheckpoint，但 ESM same-module binding 让
-    // vi.mock('graph-runner.js') 无法拦截，所以 mock 改为让 reloadContext 提前
-    // return null（mock getTestPipelineById 返回 null），restartRunFromCheckpoint 静默 return。
-    // 真实 LangGraph 行为（"在 failed 节点 checkpoint 处 restart 是否真重试该节点"）
-    // 留手动 smoke verify。Plan §Risks 已记录。
+  it('rejects retry when run has no failed stage_results', async () => {
+    // status=failed 但 stage_results 为空 → "no failed stage to retry from"
     await updateTestRunStatus(runId, 'failed')
+    await expect(retryFailedRun(runId)).rejects.toThrow(/no failed stage to retry from/i)
+  })
+
+  it('resets failed run to running (verify call sequence: pipeline lookup → status=running → restartRunFromNode early-exit)', async () => {
+    // 设置 stage_results 含 failed stage，mock pipeline 有对应节点
+    await getPool().query(
+      `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
+      [JSON.stringify([{ name: 'spec_author', status: 'failed', type: 'llm_author' }]), runId],
+    )
+    // 第一次：retryFailedRun 校验 failed node 在 graph 中
+    // 第二次：restartRunFromNode → reloadContext → null → 静默退出
+    mockGetPipeline
+      .mockResolvedValueOnce(makePipelineWithNode(pipelineId, 'spec_author', 'Spec Author'))
+      .mockResolvedValue(null)
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
@@ -98,7 +144,12 @@ describe('POST /requirements/:id/retry', () => {
       name: 'test-retry-route-pipeline',
       description: 'test',
       stages: [],
-      graph: { nodes: [], edges: [] } as any,
+      graph: {
+        nodes: [
+          { id: 'spec_author', type: 'skill', name: 'Spec Author', params: {}, position: { x: 0, y: 0 } },
+        ],
+        edges: [],
+      } as any,
       enabled: true,
       variables: {},
     })
@@ -113,6 +164,9 @@ describe('POST /requirements/:id/retry', () => {
   })
 
   beforeEach(async () => {
+    mockGetPipeline.mockReset()
+    mockGetPipeline.mockResolvedValue(null)
+
     const run = await createTestRun({
       pipelineId,
       triggerType: 'manual',
@@ -153,7 +207,14 @@ describe('POST /requirements/:id/retry', () => {
   })
 
   it('returns 200 + retried:true on valid failed requirement', async () => {
-    await updateTestRunStatus(runId, 'failed')
+    await getPool().query(
+      `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
+      [JSON.stringify([{ name: 'spec_author', status: 'failed', type: 'llm_author' }]), runId],
+    )
+    // 第一次：retryFailedRun 校验节点；第二次：restartRunFromNode → reloadContext → null
+    mockGetPipeline
+      .mockResolvedValueOnce(makePipelineWithNode(pipelineId, 'spec_author', 'Spec Author'))
+      .mockResolvedValue(null)
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     let resp: Awaited<ReturnType<typeof app.inject>>
@@ -171,23 +232,27 @@ describe('POST /requirements/:id/retry', () => {
   })
 
   it('returns 400 when run is not failed', async () => {
-    // createTestRun 默认 status='running'，直接测
+    // createTestRun 默认 status='running'
     const resp = await app.inject({ method: 'POST', url: `/requirements/${requirementId}/retry` })
     expect(resp.statusCode).toBe(400)
     expect(resp.json().error).toMatch(/expected 'failed'/i)
   })
 
   it('rejects retry after NODE_RETRY_CAP exceeded', async () => {
-    // 直接写 retry_counters：模拟已 retry NODE_RETRY_CAP 次
+    // 直接写 retry_counters：模拟已 retry NODE_RETRY_CAP 次（key = node.id）
     await getPool().query(
       `UPDATE requirements SET retry_counters = $1::jsonb WHERE id = $2`,
       [JSON.stringify({ node_retry_counts: { spec_author: NODE_RETRY_CAP } }), requirementId],
     )
-    // 模拟 stage_results 含 spec_author failed
+    // stage_results 含 spec_author failed（stage_results.name 匹配 node.name 'Spec Author' 或 node.id）
     await getPool().query(
       `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
       [JSON.stringify([{ name: 'spec_author', status: 'failed', type: 'llm_author' }]), runId],
     )
+    // 第一次调用：retryFailedRun 校验节点（stage_results.name='spec_author' → 匹配 node.id）
+    mockGetPipeline
+      .mockResolvedValueOnce(makePipelineWithNode(pipelineId, 'spec_author', 'Spec Author'))
+      .mockResolvedValue(null)
 
     const resp = await app.inject({
       method: 'POST',

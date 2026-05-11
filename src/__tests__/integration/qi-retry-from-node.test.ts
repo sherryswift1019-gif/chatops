@@ -17,18 +17,11 @@ import {
 } from '../../db/repositories/requirements.js'
 import { getPool } from '../../db/client.js'
 
-// mock strategy：
-// - getTestPipelineById 默认 vi.fn()，可按测试按需控制。
-//   在 retryFromNode 内部首次调用时需返回含 graph.nodes 的有效 pipeline（为了校验 fromNodeId）。
-//   然而 restartRunFromCheckpoint 内部的 reloadContext 也会调 getTestPipelineById。
-//   为避免 LangGraph 真实执行，让第一次返回 valid pipeline，第二次返回 null
-//   (reloadContext 提前 return)。
-//   简化方案：让 mock 始终返回含 graph.nodes 的 pipeline；
-//   reloadContext 不会 throw（返回 ctx），但 streamGraph 在 start 阶段无 checkpoint 时静默退出。
-//   故 mock 返回 null 是更安全选择（reloadContext 拿到 null → restartRunFromCheckpoint 提前 return）。
-//   conflict: retryFromNode 需要 getTestPipelineById 返回有效 pipeline 来校验 fromNodeId。
-//   解决方案：用 mockResolvedValueOnce 按调用次序控制：第一次（retryFromNode 校验用）返回 valid，
-//   第二次（reloadContext 内）返回 null（restartRunFromCheckpoint 静默）。
+// mock strategy（Sub-plan E.2 更新）：
+// retryFromNode 内部：
+//   第一次调 getTestPipelineById：校验 fromNodeId 在 pipeline.graph.nodes 中
+//   第二次调 getTestPipelineById：restartRunFromNode → reloadContext → 返回 null → 静默退出
+// 通过 mockResolvedValueOnce 按顺序控制每次调用的返回值。
 vi.mock('../../db/repositories/test-pipelines.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../db/repositories/test-pipelines.js')>()
   return {
@@ -122,8 +115,9 @@ describe('retryFromNode', () => {
     await expect(retryFromNode(runId, 'node-b')).rejects.toThrow(/expected 'failed'/i)
   })
 
-  it('truncates stage_results back to fromNode and resets status', async () => {
-    // 设置 stage_results：[node-a done, node-b failed, node-c pending]
+  it('resets status to running and calls restartRunFromNode (no stage_results truncation)', async () => {
+    // Sub-plan E.2: retryFromNode 不再截断 stage_results（reducer mergeStageResults 自动 overwrite）
+    // 验证可观测 DB 副作用：status='running'（restartRunFromNode 因 reloadContext 返 null 而静默）
     await getPool().query(
       `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
       [
@@ -145,9 +139,8 @@ describe('retryFromNode', () => {
 
     const after = await getTestRunById(runId)
     expect(after?.status).toBe('running')
-    // 截断至 fromIdx=1（index of node-b），保留 [0,1) = [node-a]
-    expect(after?.stageResults).toHaveLength(1)
-    expect(after?.stageResults[0].name).toBe('node-a')
+    // stage_results 未截断（reducer 覆盖由 LangGraph re-run 完成）
+    expect(after?.stageResults).toHaveLength(3)
   })
 
   it('rejects when node retry cap exceeded', async () => {
@@ -259,9 +252,8 @@ describe('retryFromNode', () => {
 
     const after = await getTestRunById(runId)
     expect(after?.status).toBe('running')
-    // 截断到 'Spec AI Review' 之前，保留 ['Spec Author']
-    const names = (after?.stageResults ?? []).map((s: any) => s.name)
-    expect(names).toEqual(['Spec Author'])
+    // Sub-plan E.2: 不再截断 stage_results，reducer 按 name 覆盖
+    expect(after?.stageResults).toHaveLength(3)
   })
 })
 
