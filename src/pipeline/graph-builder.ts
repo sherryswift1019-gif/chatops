@@ -254,8 +254,34 @@ export interface WebhookInterruptValue {
  */
 export type WebhookResume = { data: unknown } | { timeout: true }
 
-function nodeName(index: number, stage: StageDefinition): string {
+export function nodeName(index: number, stage: StageDefinition): string {
   return `stage_${index}_${stage.stageType}`
+}
+
+/**
+ * Find the first predecessor of `fromNodeId` in pipeline.graph.edges,
+ * and return its LangGraph stage name (`stage_<index>_<stageType>`).
+ *
+ * Used by retry-from-node: setting `asNode=<predecessor stage name>` in
+ * `compiled.updateState(...)` makes LangGraph treat predecessor as "just done",
+ * which re-computes `snapshot.next=[fromNode]` so subsequent stream re-runs fromNode.
+ *
+ * Returns null if fromNode is an entry node (no predecessor). Caller must
+ * handle this case separately (entry node retry not supported in v1).
+ *
+ * For multi-predecessor DAGs, picks first predecessor by edge order.
+ * If edge has a `condition`, LangGraph re-evaluates conditional routing
+ * during stream — picking any valid predecessor should still route to fromNode.
+ */
+export function findPredecessorStageName(
+  pipeline: PipelineGraph,
+  fromNodeId: string,
+): string | null {
+  const predecessorEdge = pipeline.edges.find((e) => e.target === fromNodeId)
+  if (!predecessorEdge) return null
+  const predecessorIndex = pipeline.nodes.findIndex((n) => n.id === predecessorEdge.source)
+  if (predecessorIndex < 0) return null
+  return nodeName(predecessorIndex, pipeline.nodes[predecessorIndex])
 }
 
 // Resolve target servers for a stage. Empty targetRoles = no server target
