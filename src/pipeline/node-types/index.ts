@@ -29,6 +29,8 @@ import './qi-e2e-runner.js'
 import './im-input.js'
 // Pipeline Stage Types Sub-plan A: explicit END sink
 import './end.js'
+// Pipeline Stage Types Sub-plan A: resource cleanup
+import './cleanup.js'
 
 export * from './registry.js'
 export * from './types.js'

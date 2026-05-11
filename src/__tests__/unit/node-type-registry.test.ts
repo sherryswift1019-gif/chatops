@@ -57,6 +57,8 @@ describe('node-type barrel', () => {
       'im_input',
       // Pipeline Stage Types Sub-plan A: explicit END sink
       'end',
+      // Pipeline Stage Types Sub-plan A: resource cleanup
+      'cleanup',
     ]))
   })
 })

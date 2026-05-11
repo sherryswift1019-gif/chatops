@@ -14,6 +14,7 @@ export type ExecutorNodeStageType =
   | 'fan_out'
   | 'switch'
   | 'end'
+  | 'cleanup'
 
 export interface StageDefinition {
   name: string

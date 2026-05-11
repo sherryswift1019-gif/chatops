@@ -2285,6 +2285,7 @@ export function buildGraphFromPipeline(
 
       // Non-side-effect NodeExecutor-backed types — wrap with snapshot recorder when dryRunFlavor present.
       case 'end':
+      case 'cleanup':
       case 'sql_query':
       case 'file_read':
       case 'template_render':
