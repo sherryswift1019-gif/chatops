@@ -54,118 +54,223 @@ function buildQuickImplGraph(): PipelineGraph {
       },
     } as any),
 
-    makeNode('spec_review_loop', {
-      name: 'Spec Review',
-      stageType: 'skill_with_approval',
-      onFailure: 'stop',
+    // Spec 阶段：author → ai_review → human_gate (required) → commit_push
+    makeNode('spec_author', {
+      name: 'Spec Author',
+      stageType: 'llm_author',
+      onFailure: 'continue',
       params: {
         requirementId: '{{triggerParams.requirementId}}',
-        title: '{{triggerParams.title}}',
         skill: 'quick-impl-artifact-author',
         role: 'spec-author',
-        approvalKind: 'spec',
-        decisionSet: 'binary',
-        maxRounds: 5,
-        approverIds: '{{vars.qiApproverIds}}',
         worktreePath: '{{steps.init_branch.output.worktreePath}}',
         branch: '{{steps.init_branch.output.branch}}',
         baseBranch: '{{triggerParams.baseBranch}}',
-        artifactPath: '{{steps.init_branch.output.worktreePath}}/docs/specs/qi-{{triggerParams.requirementId}}.md',
-        statusOnSuccess: 'planning',
+        artifactPath: 'docs/specs/qi-{{triggerParams.requirementId}}.md',
+        maxTurns: 100,
+        timeoutMs: 1800000,
+        statusOnSuccess: 'spec_review',
         inputs: {
           rawInput: '{{triggerParams.rawInput}}',
         },
       },
     } as any),
 
-    makeNode('plan_review_loop', {
-      name: 'Plan + AI Review',
-      stageType: 'skill_with_review',
+    makeNode('spec_ai_review', {
+      name: 'Spec AI Review',
+      stageType: 'llm_review',
       onFailure: 'continue',
       params: {
         requirementId: '{{triggerParams.requirementId}}',
-        devSkill: 'quick-impl-artifact-author',
-        devRole: 'plan-decomposer',
-        reviewerSkill: 'quick-impl-artifact-author',
-        reviewerRole: 'plan-reviewer',
-        maxRounds: 2,
+        skill: 'quick-impl-artifact-author',
+        role: 'spec-reviewer',
         worktreePath: '{{steps.init_branch.output.worktreePath}}',
         branch: '{{steps.init_branch.output.branch}}',
         baseBranch: '{{triggerParams.baseBranch}}',
-        artifactPath: '{{steps.init_branch.output.worktreePath}}/docs/plans/qi-{{triggerParams.requirementId}}.md',
-        maxTurns: 120,
-        reviewerMaxTurns: 20,
-        timeoutMs: 1800000,
-        reviewerTimeoutMs: 300000,
-        statusOnSuccess: 'dev',
-        inputs: {
-          spec: '{{steps.spec_review_loop.output.skillOutput}}',
-          requirementId: '{{triggerParams.requirementId}}',
-          schemaVersion: 'v2',
-        },
-        reviewerInputs: {
-          spec: '{{steps.spec_review_loop.output.skillOutput}}',
-        },
+        artifactPath: 'docs/specs/qi-{{triggerParams.requirementId}}.md',
+        maxTurns: 30,
+        timeoutMs: 600000,
       },
     } as any),
 
-    makeNode('plan_human_escalation', {
-      name: 'Plan Human Review',
-      stageType: 'skill_with_approval',
+    makeNode('spec_human_gate', {
+      name: 'Spec Human Gate',
+      stageType: 'human_gate',
       onFailure: 'stop',
       params: {
         requirementId: '{{triggerParams.requirementId}}',
-        title: '{{triggerParams.title}}',
+        mode: 'required',
+        timeoutSeconds: 86400,
+        onTimeout: 'reject',
+        approvalKind: 'spec',
+        approverIds: '{{vars.qiApproverIds}}',
+        source: 'ai_pass',
+        artifact: '{{steps.spec_author.output.skillOutput}}',
+        aiReview: '{{steps.spec_ai_review.output}}',
+      },
+    } as any),
+
+    makeNode('spec_commit_push', {
+      name: 'Spec Commit & Push',
+      stageType: 'git_commit_push',
+      onFailure: 'stop',
+      params: {
+        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        branch: '{{steps.init_branch.output.branch}}',
+        artifactPaths: ['docs/specs/qi-{{triggerParams.requirementId}}.md'],
+        commitMessage: 'docs(qi-{{triggerParams.requirementId}}): spec — {{triggerParams.title}}',
+      },
+    } as any),
+
+    // Plan 阶段：author → ai_review → human_gate (on_fail) → commit_push
+    makeNode('plan_author', {
+      name: 'Plan Author',
+      stageType: 'llm_author',
+      onFailure: 'continue',
+      params: {
+        requirementId: '{{triggerParams.requirementId}}',
         skill: 'quick-impl-artifact-author',
         role: 'plan-decomposer',
-        approvalKind: 'plan',
-        decisionSet: 'plan_escalation',
-        maxRounds: 3,
-        // PRD #4：round 1 跳过 plan-decomposer 重跑，直接通知人审看被 AI 拒的那版 plan +
-        // 上一阶段 reviewer notes（v3 plan 摘要 builder 渲染）。round 2+（人拒后）才跑 skill。
-        skipFirstSkill: true,
-        approverIds: '{{vars.qiApproverIds}}',
         worktreePath: '{{steps.init_branch.output.worktreePath}}',
         branch: '{{steps.init_branch.output.branch}}',
         baseBranch: '{{triggerParams.baseBranch}}',
-        artifactPath: '{{steps.init_branch.output.worktreePath}}/docs/plans/qi-{{triggerParams.requirementId}}.md',
-        statusOnSuccess: 'dev',
+        artifactPath: 'docs/plans/qi-{{triggerParams.requirementId}}.md',
+        maxTurns: 100,
+        timeoutMs: 1800000,
+        statusOnSuccess: 'planning',
         inputs: {
-          spec: '{{steps.spec_review_loop.output.skillOutput}}',
-          requirementId: '{{triggerParams.requirementId}}',
-          schemaVersion: 'v2',
-          priorReviewerNotes: '{{steps.plan_review_loop.output.review.notes}}',
+          spec: '{{steps.spec_author.output.skillOutput}}',
+          specPath: '{{steps.spec_author.output.artifactPath}}',
+          rawInput: '{{triggerParams.rawInput}}',
         },
       },
     } as any),
 
-    makeNode('dev_with_review_loop', {
-      name: 'Dev + Review',
-      stageType: 'skill_with_review',
+    makeNode('plan_ai_review', {
+      name: 'Plan AI Review',
+      stageType: 'llm_review',
+      onFailure: 'continue',
+      params: {
+        requirementId: '{{triggerParams.requirementId}}',
+        skill: 'quick-impl-artifact-author',
+        role: 'plan-reviewer',
+        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        branch: '{{steps.init_branch.output.branch}}',
+        baseBranch: '{{triggerParams.baseBranch}}',
+        artifactPath: 'docs/plans/qi-{{triggerParams.requirementId}}.md',
+        maxTurns: 30,
+        timeoutMs: 600000,
+        inputs: {
+          spec: '{{steps.spec_author.output.skillOutput}}',
+        },
+      },
+    } as any),
+
+    makeNode('plan_human_gate', {
+      name: 'Plan Human Gate',
+      stageType: 'human_gate',
       onFailure: 'stop',
       params: {
         requirementId: '{{triggerParams.requirementId}}',
-        devSkill: 'quick-impl-artifact-author',
-        devRole: 'dev-loop',
-        reviewerSkill: 'quick-impl-artifact-author',
-        reviewerRole: 'code-quality-reviewer',
-        maxRounds: 3,
+        mode: 'on_fail',
+        timeoutSeconds: 172800,
+        onTimeout: 'reject',
+        approvalKind: 'plan',
+        approverIds: '{{vars.qiApproverIds}}',
+        source: 'ai_escalation',
+        artifact: '{{steps.plan_author.output.skillOutput}}',
+        aiReview: '{{steps.plan_ai_review.output}}',
+        aiAttempts: 3,
+      },
+    } as any),
+
+    makeNode('plan_commit_push', {
+      name: 'Plan Commit & Push',
+      stageType: 'git_commit_push',
+      onFailure: 'stop',
+      params: {
+        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        branch: '{{steps.init_branch.output.branch}}',
+        artifactPaths: ['docs/plans/qi-{{triggerParams.requirementId}}.md'],
+        commitMessage: 'docs(qi-{{triggerParams.requirementId}}): plan',
+      },
+    } as any),
+
+    // Dev 阶段：author → ai_review → human_gate (on_fail) → dev_push (pushOnly)
+    makeNode('dev_author', {
+      name: 'Dev Author',
+      stageType: 'llm_author',
+      onFailure: 'continue',
+      params: {
+        requirementId: '{{triggerParams.requirementId}}',
+        skill: 'quick-impl-artifact-author',
+        role: 'dev-loop',
         worktreePath: '{{steps.init_branch.output.worktreePath}}',
         branch: '{{steps.init_branch.output.branch}}',
         baseBranch: '{{triggerParams.baseBranch}}',
         artifactPath: '{{steps.init_branch.output.worktreePath}}',
         maxTurns: 200,
-        reviewerMaxTurns: 30,
         timeoutMs: 3600000,
-        reviewerTimeoutMs: 600000,
-        statusOnSuccess: 'testing',
+        statusOnSuccess: 'developing',
         inputs: {
-          planPath: '{{steps.plan_review_loop.output.lastArtifactPath}}',
-          planTasks: '{{steps.plan_review_loop.output.skillOutput.tasks}}',
-          // v9: 把完整 spec 传给 dev-loop，让它在首轮把 spec.e2eScenarios 序列化为 YAML
-          spec: '{{steps.spec_review_loop.output.skillOutput}}',
+          spec: '{{steps.spec_author.output.skillOutput}}',
+          plan: '{{steps.plan_author.output.skillOutput}}',
+          planPath: '{{steps.plan_author.output.artifactPath}}',
+          planTasks: '{{steps.plan_author.output.skillOutput.tasks}}',
           requirementId: '{{triggerParams.requirementId}}',
         },
+      },
+    } as any),
+
+    makeNode('dev_ai_review', {
+      name: 'Dev AI Review',
+      stageType: 'llm_review',
+      onFailure: 'continue',
+      params: {
+        requirementId: '{{triggerParams.requirementId}}',
+        skill: 'quick-impl-artifact-author',
+        role: 'code-quality-reviewer',
+        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        branch: '{{steps.init_branch.output.branch}}',
+        baseBranch: '{{triggerParams.baseBranch}}',
+        artifactPath: '{{steps.init_branch.output.worktreePath}}',
+        maxTurns: 30,
+        timeoutMs: 600000,
+        inputs: {
+          spec: '{{steps.spec_author.output.skillOutput}}',
+          plan: '{{steps.plan_author.output.skillOutput}}',
+          tasksDone: '{{steps.dev_author.output.skillOutput.tasksDone}}',
+        },
+      },
+    } as any),
+
+    makeNode('dev_human_gate', {
+      name: 'Dev Human Gate',
+      stageType: 'human_gate',
+      onFailure: 'stop',
+      params: {
+        requirementId: '{{triggerParams.requirementId}}',
+        mode: 'on_fail',
+        timeoutSeconds: 172800,
+        onTimeout: 'reject',
+        approvalKind: 'plan',
+        approverIds: '{{vars.qiApproverIds}}',
+        source: 'ai_escalation',
+        artifact: '{{steps.dev_author.output.skillOutput}}',
+        aiReview: '{{steps.dev_ai_review.output}}',
+        aiAttempts: 3,
+      },
+    } as any),
+
+    makeNode('dev_push', {
+      name: 'Dev Push',
+      stageType: 'git_commit_push',
+      onFailure: 'stop',
+      params: {
+        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        branch: '{{steps.init_branch.output.branch}}',
+        pushOnly: true,
+        statusOnSuccess: 'testing',
       },
     } as any),
 
@@ -200,42 +305,59 @@ function buildQuickImplGraph(): PipelineGraph {
           },
           {
             when: "steps.qi_e2e_runner.output.result == 'fail' && steps.qi_e2e_runner.output.attempt < 2",
-            target: 'dev_loop_for_e2e_fix',
+            target: 'dev_fix_author',
           },
         ],
         default: 'e2e_im_intervention',
       },
     } as any),
 
-    // dev-loop 修 e2e 失败：复用 skill_with_review，但塞 failureReport 到 inputs
-    makeNode('dev_loop_for_e2e_fix', {
-      name: 'Dev Fix (E2E)',
-      stageType: 'skill_with_review',
+    // Dev Fix 阶段：dev_fix_author + dev_fix_ai_review（无 human_gate，e2e 修复速度优先）
+    makeNode('dev_fix_author', {
+      name: 'Dev Fix Author',
+      stageType: 'llm_author',
       onFailure: 'stop',
       params: {
         requirementId: '{{triggerParams.requirementId}}',
-        devSkill: 'quick-impl-artifact-author',
-        devRole: 'dev-loop',
-        reviewerSkill: 'quick-impl-artifact-author',
-        reviewerRole: 'code-quality-reviewer',
-        maxRounds: 1, // e2e fix 子轮 1 轮就够，主控由外层 attempt 计数
+        skill: 'quick-impl-artifact-author',
+        role: 'dev-loop',
         worktreePath: '{{steps.init_branch.output.worktreePath}}',
         branch: '{{steps.init_branch.output.branch}}',
         baseBranch: '{{triggerParams.baseBranch}}',
         artifactPath: '{{steps.init_branch.output.worktreePath}}',
         maxTurns: 120,
-        reviewerMaxTurns: 20,
         timeoutMs: 1800000,
-        reviewerTimeoutMs: 300000,
-        // 不切 status —— 仍是 'testing'
+        // 不切 status（仍是 'testing'）
         inputs: {
-          planPath: '{{steps.plan_review_loop.output.lastArtifactPath}}',
-          planTasks: '{{steps.plan_review_loop.output.skillOutput.tasks}}',
-          spec: '{{steps.spec_review_loop.output.skillOutput}}',
-          requirementId: '{{triggerParams.requirementId}}',
+          spec: '{{steps.spec_author.output.skillOutput}}',
+          plan: '{{steps.plan_author.output.skillOutput}}',
+          planPath: '{{steps.plan_author.output.artifactPath}}',
+          planTasks: '{{steps.plan_author.output.skillOutput.tasks}}',
           failureReport: '{{steps.qi_e2e_runner.output.failureReport}}',
           humanNote: '{{steps.e2e_im_intervention.output.humanNote}}',
           attempt: '{{steps.qi_e2e_runner.output.attempt}}',
+          mode: 'e2e_fix',
+        },
+      },
+    } as any),
+
+    makeNode('dev_fix_ai_review', {
+      name: 'Dev Fix AI Review',
+      stageType: 'llm_review',
+      onFailure: 'stop',
+      params: {
+        requirementId: '{{triggerParams.requirementId}}',
+        skill: 'quick-impl-artifact-author',
+        role: 'code-quality-reviewer',
+        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        branch: '{{steps.init_branch.output.branch}}',
+        baseBranch: '{{triggerParams.baseBranch}}',
+        artifactPath: '{{steps.init_branch.output.worktreePath}}',
+        maxTurns: 20,
+        timeoutMs: 300000,
+        inputs: {
+          failureReport: '{{steps.qi_e2e_runner.output.failureReport}}',
+          mode: 'e2e_fix',
         },
       },
     } as any),
@@ -270,10 +392,10 @@ function buildQuickImplGraph(): PipelineGraph {
           },
           {
             when: "steps.e2e_im_intervention.output.decision == 'fix'",
-            target: 'dev_loop_for_e2e_fix',
+            target: 'dev_fix_author',
           },
         ],
-        default: 'mr_create_skip', // aborted 走结束分支（实际通过 onFailure / END 实现）
+        default: 'cleanup', // aborted 走结束分支
       },
     } as any),
 
@@ -306,26 +428,30 @@ function buildQuickImplGraph(): PipelineGraph {
             target: 'qi_e2e_runner',
           },
         ],
-        default: 'mr_create_skip', // aborted → 终止
+        default: 'cleanup', // aborted → 终止
       },
     } as any),
 
     makeNode('final_approval', {
       name: 'Final Approval',
-      stageType: 'skill_with_approval',
+      stageType: 'human_gate',
       onFailure: 'stop',
       params: {
         requirementId: '{{triggerParams.requirementId}}',
-        title: '{{triggerParams.title}}',
-        // skill=null: skip generator, go straight to approval
-        skill: null,
-        role: null,
+        mode: 'required',
+        timeoutSeconds: 86400,
+        onTimeout: 'reject',
         approvalKind: 'final',
-        decisionSet: 'binary',
-        maxRounds: 3,
         approverIds: '{{vars.qiApproverIds}}',
-        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        source: 'final',
         statusOnSuccess: 'mr_pending',
+        artifact: {
+          spec: '{{steps.spec_author.output.skillOutput}}',
+          plan: '{{steps.plan_author.output.skillOutput}}',
+          devTasksDone: '{{steps.dev_author.output.skillOutput.tasksDone}}',
+          e2eResult: '{{steps.qi_e2e_runner.output.result}}',
+          e2eAttempt: '{{steps.qi_e2e_runner.output.attempt}}',
+        },
       },
     } as any),
 
@@ -335,22 +461,39 @@ function buildQuickImplGraph(): PipelineGraph {
       onFailure: 'stop',
       params: {
         requirementId: '{{triggerParams.requirementId}}',
-        titleTemplate: '[quick-impl] {{requirement.title}}',
-        labels: ['quick-impl', 'auto-generated'],
+        titleTemplate: 'Draft: [quick-impl] {{triggerParams.title}}',
+        labels: ['quick-impl'],
         removeSourceBranchAfterMerge: true,
         squashCommits: false,
+        draft: true,
+        statusOnSuccess: 'mr_open',
+        inputs: {
+          spec: '{{steps.spec_author.output.skillOutput}}',
+          plan: '{{steps.plan_author.output.skillOutput}}',
+          devReview: '{{steps.dev_ai_review.output}}',
+          tasksDone: '{{steps.dev_author.output.skillOutput.tasksDone}}',
+        },
       },
     } as any),
 
-    // 一个空操作 sink，给 switch 的 'default: aborted' 分支用（接 END）
-    makeNode('mr_create_skip', {
-      name: 'Skipped (aborted)',
-      stageType: 'switch',
+    makeNode('cleanup', {
+      name: 'Cleanup',
+      stageType: 'cleanup',
       onFailure: 'stop',
       params: {
-        cases: [{ when: 'true', target: 'mr_create_skip' }],
-        default: 'mr_create_skip',
+        targets: [
+          { kind: 'worktree', path: '{{steps.init_branch.output.worktreePath}}' },
+          { kind: 'bare_repo', path: '{{steps.init_branch.output.bareRepoPath}}' },
+        ],
+        statusOnSuccess: 'aborted',
       },
+    } as any),
+
+    makeNode('done', {
+      name: 'Done',
+      stageType: 'end',
+      onFailure: 'stop',
+      params: {},
     } as any),
   ]
 
