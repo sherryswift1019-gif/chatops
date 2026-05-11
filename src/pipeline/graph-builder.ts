@@ -2234,6 +2234,186 @@ function buildLlmAuthorNode(
   }
 }
 
+/**
+ * llm_review — 调一次 runSkill() 跑 reviewer role，输出 decision (pass/fail) + notes + specCoverage。
+ * 节点本身 status 永远 success；decision=fail 通过 graph 边路由表达（保守默认 fail）。
+ * notes 在输出阶段字符串化：Array<{msg}> join '\n'，下游 buildLlmAuthorNode 读到 string。
+ */
+function buildLlmReviewNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_review param resolve failed: ${String(err)}`,
+        error: String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!ctxBase.skillExecutor) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'llm_review: skillExecutor not configured',
+        error: 'no_skill_executor',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+    const skillExecutor = ctxBase.skillExecutor
+
+    const requirementId = Number(params.requirementId ?? triggerParams?.requirementId)
+    const skill = String(params.skill ?? '')
+    const role = String(params.role ?? '')
+    const worktreePath = String(params.worktreePath ?? '')
+    const branch = String(params.branch ?? '')
+    const baseBranch = String(params.baseBranch ?? 'main')
+    const artifactPath = String(params.artifactPath ?? '')
+
+    if (!requirementId) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'llm_review: requirementId required',
+        error: 'missing_requirement_id',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!skill || !role) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_review: skill and role required (skill=${skill}, role=${role})`,
+        error: 'missing_skill_or_role',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    if (!worktreePath || !branch || !artifactPath) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_review: worktreePath, branch, artifactPath required`,
+        error: 'missing_path_params',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    // round 计算：数 stageResults 中本节点 name 已出现几次
+    const past = (state.stageResults ?? []).filter(r => r.name === stageName)
+    const round = past.length + 1
+
+    // 上游 author 节点输出：约定 reviewNodeName 形如 `spec_ai_review` → author 是 `spec_author`
+    const phasePrefix = node.name.replace(/_ai_review$/, '')
+    const authorNodeName = nodeStageResultName({ name: `${phasePrefix}_author` } as PipelineNode)
+    let upstreamSkillOutput: unknown = null
+    for (let i = (state.stageResults ?? []).length - 1; i >= 0; i--) {
+      const r = (state.stageResults ?? [])[i]
+      if (r.name === authorNodeName) {
+        upstreamSkillOutput = (r.output as { skillOutput?: unknown })?.skillOutput ?? null
+        break
+      }
+    }
+
+    const inputs: SkillContextInputs = {
+      round,
+      artifact: upstreamSkillOutput,
+      ...((params.inputs as SkillContextInputs) ?? {}),
+    }
+
+    try {
+      const result = await runSkill(
+        {
+          requirementId,
+          nodeId: `${node.name}:r${round}`,
+          skill,
+          role,
+          worktreePath,
+          branch,
+          baseBranch,
+          artifactPath,
+          inputs,
+          specSources: params.specSources as string[] | undefined,
+        },
+        skillExecutor,
+        ctxBase.mcpServerPath,
+      )
+
+      // notes 字符串化：SkillOutputSchema notes 是 Array<{severity,msg,...}>，join 成 string
+      // 供下游 buildLlmAuthorNode 读 priorReviewerNotes 时得到 string，无类型错配
+      const rawNotes = result.output.notes
+      let notesString: string
+      if (Array.isArray(rawNotes)) {
+        notesString = rawNotes.map((n: unknown) => {
+          if (typeof n === 'string') return n
+          if (n && typeof n === 'object' && 'msg' in n) return String((n as { msg: unknown }).msg)
+          return JSON.stringify(n)
+        }).join('\n')
+      } else {
+        notesString = String(rawNotes ?? '')
+      }
+
+      const decision: 'pass' | 'fail' = result.output.decision === 'pass' ? 'pass' : 'fail'
+
+      const exec: StageExecutionResult = {
+        status: 'success',
+        output: `llm_review round ${round} decision=${decision}`,
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        stepOutputs: {
+          [(node as PipelineNode).id ?? stageName]: {
+            status: 'success' as const,
+            output: {
+              decision,
+              notes: notesString,
+              specCoverage: (result.output as { specCoverage?: unknown }).specCoverage ?? null,
+              round,
+            },
+          },
+        },
+      }
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_review round ${round} failed: ${String(err)}`,
+        error: err instanceof Error ? err.message : String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+  }
+}
+
 // skip_rest node: mark every stage at/after startIndex as skipped so the
 // StageResult list reflects the truncation, then flow to END.
 function buildSkipRestNode(stages: StageDefinition[], startIndex: number) {
@@ -2521,6 +2701,10 @@ export function buildGraphFromPipeline(
 
       case 'llm_author':
         builder = builder.addNode(name, buildLlmAuthorNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'llm_review':
+        builder = builder.addNode(name, buildLlmReviewNode(node, i, stageContext, triggerParams ?? {}))
         break
 
       default: {

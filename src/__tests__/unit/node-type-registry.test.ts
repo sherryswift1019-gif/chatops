@@ -63,6 +63,8 @@ describe('node-type barrel', () => {
       'git_commit_push',
       // Pipeline Stage Types Sub-plan A: LLM 生成 artifact（不 commit）
       'llm_author',
+      // Pipeline Stage Types Sub-plan A: LLM 审 artifact
+      'llm_review',
     ]))
   })
 })

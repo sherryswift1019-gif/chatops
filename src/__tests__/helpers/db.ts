@@ -264,6 +264,9 @@ const SCHEMA_FILES = [
   // v1009: 注册 'llm_author' 节点类型（Pipeline Stage Types Sub-plan A Task 4）。
   // 纯 ON CONFLICT INSERT/UPDATE pipeline_node_types，无 seed 污染，安全加入。
   'schema-v1009.sql',
+  // v1010: 注册 'llm_review' 节点类型（Pipeline Stage Types Sub-plan A Task 5）。
+  // 纯 ON CONFLICT INSERT/UPDATE pipeline_node_types，无 seed 污染，安全加入。
+  'schema-v1010.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
