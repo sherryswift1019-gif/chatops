@@ -29,6 +29,7 @@ export interface StageDefinition {
     | 'skill_with_review'
     | 'llm_author'
     | 'llm_review'
+    | 'human_gate'
     | 'mr_create'
     | 'init_qi_branch'
     | 'e2e_stub'

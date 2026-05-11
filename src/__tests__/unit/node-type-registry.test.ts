@@ -65,6 +65,8 @@ describe('node-type barrel', () => {
       'llm_author',
       // Pipeline Stage Types Sub-plan A: LLM 审 artifact
       'llm_review',
+      // Pipeline Stage Types Sub-plan A: 人工 binary 批准（interrupt-bound）
+      'human_gate',
     ]))
   })
 })

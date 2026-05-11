@@ -37,6 +37,8 @@ import './git-commit-push.js'
 import './llm-author.js'
 // Pipeline Stage Types Sub-plan A: LLM 审 artifact
 import './llm-review.js'
+// Pipeline Stage Types Sub-plan A: 人工 binary 批准（interrupt-bound）
+import './human-gate.js'
 
 export * from './registry.js'
 export * from './types.js'

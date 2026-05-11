@@ -2418,6 +2418,205 @@ function buildLlmReviewNode(
   }
 }
 
+/**
+ * human_gate — 人工 binary 批准节点（interrupt-bound）。
+ *
+ * 调用 LangGraph interrupt() 挂起 graph，待人工审批（IM 卡片或 Web）后恢复。
+ *
+ * 参数（从 node.params / triggerParams 注入）：
+ *   requirementId   必填，需求编号
+ *   approverIds     逗号分隔的钉钉 userId（或数组），空 = 仅 Web 审批
+ *   mode            'required'（默认）| 'on_fail'
+ *                     required = 无条件等人审
+ *                     on_fail  = 仅 source=ai_escalation 时等，ai_pass 直接通过
+ *   source          'ai_pass' | 'ai_escalation' | 'final'（默认 'final'）
+ *                     ai_pass      = 上游 AI review 已 pass，on_fail 模式下直接放行
+ *                     ai_escalation = AI review fail 升级，必须人审
+ *                     final         = 最终人工确认
+ *   timeoutSeconds  默认 86400 (24h)；当前实现中仅记录在参数里，超时降级留给运营手动处理
+ *   onTimeout       'reject' | 'approve'（默认 'reject'）——超时后的降级行为（TODO 定时器）
+ *   contextSummary  可选，推送给审批人的上下文摘要
+ *   aiReviewNotes   可选，AI review 输出的 notes，透传给卡片摘要
+ *
+ * 输出（stepOutputs）：
+ *   decision    'approved' | 'rejected'
+ *   humanNotes  reject reason（string | null）
+ *   source      原始 source 字段
+ *   decidedBy   审批人 id（string | null）
+ */
+function buildHumanGateNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `human_gate param resolve failed: ${String(err)}`,
+        error: String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const requirementId = Number(params.requirementId ?? triggerParams?.requirementId ?? 0)
+    if (!requirementId) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'human_gate: requirementId required',
+        error: 'missing_requirement_id',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const mode = String(params.mode ?? 'required') as 'required' | 'on_fail'
+    const source = String(params.source ?? 'final') as 'ai_pass' | 'ai_escalation' | 'final'
+    const requirementTitle = String(params.title ?? triggerParams?.title ?? '')
+    const nodeId = (node as PipelineNode).id ?? stageName
+
+    // 解析 approverIds：逗号分隔字符串或数组
+    const rawApprovers = params.approverIds
+    const approverIds: string[] = Array.isArray(rawApprovers)
+      ? (rawApprovers as string[]).filter(Boolean)
+      : typeof rawApprovers === 'string' && rawApprovers.trim()
+        ? rawApprovers.split(',').map(s => s.trim()).filter(Boolean)
+        : []
+
+    // 短路：mode=on_fail + source=ai_pass → 直接放行，不等人审
+    if (mode === 'on_fail' && source === 'ai_pass') {
+      const exec: StageExecutionResult = {
+        status: 'success',
+        output: 'human_gate skipped (mode=on_fail, source=ai_pass)',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        stepOutputs: {
+          [nodeId]: {
+            status: 'success' as const,
+            output: {
+              decision: 'approved',
+              humanNotes: null,
+              source,
+              decidedBy: null,
+            },
+          },
+        },
+      }
+    }
+
+    // 构造 contextSummary 供 IM 卡片使用
+    const aiReviewNotes = typeof params.aiReviewNotes === 'string' ? params.aiReviewNotes : null
+    const rawContextSummary = typeof params.contextSummary === 'string'
+      ? params.contextSummary
+      : null
+    const sourceLabel =
+      source === 'ai_pass' ? 'AI 已通过（人工确认）' :
+      source === 'ai_escalation' ? 'AI review 未通过 → 升级人审' :
+      '最终人工确认'
+    const contextSummary = rawContextSummary
+      ?? [
+          `需求 #${requirementId}: ${requirementTitle}`,
+          `来源：${sourceLabel}`,
+          aiReviewNotes ? `AI review notes：\n${aiReviewNotes}` : null,
+        ].filter(Boolean).join('\n\n')
+
+    // 复用 / 创建 waiter（replay 时可能已存在，getActiveWaiter 按 (requirementId, nodeId) 查）
+    let waiterRow: RequirementApprovalWaiter
+    const existing = await getActiveWaiter(requirementId, nodeId)
+    if (existing) {
+      waiterRow = existing
+    } else {
+      waiterRow = await createWaiter({
+        requirementId,
+        pipelineRunId: ctxBase.runId,
+        nodeId,
+        approvalKind: 'spec',  // human_gate 走 binary binary 卡片；approvalKind 用 'spec' 作通用标签
+        round: 1,
+        decisionSet: 'human_gate',
+        contextSummary,
+      })
+    }
+
+    // interrupt()：QI_APPROVAL_INTERRUPT 让 graph-runner.dispatchInterrupt 推卡片 + 注册等待。
+    // approvalKind='spec' → buildCardActions fallback → binary agree/reject 按钮。
+    const interruptPayload: QiApprovalInterruptValue = {
+      type: QI_APPROVAL_INTERRUPT,
+      waiterId: waiterRow.id,
+      runId: ctxBase.runId,
+      nodeId,
+      round: 1,
+      approvalKind: 'spec',
+      decisionSet: 'human_gate',
+      loopState: { budgetUsed: 0, rejectHistory: [] },
+      approverIds,
+      requirementId,
+      requirementTitle,
+      contextSummary: waiterRow.contextSummary,
+      imSummary: null,
+    }
+    const resume = interrupt(interruptPayload) as QiApprovalResume
+
+    const rawDecision = resume.claimedWaiter.decision ?? 'rejected'
+    const decision: 'approved' | 'rejected' = rawDecision === 'approved' || rawDecision === 'force_passed'
+      ? 'approved'
+      : 'rejected'
+    const humanNotes = resume.claimedWaiter.rejectReason ?? null
+    const decidedBy = resume.claimedWaiter.decidedBy ?? resume.claimedWaiter.claimedBy ?? null
+
+    if (decision === 'approved') {
+      const exec: StageExecutionResult = {
+        status: 'success',
+        output: `human_gate approved by ${decidedBy ?? '(unknown)'} (source=${source})`,
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+        stepOutputs: {
+          [nodeId]: {
+            status: 'success' as const,
+            output: { decision, humanNotes, source, decidedBy },
+          },
+        },
+      }
+    }
+
+    // rejected — 节点 status=failed，调用方通过 graph 边路由处理（onFailure/condition）
+    const exec: StageExecutionResult = {
+      status: 'failed',
+      output: `human_gate rejected by ${decidedBy ?? '(unknown)'}: ${humanNotes ?? '(no reason)'}`,
+      error: 'human_gate_rejected',
+    }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      stepOutputs: {
+        [nodeId]: {
+          status: 'failed' as const,
+          output: { decision, humanNotes, source, decidedBy },
+        },
+      },
+    }
+  }
+}
+
 // skip_rest node: mark every stage at/after startIndex as skipped so the
 // StageResult list reflects the truncation, then flow to END.
 function buildSkipRestNode(stages: StageDefinition[], startIndex: number) {
@@ -2709,6 +2908,10 @@ export function buildGraphFromPipeline(
 
       case 'llm_review':
         builder = builder.addNode(name, buildLlmReviewNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'human_gate':
+        builder = builder.addNode(name, buildHumanGateNode(node, i, stageContext, triggerParams ?? {}))
         break
 
       default: {

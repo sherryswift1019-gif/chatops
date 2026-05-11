@@ -11,7 +11,7 @@ import { getPool } from '../client.js'
  */
 
 export type ApprovalKind = 'spec' | 'plan' | 'final' | 'escalation'
-export type DecisionSet = 'binary' | 'escalation' | 'qi_e2e_intervention' | 'qi_sandbox_failed' | 'plan_escalation'
+export type DecisionSet = 'binary' | 'escalation' | 'qi_e2e_intervention' | 'qi_sandbox_failed' | 'plan_escalation' | 'human_gate'
 export type ClaimSource = 'im' | 'web' | 'retry' | 'abort'
 export type ApprovalDecision =
   | 'approved'
