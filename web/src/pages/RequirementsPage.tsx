@@ -990,6 +990,25 @@ export default function RequirementsPage() {
                 审批决策
               </Button>
             )}
+            {detail?.status === 'failed' && (
+              <Popconfirm
+                title="确定从失败节点重试？"
+                description="将重置 run 状态并从 LangGraph checkpoint 继续执行。"
+                onConfirm={async () => {
+                  try {
+                    await requirementsApi.retry(detail.id)
+                    message.success('已触发重试')
+                    await openDetail(detail.id)
+                  } catch (err: any) {
+                    message.error(`重试失败：${err?.response?.data?.error ?? err.message}`)
+                  }
+                }}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button icon={<ReloadOutlined />}>从失败节点重试</Button>
+              </Popconfirm>
+            )}
           </Space>
         }
       >
