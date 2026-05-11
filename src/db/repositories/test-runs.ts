@@ -148,6 +148,12 @@ export async function finishTestRun(id: number, status: 'success' | 'failed' | '
   )
 }
 
+/** Reset a run's status without touching finishedAt / errorMessage (used by retryFailedRun). */
+export async function updateTestRunStatus(id: number, status: TestRun['status']): Promise<void> {
+  const pool = getPool()
+  await pool.query('UPDATE test_runs SET status = $2 WHERE id = $1', [id, status])
+}
+
 /** Returns all test_runs with status='running', optionally filtered to a specific pipeline. */
 export async function listRunningTestRuns(pipelineId?: number): Promise<TestRun[]> {
   const pool = getPool()

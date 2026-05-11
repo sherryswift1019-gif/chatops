@@ -51,6 +51,7 @@ import { getTestPipelineById } from '../db/repositories/test-pipelines.js'
 import {
   getTestRunById,
   finishTestRun,
+  updateTestRunStatus,
 } from '../db/repositories/test-runs.js'
 import {
   mergeAndPersistStageResults,
@@ -206,6 +207,30 @@ export async function resumeRun(runId: number, command: Command): Promise<void> 
     return
   }
   await streamGraph(ctx, command)
+}
+
+/**
+ * Retry a failed pipeline run from its last stuck node.
+ *
+ * Semantics: graph 在 failed 节点处停留（LangGraph checkpoint 没动），
+ * 重置 test_runs.status 为 'running' + 调 resumeRun(Command({}))，
+ * LangGraph re-stream 会重试该节点。
+ *
+ * Spec §5.5 'resume' 模式。任意 fromNode 回退是 'invalidate_downstream'
+ * 模式留给 Sub-plan E.1。
+ */
+export async function retryFailedRun(runId: number): Promise<void> {
+  const run = await getTestRunById(runId)
+  if (!run) {
+    throw new Error(`retryFailedRun: run ${runId} not found`)
+  }
+  if (run.status !== 'failed') {
+    throw new Error(
+      `retryFailedRun: run ${runId} status is '${run.status}', expected 'failed'`,
+    )
+  }
+  await updateTestRunStatus(runId, 'running')
+  await resumeRun(runId, new Command({}))
 }
 
 /**
