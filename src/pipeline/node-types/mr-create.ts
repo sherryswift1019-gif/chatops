@@ -107,6 +107,31 @@ function buildDescription(
   )
 }
 
+// ─── idempotent helpers ───────────────────────────────────────────────────────
+
+function parseMrIidFromUrl(mrUrl: string): number | null {
+  const m = mrUrl.match(/\/merge_requests\/(\d+)(?:[/?#]|$)/)
+  return m ? Number(m[1]) : null
+}
+
+async function findOpenMrBySourceBranch(
+  gitlabUrl: string,
+  gitlabToken: string,
+  project: string,
+  sourceBranch: string,
+): Promise<{ iid: number; web_url: string } | null> {
+  const resp = await axios.get<Array<{ iid: number; web_url: string; state: string }>>(
+    `${gitlabUrl}/api/v4/projects/${encodeURIComponent(project)}/merge_requests`,
+    {
+      headers: { 'PRIVATE-TOKEN': gitlabToken },
+      params: { source_branch: sourceBranch, state: 'opened' },
+      timeout: 30_000,
+    },
+  )
+  const opened = resp.data.find(m => m.state === 'opened')
+  return opened ? { iid: opened.iid, web_url: opened.web_url } : null
+}
+
 // ─── node executor ────────────────────────────────────────────────────────────
 
 registerNodeType({
@@ -177,28 +202,75 @@ registerNodeType({
       ? (params.labels as string[]).join(',')
       : 'quick-impl,auto-generated'
 
-    // Create MR
+    // Create or update MR (idempotent)
     let mr: { iid: number; web_url: string }
-    try {
-      const resp = await axios.post(
-        `${gitlabUrl}/api/v4/projects/${encodeURIComponent(normalizeProjectPath(req.gitlabProject))}/merge_requests`,
-        {
-          title,
-          description,
-          source_branch: req.branch,
-          target_branch: req.baseBranch,
-          labels,
-          remove_source_branch: params.removeSourceBranchAfterMerge !== false,
-          squash: params.squashCommits === true,
-        },
-        { headers: { 'PRIVATE-TOKEN': gitlabToken }, timeout: 30_000 },
-      )
-      mr = resp.data as { iid: number; web_url: string }
-    } catch (err) {
-      const msg = axios.isAxiosError(err)
-        ? `${err.response?.status ?? ''} ${JSON.stringify(err.response?.data ?? err.message)}`
-        : String(err)
-      return { status: 'failed', output: {}, error: `mr_create: GitLab API error: ${msg}` }
+    let created = false
+
+    const normalizedProject = normalizeProjectPath(req.gitlabProject)
+    const existingMrIid = req.mrUrl ? parseMrIidFromUrl(req.mrUrl) : null
+
+    if (existingMrIid !== null) {
+      // PUT update existing MR (idempotent path: mrUrl already persisted from a previous run)
+      try {
+        const resp = await axios.put(
+          `${gitlabUrl}/api/v4/projects/${encodeURIComponent(normalizedProject)}/merge_requests/${existingMrIid}`,
+          { title, description, labels },
+          { headers: { 'PRIVATE-TOKEN': gitlabToken }, timeout: 30_000 },
+        )
+        mr = resp.data as { iid: number; web_url: string }
+        created = false
+      } catch (err) {
+        const msg = axios.isAxiosError(err)
+          ? `${err.response?.status ?? ''} ${JSON.stringify(err.response?.data ?? err.message)}`
+          : String(err)
+        return { status: 'failed', output: {}, error: `mr_create: GitLab API PUT error: ${msg}` }
+      }
+    } else {
+      // POST create (existing behavior)
+      try {
+        const resp = await axios.post(
+          `${gitlabUrl}/api/v4/projects/${encodeURIComponent(normalizedProject)}/merge_requests`,
+          {
+            title,
+            description,
+            source_branch: req.branch,
+            target_branch: req.baseBranch,
+            labels,
+            remove_source_branch: params.removeSourceBranchAfterMerge !== false,
+            squash: params.squashCommits === true,
+          },
+          { headers: { 'PRIVATE-TOKEN': gitlabToken }, timeout: 30_000 },
+        )
+        mr = resp.data as { iid: number; web_url: string }
+        created = true
+      } catch (err) {
+        // 防御性：409 撞已有 MR → 查 source_branch 已有 MR → PUT update
+        if (axios.isAxiosError(err) && err.response?.status === 409) {
+          try {
+            const existing = await findOpenMrBySourceBranch(gitlabUrl, gitlabToken, normalizedProject, req.branch)
+            if (!existing) {
+              return { status: 'failed', output: {}, error: 'mr_create: 409 but no open MR found by source_branch' }
+            }
+            const putResp = await axios.put(
+              `${gitlabUrl}/api/v4/projects/${encodeURIComponent(normalizedProject)}/merge_requests/${existing.iid}`,
+              { title, description, labels },
+              { headers: { 'PRIVATE-TOKEN': gitlabToken }, timeout: 30_000 },
+            )
+            mr = putResp.data as { iid: number; web_url: string }
+            created = false
+          } catch (innerErr) {
+            const msg = axios.isAxiosError(innerErr)
+              ? `${innerErr.response?.status ?? ''} ${JSON.stringify(innerErr.response?.data ?? innerErr.message)}`
+              : String(innerErr)
+            return { status: 'failed', output: {}, error: `mr_create: 409 fallback PUT failed: ${msg}` }
+          }
+        } else {
+          const msg = axios.isAxiosError(err)
+            ? `${err.response?.status ?? ''} ${JSON.stringify(err.response?.data ?? err.message)}`
+            : String(err)
+          return { status: 'failed', output: {}, error: `mr_create: GitLab API error: ${msg}` }
+        }
+      }
     }
 
     // Persist MR URL + advance status
@@ -207,7 +279,7 @@ registerNodeType({
 
     return {
       status: 'success',
-      output: { mrUrl: mr.web_url, mrIid: mr.iid, rebaseHint },
+      output: { mrUrl: mr.web_url, mrIid: mr.iid, rebaseHint, created },
     }
   },
 })
