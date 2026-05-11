@@ -59,6 +59,8 @@ describe('node-type barrel', () => {
       'end',
       // Pipeline Stage Types Sub-plan A: resource cleanup
       'cleanup',
+      // Pipeline Stage Types Sub-plan A: idempotent git commit + push
+      'git_commit_push',
     ]))
   })
 })

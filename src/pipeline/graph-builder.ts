@@ -2255,7 +2255,8 @@ export function buildGraphFromPipeline(
       case 'dm':
       case 'db_update':
       case 'http':
-      case 'mr_create': {
+      case 'mr_create':
+      case 'git_commit_push': {
         // ---- Side-effect nodes: optionally wrapped with dryRunFlavor interrupt ----
         let realFn: (state: typeof PipelineStateAnnotation.State) => Promise<unknown>
         if (node.stageType === 'script') {

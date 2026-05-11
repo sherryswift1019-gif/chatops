@@ -31,6 +31,8 @@ import './im-input.js'
 import './end.js'
 // Pipeline Stage Types Sub-plan A: resource cleanup
 import './cleanup.js'
+// Pipeline Stage Types Sub-plan A: idempotent git commit + push
+import './git-commit-push.js'
 
 export * from './registry.js'
 export * from './types.js'

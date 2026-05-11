@@ -15,6 +15,7 @@ export type ExecutorNodeStageType =
   | 'switch'
   | 'end'
   | 'cleanup'
+  | 'git_commit_push'
 
 export interface StageDefinition {
   name: string

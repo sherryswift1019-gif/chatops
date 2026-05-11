@@ -258,6 +258,9 @@ const SCHEMA_FILES = [
   // v1007: 注册 'cleanup' 节点类型（Pipeline Stage Types Sub-plan A Task 2）。
   // 纯 ON CONFLICT INSERT/UPDATE pipeline_node_types，无 seed 污染，安全加入。
   'schema-v1007.sql',
+  // v1008: 注册 'git_commit_push' 节点类型（Pipeline Stage Types Sub-plan A Task 3）。
+  // 纯 ON CONFLICT INSERT/UPDATE pipeline_node_types，无 seed 污染，安全加入。
+  'schema-v1008.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
