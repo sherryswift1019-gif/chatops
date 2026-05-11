@@ -252,6 +252,9 @@ const SCHEMA_FILES = [
   'schema-v1004.sql',
   // v1005: 取消首次登录强制改密（e2e 沙盒需要 admin/admin 直登），纯 UPDATE，安全加入。
   'schema-v1005.sql',
+  // v1006: 注册 'end' 节点类型（Pipeline Stage Types Sub-plan A Task 1）。
+  // 纯 ON CONFLICT INSERT/UPDATE pipeline_node_types，无 seed 污染，安全加入。
+  'schema-v1006.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

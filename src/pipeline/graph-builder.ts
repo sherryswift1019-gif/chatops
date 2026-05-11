@@ -2284,6 +2284,7 @@ export function buildGraphFromPipeline(
         break
 
       // Non-side-effect NodeExecutor-backed types — wrap with snapshot recorder when dryRunFlavor present.
+      case 'end':
       case 'sql_query':
       case 'file_read':
       case 'template_render':
@@ -2310,12 +2311,6 @@ export function buildGraphFromPipeline(
 
       case 'im_input':
         builder = builder.addNode(name, buildImInputNode(node, i, stageContext, triggerParams ?? {}))
-        break
-
-      // Explicit END sink: no-op executor, terminal node wiring to LangGraph END handled below.
-      case 'end':
-        builder = builder.addNode(name, wrapWithSnapshot(node, i,
-          buildExecutorNode(node, i, stageContext, triggerParams ?? {}) as (state: typeof PipelineStateAnnotation.State) => Promise<unknown>))
         break
 
       default: {
