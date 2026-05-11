@@ -18,8 +18,9 @@ import type { PipelineGraph, PipelineNode, PipelineEdge } from '../pipeline/type
  * v8 in-flight QI run 仍走 v8 graph 快照（test_pipelines.graph 在 run 启动时绑定）。
  * v11 → v12: spec/plan/dev 阶段拆为原子节点（author/ai_review/human_gate/commit_push），
  * final_approval 改用 human_gate，mr_create_skip 替换为 cleanup + done。共 25 节点。
+ * v12 → v13: cleanup 节点 targets 加 remote_branch + draft_mr，abort 路径闭环清远端资源。
  */
-export const QUICK_IMPL_TEMPLATE_VERSION = 12
+export const QUICK_IMPL_TEMPLATE_VERSION = 13
 export const QUICK_IMPL_PIPELINE_NAME = 'quick-impl'
 
 // ─── Node definitions ────────────────────────────────────────────────────────
@@ -486,6 +487,8 @@ function buildQuickImplGraph(): PipelineGraph {
         targets: [
           { kind: 'worktree', path: '{{steps.init_branch.output.worktreePath}}' },
           { kind: 'bare_repo', path: '{{steps.init_branch.output.bareRepoPath}}' },
+          { kind: 'remote_branch', project: '{{triggerParams.gitlabProject}}', branch: '{{steps.init_branch.output.branch}}' },
+          { kind: 'draft_mr', project: '{{triggerParams.gitlabProject}}', mrIid: '{{steps.mr_create.output.mrIid}}' },
         ],
         statusOnSuccess: 'aborted',
       },
@@ -577,7 +580,7 @@ export async function bootstrapQuickImpl(): Promise<void> {
   if (!existing) {
     await createTestPipeline({
       name: QUICK_IMPL_PIPELINE_NAME,
-      description: 'Quick-Impl：25 节点新拓扑（spec/plan/dev 拆 author/ai_review/human_gate/commit_push）',
+      description: 'Quick-Impl：25 节点新拓扑（cleanup 加 remote_branch+draft_mr 闭环）',
       stages: [],
       graph,
       enabled: true,
