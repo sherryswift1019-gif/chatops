@@ -6,7 +6,7 @@ import { promisify } from 'util'
 import { registerNodeType } from './registry.js'
 import type { ExecutionContext, NodeExecutionResult } from './types.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
-import { injectGitlabAuth } from '../../config/git-auth.js'
+import { gitPushBranch, normalizeProjectPath } from '../git-helpers.js'
 import {
   getRequirementById,
   setMrUrl,
@@ -18,33 +18,6 @@ import {
 const execAsync = promisify(exec)
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
-
-function escapeShell(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`
-}
-
-/** "http://host/group/repo(.git)" 或 "group/repo(.git)" → "group/repo" */
-function normalizeProjectPath(input: string): string {
-  let s = input.trim().replace(/\.git$/i, '')
-  const m = s.match(/^https?:\/\/[^/]+\/(.+)$/i)
-  if (m) s = m[1]
-  return s.replace(/^\/+|\/+$/g, '')
-}
-
-async function gitPushBranch(
-  worktreePath: string,
-  branch: string,
-  gitlabUrl: string,
-  gitlabProject: string,
-): Promise<void> {
-  const projectPath = normalizeProjectPath(gitlabProject)
-  const rawUrl = `${gitlabUrl.replace(/\/$/, '')}/${projectPath}.git`
-  const authedUrl = await injectGitlabAuth(rawUrl)
-  await execAsync(
-    `git push ${escapeShell(authedUrl)} HEAD:${escapeShell(branch)}`,
-    { cwd: worktreePath, timeout: 60_000 },
-  )
-}
 
 async function detectRebaseHint(
   worktreePath: string,
