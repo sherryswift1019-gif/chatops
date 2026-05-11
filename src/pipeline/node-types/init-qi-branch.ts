@@ -14,6 +14,7 @@ import {
 } from '../../db/repositories/requirements.js'
 import { resolveGitlabConfig } from '../../config/gitlab.js'
 import { ensureBareRepo } from '../../quick-impl/qi-bare-repo.js'
+import { gitPushBranch } from '../git-helpers.js'
 
 const execAsync = promisify(exec)
 const DEFAULT_MAX_LIVE_WORKTREES = 20
@@ -128,6 +129,25 @@ registerNodeType({
       )
     }
 
+    // Sub-plan D: 空占位 commit + push 到 GitLab，让开发期分支可见
+    // push 失败 warn-continue（网络抖动不应阻断 init 整体 success）
+    let remotePushed = false
+    let pushError: string | null = null
+    try {
+      // 用 -c 内联 author，避免依赖全局 git config（CI / 新 worktree 可能没配）
+      await execAsync(
+        `git -c user.email=quick-impl@chatops -c user.name='quick-impl bot' -C ${wt.path} commit --allow-empty -m 'chore(qi-${requirementId}): init branch'`,
+        { timeout: 10_000 },
+      )
+      await gitPushBranch(wt.path, wt.branch, gitlabUrl, gitlabProject)
+      remotePushed = true
+    } catch (err) {
+      pushError = err instanceof Error ? err.message : String(err)
+      console.warn(
+        `[init_qi_branch] early push to GitLab failed (non-fatal, mr_create 会兜底): ${pushError}`,
+      )
+    }
+
     return {
       status: 'success',
       output: {
@@ -135,6 +155,8 @@ registerNodeType({
         worktreePath: wt.path,
         cachePath: wt.cachePath,
         bareRepoPath,
+        remotePushed,
+        ...(pushError ? { pushError } : {}),
       },
     }
   },
