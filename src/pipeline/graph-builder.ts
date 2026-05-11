@@ -2125,24 +2125,23 @@ function buildLlmAuthorNode(
     const past = (state.stageResults ?? []).filter(r => r.name === stageName)
     const round = past.length + 1
 
-    // 上轮 notes 读取（从 state 找对应的 ai_review / human_gate 节点最新输出）
-    // 约定：authorNodeName 形如 `spec_author` → 对应 `spec_ai_review` / `spec_human_gate`
+    // 上轮 notes 读取：跨节点结构化数据走 state.stepOutputs（StageResult.output 是
+     // string，无法承载 .notes / .humanNotes）。
+    // 约定：authorNodeName 形如 `spec_author` → 对应 `spec_ai_review` / `spec_human_gate`。
+    // stepOutputs key 与写入端一致：`node.id ?? name`；当 author/ai_review/human_gate
+    // 节点未配置显式 id 时（系统编排的 quick-impl pipeline 默认情况）key == name。
     const phasePrefix = node.name.replace(/_author$/, '')
-    const aiReviewNodeName = nodeStageResultName({ name: `${phasePrefix}_ai_review` } as PipelineNode)
-    const humanGateNodeName = nodeStageResultName({ name: `${phasePrefix}_human_gate` } as PipelineNode)
-
-    let priorReviewerNotes: string | null = null
-    let priorHumanNotes: string | null = null
-    for (let i = (state.stageResults ?? []).length - 1; i >= 0; i--) {
-      const r = (state.stageResults ?? [])[i]
-      if (priorReviewerNotes === null && r.name === aiReviewNodeName) {
-        priorReviewerNotes = (r.output as { notes?: string })?.notes ?? null
-      }
-      if (priorHumanNotes === null && r.name === humanGateNodeName) {
-        priorHumanNotes = (r.output as { humanNotes?: string })?.humanNotes ?? null
-      }
-      if (priorReviewerNotes !== null && priorHumanNotes !== null) break
-    }
+    const aiReviewKey = `${phasePrefix}_ai_review`
+    const humanGateKey = `${phasePrefix}_human_gate`
+    const stepOutputs = state.stepOutputs ?? {}
+    const aiReviewOutput = stepOutputs[aiReviewKey]?.output as
+      | { notes?: string }
+      | undefined
+    const humanGateOutput = stepOutputs[humanGateKey]?.output as
+      | { humanNotes?: string }
+      | undefined
+    const priorReviewerNotes: string | null = aiReviewOutput?.notes ?? null
+    const priorHumanNotes: string | null = humanGateOutput?.humanNotes ?? null
 
     const inputs: SkillContextInputs = {
       round,
@@ -2329,21 +2328,26 @@ function buildLlmReviewNode(
     const past = (state.stageResults ?? []).filter(r => r.name === stageName)
     const round = past.length + 1
 
-    // 上游 author 节点输出：约定 reviewNodeName 形如 `spec_ai_review` → author 是 `spec_author`
+    // 上游 author 节点输出：跨节点结构化数据走 state.stepOutputs（StageResult.output
+    // 是 string，无法承载 .skillOutput / .artifactPath）。
+    // 约定：reviewNodeName 形如 `spec_ai_review` → author 节点是 `spec_author`。
+    // stepOutputs key 与写入端一致：`node.id ?? name`，未配置显式 id 时 key == name。
     const phasePrefix = node.name.replace(/_ai_review$/, '')
-    const authorNodeName = nodeStageResultName({ name: `${phasePrefix}_author` } as PipelineNode)
-    let upstreamSkillOutput: unknown = null
-    for (let i = (state.stageResults ?? []).length - 1; i >= 0; i--) {
-      const r = (state.stageResults ?? [])[i]
-      if (r.name === authorNodeName) {
-        upstreamSkillOutput = (r.output as { skillOutput?: unknown })?.skillOutput ?? null
-        break
-      }
-    }
+    const authorKey = `${phasePrefix}_author`
+    const authorOutput = (state.stepOutputs ?? {})[authorKey]?.output as
+      | { skillOutput?: unknown; artifactPath?: string }
+      | undefined
+    const upstreamSkillOutput: unknown = authorOutput?.skillOutput ?? null
+    const upstreamArtifactPath: string | null = authorOutput?.artifactPath ?? null
 
+    // reviewer 同时拿 devOutput（结构化 JSON）和 artifact_path（文件全文）：
+    // skill-reviewer-design.md #1。upstreamArtifactPath 是 author 写的权威路径，
+    // 优先于 params.artifactPath；fallback 用本节点 params.artifactPath。
+    const resolvedArtifactPath = upstreamArtifactPath ?? artifactPath
     const inputs: SkillContextInputs = {
       round,
       artifact: upstreamSkillOutput,
+      artifactPath: resolvedArtifactPath,
       ...((params.inputs as SkillContextInputs) ?? {}),
     }
 
@@ -2357,7 +2361,7 @@ function buildLlmReviewNode(
           worktreePath,
           branch,
           baseBranch,
-          artifactPath,
+          artifactPath: resolvedArtifactPath,
           inputs,
           specSources: params.specSources as string[] | undefined,
         },
