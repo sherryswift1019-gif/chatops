@@ -262,8 +262,9 @@ export async function restartRunFromNode(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (compiled as any).updateState(config, {}, predecessorStageName)
 
-  // Stream picks up at fromNode (the new next)
-  await streamGraph(ctx, { runId: ctx.runId })
+  // 传 null 让 LangGraph 用 updateState 设的 snapshot.next 继续。
+  // 传 {runId} 会被当 fresh invocation 从 START 重跑，绕过 updateState 的定位。
+  await streamGraph(ctx, null)
 }
 
 /**
@@ -510,7 +511,7 @@ function compileGraph(ctx: RunContext, saver: any): any {
 
 async function streamGraph(
   ctx: RunContext,
-  inputOrCommand: InitialInput | Command,
+  inputOrCommand: InitialInput | Command | null,
 ): Promise<void> {
   const saver = await getCheckpointer()
   const compiled = compileGraph(ctx, saver)
