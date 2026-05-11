@@ -365,3 +365,71 @@ export async function forceDeleteRequirement(id: number): Promise<void> {
   const pool = getPool()
   await pool.query(`DELETE FROM requirements WHERE id = $1`, [id])
 }
+
+/** 单节点最大 retry 次数上限（防无限 retry 失败节点）。 */
+export const NODE_RETRY_CAP = 3
+
+/**
+ * 原子递增 retry_counters.node_retry_counts[nodeId]。
+ * 路径不存在时从 1 开始，避免读改写竞态。
+ *
+ * jsonb_set create_missing 仅创建末层键，不递归创建中间节点，
+ * 所以先用内层 jsonb_set 确保 node_retry_counts 对象存在，
+ * 外层再设置 nodeId。
+ */
+export async function incrementNodeRetryCount(
+  requirementId: number,
+  nodeId: string,
+): Promise<void> {
+  const pool = getPool()
+  await pool.query(
+    `UPDATE requirements
+     SET retry_counters = jsonb_set(
+       jsonb_set(
+         COALESCE(retry_counters, '{}'::jsonb),
+         '{node_retry_counts}'::text[],
+         COALESCE(COALESCE(retry_counters, '{}'::jsonb) -> 'node_retry_counts', '{}'::jsonb),
+         true
+       ),
+       ARRAY['node_retry_counts'::text, $2::text]::text[],
+       COALESCE(
+         (COALESCE(retry_counters, '{}'::jsonb) #> ARRAY['node_retry_counts'::text, $2::text]::text[])::int + 1,
+         1
+       )::text::jsonb,
+       true
+     ),
+     updated_at = NOW()
+     WHERE id = $1`,
+    [requirementId, nodeId],
+  )
+}
+
+/**
+ * 读取 retry_counters.node_retry_counts[nodeId]，不存在时返回 0。
+ */
+export async function getNodeRetryCount(
+  requirementId: number,
+  nodeId: string,
+): Promise<number> {
+  const pool = getPool()
+  const { rows } = await pool.query<{ count: number | null }>(
+    `SELECT (COALESCE(retry_counters, '{}'::jsonb) #> ARRAY['node_retry_counts'::text, $2::text]::text[])::int AS count
+     FROM requirements WHERE id = $1`,
+    [requirementId, nodeId],
+  )
+  return rows[0]?.count ?? 0
+}
+
+/**
+ * 通过 pipeline_run_id 反查需求记录（用于 retry cap check）。
+ */
+export async function getRequirementByPipelineRunId(
+  pipelineRunId: number,
+): Promise<Requirement | null> {
+  const pool = getPool()
+  const { rows } = await pool.query(
+    `SELECT * FROM requirements WHERE pipeline_run_id = $1 LIMIT 1`,
+    [pipelineRunId],
+  )
+  return rows[0] ? mapRow(rows[0]) : null
+}

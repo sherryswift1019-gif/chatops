@@ -13,7 +13,9 @@ import { registerRequirementsRoutes } from '../../admin/routes/requirements.js'
 import {
   createRequirement,
   setPipelineRunId,
+  NODE_RETRY_CAP,
 } from '../../db/repositories/requirements.js'
+import { getPool } from '../../db/client.js'
 
 // getTestPipelineById mock：让 retryFailedRun 内部 reloadContext 在调 streamGraph 之前 return null，
 // 避免触发真实 LangGraph 执行（测试库无真实 checkpoint，会抛 EmptyInputError）。
@@ -173,5 +175,26 @@ describe('POST /requirements/:id/retry', () => {
     const resp = await app.inject({ method: 'POST', url: `/requirements/${requirementId}/retry` })
     expect(resp.statusCode).toBe(400)
     expect(resp.json().error).toMatch(/expected 'failed'/i)
+  })
+
+  it('rejects retry after NODE_RETRY_CAP exceeded', async () => {
+    // 直接写 retry_counters：模拟已 retry NODE_RETRY_CAP 次
+    await getPool().query(
+      `UPDATE requirements SET retry_counters = $1::jsonb WHERE id = $2`,
+      [JSON.stringify({ node_retry_counts: { spec_author: NODE_RETRY_CAP } }), requirementId],
+    )
+    // 模拟 stage_results 含 spec_author failed
+    await getPool().query(
+      `UPDATE test_runs SET stage_results = $1::jsonb, status = 'failed' WHERE id = $2`,
+      [JSON.stringify([{ name: 'spec_author', status: 'failed', type: 'llm_author' }]), runId],
+    )
+
+    const resp = await app.inject({
+      method: 'POST',
+      url: `/requirements/${requirementId}/retry`,
+      payload: {},
+    })
+    expect(resp.statusCode).toBe(400)
+    expect(resp.json().error).toMatch(/retried \d+ times \(cap=\d+\)/i)
   })
 })

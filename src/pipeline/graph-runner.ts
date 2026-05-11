@@ -70,6 +70,12 @@ import { WebhookWaiter } from './webhook-waiter.js'
 import { sendQiApprovalCard } from './qi-approval-manager.js'
 import { buildDefaultHooks } from './executor-hooks.js'
 import { resolveDataDir } from './data-dir.js'
+import {
+  getRequirementByPipelineRunId,
+  getNodeRetryCount,
+  incrementNodeRetryCount,
+  NODE_RETRY_CAP,
+} from '../db/repositories/requirements.js'
 
 // --- Public types -----------------------------------------------------------
 
@@ -229,6 +235,23 @@ export async function retryFailedRun(runId: number): Promise<void> {
       `retryFailedRun: run ${runId} status is '${run.status}', expected 'failed'`,
     )
   }
+
+  // Sub-plan E.1：cap check — 找最后失败节点，校验 + 递增计数
+  const stageResults = run.stageResults ?? []
+  const lastFailed = [...stageResults].reverse().find((s) => s.status === 'failed')
+  if (lastFailed) {
+    const req = await getRequirementByPipelineRunId(runId)
+    if (req) {
+      const count = await getNodeRetryCount(req.id, lastFailed.name)
+      if (count >= NODE_RETRY_CAP) {
+        throw new Error(
+          `retryFailedRun: node '${lastFailed.name}' has been retried ${count} times (cap=${NODE_RETRY_CAP})`,
+        )
+      }
+      await incrementNodeRetryCount(req.id, lastFailed.name)
+    }
+  }
+
   await updateTestRunStatus(runId, 'running')
   await resumeRun(runId, new Command({}))
 }
