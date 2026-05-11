@@ -497,69 +497,64 @@ function buildQuickImplGraph(): PipelineGraph {
     } as any),
   ]
 
-  // ─── Edges：v10 plan_review_loop 条件路由 + v9 e2e 分支循环 ───────────────────
-  // 线性前段：init → spec → plan_review_loop
-  const linearChainFront = ['init_branch', 'spec_review_loop', 'plan_review_loop']
-  // 线性后段：dev → qi_e2e_runner → e2e_router（plan_human_escalation 也汇入 dev）
-  const linearChainBack = ['dev_with_review_loop', 'qi_e2e_runner', 'e2e_router']
+  // ─── Edges：新 25 节点拓扑 ───────────────────────────────────────────────────
   const edges: PipelineEdge[] = []
-  for (let i = 0; i < linearChainFront.length - 1; i++) {
-    edges.push({
-      id: `${linearChainFront[i]}__${linearChainFront[i + 1]}`,
-      source: linearChainFront[i],
-      target: linearChainFront[i + 1],
-    })
-  }
-  for (let i = 0; i < linearChainBack.length - 1; i++) {
-    edges.push({
-      id: `${linearChainBack[i]}__${linearChainBack[i + 1]}`,
-      source: linearChainBack[i],
-      target: linearChainBack[i + 1],
-    })
-  }
 
-  // plan_review_loop 条件路由
-  edges.push({
-    id: 'plan_review_loop__dev_with_review_loop',
-    source: 'plan_review_loop',
-    target: 'dev_with_review_loop',
-    condition: { kind: 'onSuccess' },
-  })
-  edges.push({
-    id: 'plan_review_loop__plan_human_escalation',
-    source: 'plan_review_loop',
-    target: 'plan_human_escalation',
-    condition: { kind: 'onFailure' },
-  })
-  edges.push({
-    id: 'plan_human_escalation__dev_with_review_loop',
-    source: 'plan_human_escalation',
-    target: 'dev_with_review_loop',
-    condition: { kind: 'onSuccess' },
-  })
+  // === Spec phase ===
+  edges.push({ id: 'init_branch__spec_author', source: 'init_branch', target: 'spec_author' })
+  edges.push({ id: 'spec_author__spec_ai_review', source: 'spec_author', target: 'spec_ai_review' })
+  edges.push({ id: 'spec_ai_review__spec_human_gate', source: 'spec_ai_review', target: 'spec_human_gate' })
+  edges.push({ id: 'spec_human_gate__spec_commit_push', source: 'spec_human_gate', target: 'spec_commit_push', condition: { kind: 'onSuccess' } })
+  edges.push({ id: 'spec_human_gate__cleanup_reject', source: 'spec_human_gate', target: 'cleanup', condition: { kind: 'onFailure' } })
+  edges.push({ id: 'spec_commit_push__plan_author', source: 'spec_commit_push', target: 'plan_author' })
 
-  // e2e_router → 4 个目标
-  for (const target of ['final_approval', 'e2e_sandbox_intervention', 'dev_loop_for_e2e_fix', 'e2e_im_intervention']) {
+  // === Plan phase ===
+  edges.push({ id: 'plan_author__plan_ai_review', source: 'plan_author', target: 'plan_ai_review' })
+  // AI pass → 跳过 human_gate 直接 commit_push（mode=on_fail 短路）
+  edges.push({ id: 'plan_ai_review__plan_commit_push_pass', source: 'plan_ai_review', target: 'plan_commit_push', condition: { kind: 'onSuccess' } })
+  // AI fail → human_gate 兜底
+  edges.push({ id: 'plan_ai_review__plan_human_gate', source: 'plan_ai_review', target: 'plan_human_gate', condition: { kind: 'onFailure' } })
+  edges.push({ id: 'plan_human_gate__plan_commit_push', source: 'plan_human_gate', target: 'plan_commit_push', condition: { kind: 'onSuccess' } })
+  edges.push({ id: 'plan_human_gate__cleanup_reject', source: 'plan_human_gate', target: 'cleanup', condition: { kind: 'onFailure' } })
+  edges.push({ id: 'plan_commit_push__dev_author', source: 'plan_commit_push', target: 'dev_author' })
+
+  // === Dev phase ===
+  edges.push({ id: 'dev_author__dev_ai_review', source: 'dev_author', target: 'dev_ai_review' })
+  edges.push({ id: 'dev_ai_review__dev_push_pass', source: 'dev_ai_review', target: 'dev_push', condition: { kind: 'onSuccess' } })
+  edges.push({ id: 'dev_ai_review__dev_human_gate', source: 'dev_ai_review', target: 'dev_human_gate', condition: { kind: 'onFailure' } })
+  edges.push({ id: 'dev_human_gate__dev_push', source: 'dev_human_gate', target: 'dev_push', condition: { kind: 'onSuccess' } })
+  edges.push({ id: 'dev_human_gate__cleanup_reject', source: 'dev_human_gate', target: 'cleanup', condition: { kind: 'onFailure' } })
+  edges.push({ id: 'dev_push__qi_e2e_runner', source: 'dev_push', target: 'qi_e2e_runner' })
+
+  // === E2E phase ===
+  edges.push({ id: 'qi_e2e_runner__e2e_router', source: 'qi_e2e_runner', target: 'e2e_router' })
+  for (const target of ['final_approval', 'e2e_sandbox_intervention', 'dev_fix_author', 'e2e_im_intervention']) {
     edges.push({ id: `e2e_router__${target}`, source: 'e2e_router', target })
   }
 
-  // dev_loop_for_e2e_fix 修完 → 回 qi_e2e_runner 重跑
-  edges.push({ id: 'dev_loop_for_e2e_fix__qi_e2e_runner', source: 'dev_loop_for_e2e_fix', target: 'qi_e2e_runner' })
-
-  // e2e_im_intervention → e2e_intervention_router → 3 个目标
+  // E2E IM intervention
   edges.push({ id: 'e2e_im_intervention__e2e_intervention_router', source: 'e2e_im_intervention', target: 'e2e_intervention_router' })
-  for (const target of ['final_approval', 'dev_loop_for_e2e_fix', 'mr_create_skip']) {
+  for (const target of ['final_approval', 'dev_fix_author', 'cleanup']) {
     edges.push({ id: `e2e_intervention_router__${target}`, source: 'e2e_intervention_router', target })
   }
 
-  // e2e_sandbox_intervention → sandbox_intervention_router → 2 个目标
+  // Sandbox intervention
   edges.push({ id: 'e2e_sandbox_intervention__sandbox_intervention_router', source: 'e2e_sandbox_intervention', target: 'sandbox_intervention_router' })
-  for (const target of ['qi_e2e_runner', 'mr_create_skip']) {
+  for (const target of ['qi_e2e_runner', 'cleanup']) {
     edges.push({ id: `sandbox_intervention_router__${target}`, source: 'sandbox_intervention_router', target })
   }
 
-  // 终态线性：final_approval → mr_create
-  edges.push({ id: 'final_approval__mr_create', source: 'final_approval', target: 'mr_create' })
+  // === dev_fix loop ===
+  edges.push({ id: 'dev_fix_author__dev_fix_ai_review', source: 'dev_fix_author', target: 'dev_fix_ai_review' })
+  edges.push({ id: 'dev_fix_ai_review__qi_e2e_runner', source: 'dev_fix_ai_review', target: 'qi_e2e_runner' })
+
+  // === Final ===
+  edges.push({ id: 'final_approval__mr_create', source: 'final_approval', target: 'mr_create', condition: { kind: 'onSuccess' } })
+  edges.push({ id: 'final_approval__cleanup_reject', source: 'final_approval', target: 'cleanup', condition: { kind: 'onFailure' } })
+  edges.push({ id: 'mr_create__done', source: 'mr_create', target: 'done' })
+
+  // === Cleanup → done ===
+  edges.push({ id: 'cleanup__done', source: 'cleanup', target: 'done' })
 
   return { nodes, edges }
 }
