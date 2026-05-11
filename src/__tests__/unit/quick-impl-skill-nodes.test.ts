@@ -633,8 +633,8 @@ describe('skill_with_approval', () => {
   })
 
   it('exposes skillOutput + lastArtifactPath in stepOutputs on approved (downstream template contract)', async () => {
-    // 下游 dev_with_review_loop 用 {{steps.spec_review_loop.output.skillOutput.e2eScenarios}}
-    // 取 spec 的 e2e scenarios，{{steps.<id>.output.lastArtifactPath}} 取 spec.md 路径。
+    // 下游 dev_author 用 {{steps.spec_author.output.skillOutput}}
+    // 取 spec 的完整对象，{{steps.<id>.output.lastArtifactPath}} 取 spec.md 路径。
     // 没 skillOutput 会让 dev-loop 收到字面量 {{...}}，误判 non-functional change 跳过 playbook。
     const fullSpecOutput = {
       summary: 'spec done',
