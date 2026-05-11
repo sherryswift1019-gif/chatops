@@ -51,6 +51,14 @@ vi.mock('../../pipeline/qi-approval-waiter.js', () => ({
   removeQiApprovalWaiter: (waiterId: number) => {
     mocks.pending.delete(waiterId)
   },
+  clearQiApprovalWaitersByRunId: (runId: number) => {
+    const removed: number[] = []
+    for (const [waiterId, info] of mocks.pending) {
+      if (info.runId === runId) removed.push(waiterId)
+    }
+    for (const w of removed) mocks.pending.delete(w)
+    return removed
+  },
   clearQiApprovalWaiters: () => {
     mocks.pending.clear()
   },
@@ -106,6 +114,8 @@ describe('scheduleQiApprovalTimeout — human_gate timeout wiring', () => {
 
     expect(mocks.claimWaiter).toHaveBeenCalledTimes(1)
     expect(mocks.claimWaiter.mock.calls[0][2].decision).toBe('approved')
+    // approve 路径不该写 rejectReason —— 语义是拒绝原因，approve 时必须 null。
+    expect(mocks.claimWaiter.mock.calls[0][2].rejectReason).toBeNull()
   })
 
   it('does NOT resume when human / IM has already claimed the waiter (claim race lost)', async () => {

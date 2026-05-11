@@ -37,6 +37,7 @@ import {
   getQiApprovalInfo,
   removeQiApprovalWaiter,
   registerQiApprovalWaiter,
+  clearQiApprovalWaitersByRunId,
 } from './qi-approval-waiter.js'
 import {
   type RequirementApprovalWaiter,
@@ -587,11 +588,18 @@ export function scheduleQiApprovalTimeout(
   clearQiApprovalTimer(waiterId)
   const timer = setTimeout(() => {
     qiApprovalTimers.delete(waiterId)
+    // 双层防护：若 finalize() 已清掉该 waiter 的 registry entry（pipeline 提前
+    // 终止路径），就不必去 race-claim DB waiter，避免无效 claim + 后续 resume
+    // 链路在已 finalize 的 run 上跑。
+    if (!getQiApprovalInfo(waiterId)) {
+      return
+    }
     void (async () => {
       const decision = onTimeout === 'approve' ? 'approved' : 'rejected'
       const result = await claimWaiter(waiterId, 'timeout', {
         decision,
-        rejectReason: `timeout (${onTimeout}) auto-decided`,
+        // approve 路径不该写 rejectReason —— 该字段语义是拒绝原因，approve 时为 null。
+        rejectReason: onTimeout === 'reject' ? 'timeout (reject) auto-decided' : null,
         decidedBy: 'system:timeout',
       })
       if (!result.claimed || !result.waiter) {
@@ -745,6 +753,13 @@ async function finalize(
   }
   for (const key of Array.from(interruptTimers.keys())) {
     if (key.startsWith(`${ctx.runId}:`)) clearInterruptTimer(key)
+  }
+  // 防 ghost-resume：pipeline 提前 finalize 时（如另一节点 onFailure=stop）残留的
+  // QI waiter timer 仍会按时 fire → claimWaiter 成功 → resumeFromQiApproval 会
+  // 在已删除的 run 上 reloadContext。清掉 waiter registry + 对应 timer 后，
+  // 即便 timer 漏网，resumeFromQiApproval 开头 getQiApprovalInfo 为 null 会早退。
+  for (const waiterId of clearQiApprovalWaitersByRunId(ctx.runId)) {
+    clearQiApprovalTimer(waiterId)
   }
 }
 
