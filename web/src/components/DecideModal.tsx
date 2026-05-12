@@ -114,22 +114,35 @@ export function DecideModal({ open, waiter, requirementId, detail, onClose, onDe
       width={720}
       destroyOnClose
     >
-      {(waiter?.contextSummary || detail?.specContent) && (
-        <Collapse
-          size="small"
-          defaultActiveKey={['spec']}
-          style={{ marginBottom: 16 }}
-          items={[{
-            key: 'spec',
-            label: <Space><FileTextOutlined /><span>需求规格（Spec）— 请阅读后再决策</span></Space>,
-            children: (
-              <div style={{ maxHeight: 400, overflowY: 'auto', fontSize: 13 }} className="spec-markdown">
-                <MarkdownViewer source={waiter?.contextSummary ?? detail?.specContent ?? ''} />
-              </div>
-            ),
-          }]}
-        />
-      )}
+      {(waiter?.contextSummary || detail?.specContent) && (() => {
+        // 不同 approvalKind 的"审批依据"含义不同：
+        //   spec → spec.md 全文（需求规格）
+        //   plan → plan 摘要 + plan.md
+        //   final → 代码审查 + 测试 + commit log（buildFinalApprovalSummary 输出）
+        //   其它（escalation/dev/...）→ 上下文摘要
+        const kindLabel =
+          waiter?.approvalKind === 'spec' ? '需求规格（Spec）—— 请阅读后再决策' :
+          waiter?.approvalKind === 'plan' ? '实施方案（Plan）—— 请阅读后再决策' :
+          waiter?.approvalKind === 'final' ? '最终审批依据 —— 代码审查 / 测试结果 / 实现内容' :
+          waiter?.approvalKind === 'dev' ? '代码实现摘要 —— 请阅读后再决策' :
+          '审批上下文 —— 请阅读后再决策'
+        return (
+          <Collapse
+            size="small"
+            defaultActiveKey={['spec']}
+            style={{ marginBottom: 16 }}
+            items={[{
+              key: 'spec',
+              label: <Space><FileTextOutlined /><span>{kindLabel}</span></Space>,
+              children: (
+                <div style={{ maxHeight: 400, overflowY: 'auto', fontSize: 13 }} className="spec-markdown">
+                  <MarkdownViewer source={waiter?.contextSummary ?? detail?.specContent ?? ''} />
+                </div>
+              ),
+            }]}
+          />
+        )
+      })()}
       <V2StructuredView stage={findStageForWaiter(detail?.stageResults ?? null, waiter)} />
       <Form form={form} layout="vertical" onFinish={handleSubmit}>
         <Form.Item name="decision" label="决策" rules={[{ required: true, message: '请选择决策' }]}>

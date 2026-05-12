@@ -2672,8 +2672,42 @@ function buildHumanGateNode(
           params: { ...params, round: computedRound },
           readFile: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : ''),
         })
-    const contextSummary = rawContextSummary ?? advancedSummary?.web ?? fallbackSummary
-    const imSummary = advancedSummary?.im ?? null
+
+    // final approval 单独走 buildFinalApprovalSummary —— resolveHumanGateAdvancedSummary 只覆盖
+    // summaryKind='spec'，final 节点需要从 stepOutputs 拿 dev/e2e 数据，这里直接组装。
+    // 22 节点拓扑下 dev_with_review_loop 已拆成 dev_author / dev_ai_review，分别抽 tasksDone 和 review。
+    let finalApprovalSummary: { web: string; im: string } | null = null
+    const isFinalApproval = String(params.approvalKind ?? '') === 'final'
+    if (isFinalApproval && !rawContextSummary) {
+      const stepOutputs = (state.stepOutputs ?? {}) as Record<string, { output?: Record<string, unknown> }>
+      const devAuthorOut = stepOutputs.dev_author?.output as {
+        skillOutput?: { tasksDone?: string[] }
+      } | undefined
+      const devReviewOut = stepOutputs.dev_ai_review?.output as {
+        skillOutput?: { summary?: string; decision?: string; notes?: Array<{ msg: string }>; fileRisks?: Array<{ file: string; role: string; impact: string; risk: 'high' | 'medium' | 'low'; focusOn: string }> }
+      } | undefined
+      const e2eOutput = stepOutputs.qi_e2e_runner?.output as {
+        result?: string
+        scenariosRun?: number
+        passed?: number
+        failed?: number
+        skipped?: boolean
+        skipReason?: string
+      } | undefined
+      const worktreePath = String(params.worktreePath ?? '')
+      finalApprovalSummary = buildFinalApprovalSummary({
+        devOutput: {
+          review: devReviewOut?.skillOutput ?? undefined,
+          tasksDone: devAuthorOut?.skillOutput?.tasksDone ?? undefined,
+          fixRounds: 0,
+        },
+        e2eOutput: e2eOutput ?? null,
+        worktreePath,
+      })
+    }
+
+    const contextSummary = rawContextSummary ?? finalApprovalSummary?.web ?? advancedSummary?.web ?? fallbackSummary
+    const imSummary = finalApprovalSummary?.im ?? advancedSummary?.im ?? null
 
     // 复用 / 创建 waiter（replay 时可能已存在，getActiveWaiter 按 (requirementId, nodeId) 查）
     // approvalKind 从 params 取（默认 'human_gate'）→ sendQiApprovalCard 据此推 IM 卡片标题。
