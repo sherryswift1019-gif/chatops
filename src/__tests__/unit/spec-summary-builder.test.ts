@@ -262,6 +262,49 @@ describe('buildSpecApprovalSummary', () => {
     expect(web).toContain('🟢 置信度: high')
     expect(web).not.toContain('🔴 **置信度')
   })
+
+  it('AC-6: confidenceLevel=low → IM 含 🔴 低自信，需细审', () => {
+    const skillOutput = loadFixture('v3-minimal.json')
+    skillOutput.confidenceLevel = 'low'
+    const { im } = buildSpecApprovalSummary({
+      skillOutput,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 1,
+    })
+    expect(im).toContain('🔴 低自信，需细审')
+  })
+
+  it('AC-7: confidenceLevel=high/medium → IM 不含 低自信 字样', () => {
+    const high = loadFixture('v3-minimal.json')
+    high.confidenceLevel = 'high'
+    const { im: imHigh } = buildSpecApprovalSummary({
+      skillOutput: high,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 1,
+    })
+    expect(imHigh).not.toContain('低自信')
+
+    const med = loadFixture('v3-minimal.json')
+    med.confidenceLevel = 'medium'
+    const { im: imMed } = buildSpecApprovalSummary({
+      skillOutput: med,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 1,
+    })
+    expect(imMed).not.toContain('低自信')
+  })
+
+  it('AC-8: low-confidence + 满字段 IM 长度仍 ≤ 250 字符', () => {
+    const skillOutput = loadFixture('v3-full.json')
+    skillOutput.confidenceLevel = 'low'
+    const { im } = buildSpecApprovalSummary({
+      skillOutput,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 2,
+    })
+    expect(im.length).toBeLessThanOrEqual(250)
+    expect(im).toContain('🔴 低自信，需细审')
+  })
 })
 
 describe('parseFeedbackForSummary', () => {

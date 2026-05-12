@@ -203,6 +203,9 @@ export function buildSpecApprovalSummary(args: BuildSpecApprovalSummaryArgs): {
   // ===== IM 摘要（≤ 250 字符）=====
   const imLines: string[] = []
   imLines.push(`🤖 ${SpecSummaryI18n.TITLE} · 第 ${round} 轮`)
+  if (skillOutput.confidenceLevel === 'low') {
+    imLines.push('🔴 低自信，需细审')
+  }
   if (hint) imLines.push(`💡 ${hint}`)
 
   // top reviewHint 的 point（含 severity icon）
