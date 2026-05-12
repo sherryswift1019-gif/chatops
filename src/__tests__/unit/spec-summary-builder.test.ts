@@ -196,6 +196,50 @@ describe('buildSpecApprovalSummary', () => {
     const elapsed = performance.now() - start
     expect(elapsed).toBeLessThan(50)
   })
+
+  // ─── Low Confidence Signal（AC-1/2/3）──────────────────────
+  it('AC-1: confidenceLevel=low 优先级最高 — 同时存在 high reviewHints / high risks / round=3 时仍返回 HINT_LOW_CONFIDENCE', () => {
+    const skillOutput = loadFixture('v3-minimal.json')
+    skillOutput.confidenceLevel = 'low'
+    ;(skillOutput as { reviewHints: Array<{ severity: string; point: string; reason: string }> }).reviewHints = [
+      { severity: 'high', point: 'X', reason: 'Y' },
+    ]
+    ;(skillOutput as { risks: Array<{ severity: string; desc: string }> }).risks = [
+      { severity: 'high', desc: 'Z' },
+    ]
+    const { web } = buildSpecApprovalSummary({
+      skillOutput,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 3,
+    })
+    expect(web).toContain('LLM 自信度低，请细审')
+    expect(web).not.toContain('看起来可快速批')
+    expect(web).not.toContain('建议 escalation')
+  })
+
+  it('AC-2: confidenceLevel=high 仍返回 HINT_QUICK_PASS（不回归）', () => {
+    const skillOutput = loadFixture('v3-minimal.json')  // 已是 high + 全 low risk + 空 reviewHints
+    const { web } = buildSpecApprovalSummary({
+      skillOutput,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 1,
+    })
+    expect(web).toContain('看起来可快速批')
+    expect(web).not.toContain('LLM 自信度低')
+  })
+
+  it('AC-3: 无 confidenceLevel 字段时按旧优先级走（high reviewHint → HINT_HIGH_RISK）', () => {
+    const skillOutput = loadFixture('v3-minimal.json') as { reviewHints: Array<{ severity: string; point: string; reason: string }>; confidenceLevel?: string }
+    delete skillOutput.confidenceLevel
+    skillOutput.reviewHints = [{ severity: 'high', point: 'X', reason: 'Y' }]
+    const { web } = buildSpecApprovalSummary({
+      skillOutput: skillOutput as Parameters<typeof buildSpecApprovalSummary>[0]['skillOutput'],
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 1,
+    })
+    expect(web).toContain('建议关注下方 high 风险')
+    expect(web).not.toContain('LLM 自信度低')
+  })
 })
 
 describe('parseFeedbackForSummary', () => {

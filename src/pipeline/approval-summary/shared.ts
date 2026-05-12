@@ -9,8 +9,9 @@ import type { SpecAuthorOutput } from '../../quick-impl/role-output-schemas.js'
 import { SpecSummaryI18n } from './i18n.js'
 
 /**
- * 启发式审批助手 hint。优先级：reviewHints.high > risks.high > round≥3 > confidenceLevel='high'
- * 矛盾时偏向 conservative（高风险优先于"可快速批"）
+ * 启发式审批助手 hint。优先级：confidenceLevel='low' > reviewHints.high > risks.high > round≥3 > confidenceLevel='high'
+ * 矛盾时 low confidence 优先于 high risk —— 元信号（LLM 自己都不确定）比内容信号更重要；
+ * high risk 在 reviewHints/risks 段已有红色标记，不靠 hint 也能看到，但 low confidence 没有第二个曝光位。
  */
 export function computeHeuristicHint(args: {
   skillOutput: SpecAuthorOutput | null
@@ -19,6 +20,8 @@ export function computeHeuristicHint(args: {
 }): string {
   const { skillOutput, round, budgetExtended } = args
   if (!skillOutput) return ''
+
+  if (skillOutput.confidenceLevel === 'low') return SpecSummaryI18n.HINT_LOW_CONFIDENCE
 
   const reviewHints = skillOutput.reviewHints ?? []
   if (reviewHints.some((h) => h.severity === 'high')) return SpecSummaryI18n.HINT_HIGH_RISK

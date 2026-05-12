@@ -7,6 +7,7 @@ export const SpecSummaryI18n = {
   HINT_QUICK_PASS: '看起来可快速批',
   HINT_HIGH_RISK: '建议关注下方 high 风险',
   HINT_ESCALATION: '建议 escalation',
+  HINT_LOW_CONFIDENCE: '⚠️ LLM 自信度低，请细审 assumptions 与 reviewHints',
   SECTION_EVAL: '本次评估',
   SECTION_REVIEW_HINTS: '需要你 review 的点',
   SECTION_ASSUMPTIONS: 'LLM 替你做的决定',
