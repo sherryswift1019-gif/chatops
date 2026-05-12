@@ -49,6 +49,7 @@ export function getKindLabel(
 ): string {
   if (approvalKind === 'spec') return 'Spec 评审'
   if (approvalKind === 'plan') return 'Plan 评审'
+  if (approvalKind === 'dev') return 'Dev 评审'
   if (approvalKind === 'final') return '最终确认'
   if (approvalKind === 'qi_e2e_intervention') return 'E2E 失败人工介入'
   if (approvalKind === 'qi_sandbox_failed') return 'Sandbox 启动失败'

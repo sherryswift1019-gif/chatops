@@ -5,6 +5,30 @@
 import type { ApprovalWaiterDTO, ApprovalDecision, V2StageResult } from '../api/requirements'
 
 /**
+ * 审批 kind → 用户可见 label。新增 / 改文案时同步 KIND_LABEL 测试。
+ * dev 是 v14 新增（dev_human_gate 不再借用 'plan' 标签）。
+ */
+export const KIND_LABEL: Record<string, string> = {
+  spec:       'Spec 评审',
+  plan:       'Plan 评审',
+  dev:        'Dev 评审',
+  final:      '最终审批',
+  escalation: '升级审批',
+  human_gate: '人工审批',
+}
+
+/**
+ * 决策弹窗的 title。final 是 one-shot 不显示轮次；其他 kind 显示「第 N 轮」。
+ * waiter 为空时返回空串（调用方按需 fallback）。
+ */
+export function buildDecisionModalTitle(waiter: ApprovalWaiterDTO | null | undefined): string {
+  if (!waiter) return ''
+  const label = KIND_LABEL[waiter.approvalKind] ?? waiter.approvalKind
+  if (waiter.approvalKind === 'final') return label
+  return `${label} · 第 ${waiter.round} 轮`
+}
+
+/**
  * 在 stageResults[] 中找当前 waiter 对应的 stage（按 name == nodeId 匹配）。
  * waiter.nodeId 形如 'spec_review_loop' / 'final_approval' / 'dev_with_review_loop'。
  * 找不到 / waiter 为 null 返回 undefined。

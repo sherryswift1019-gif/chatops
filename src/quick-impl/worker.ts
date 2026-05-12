@@ -257,6 +257,7 @@ async function launchPipeline(
     baseBranch: req.baseBranch,
     rawInput: req.rawInput,
     title: req.title,
+    skipE2E: req.skipE2E,
   }
 
   const run = await createTestRun({

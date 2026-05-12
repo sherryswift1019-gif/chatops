@@ -6,7 +6,7 @@
  * 设计参考：docs/prds/quick-impl-roles-v2/01-roles.md / 02-data-flow.md §6
  */
 import { describe, it, expect } from 'vitest'
-import { findStageForWaiter, shouldWarnPlanRework } from './requirements-helpers'
+import { findStageForWaiter, shouldWarnPlanRework, buildDecisionModalTitle } from './requirements-helpers'
 import type { ApprovalWaiterDTO, V2StageResult } from '../api/requirements'
 
 const baseWaiter: ApprovalWaiterDTO = {
@@ -129,5 +129,39 @@ describe('shouldWarnPlanRework', () => {
     it('两者都 null → false', () => {
       expect(shouldWarnPlanRework(null, null)).toBe(false)
     })
+  })
+})
+
+// =============================================================================
+// buildDecisionModalTitle
+// =============================================================================
+
+describe('buildDecisionModalTitle', () => {
+  it('spec waiter → "Spec 评审 · 第 1 轮"', () => {
+    expect(buildDecisionModalTitle({ ...baseWaiter, approvalKind: 'spec', round: 1 })).toBe('Spec 评审 · 第 1 轮')
+  })
+
+  it('plan waiter → "Plan 评审 · 第 2 轮"', () => {
+    expect(buildDecisionModalTitle({ ...baseWaiter, approvalKind: 'plan', round: 2 })).toBe('Plan 评审 · 第 2 轮')
+  })
+
+  it('dev waiter → "Dev 评审 · 第 1 轮"（新加 dev kind，不再借用 plan label）', () => {
+    expect(buildDecisionModalTitle({ ...baseWaiter, approvalKind: 'dev' as const, round: 1 })).toBe('Dev 评审 · 第 1 轮')
+  })
+
+  it('final waiter → "最终审批"（不带轮次，final 是 one-shot）', () => {
+    expect(buildDecisionModalTitle({ ...baseWaiter, approvalKind: 'final', round: 1 })).toBe('最终审批')
+  })
+
+  it('escalation waiter → "升级审批 · 第 N 轮"', () => {
+    expect(buildDecisionModalTitle({ ...baseWaiter, approvalKind: 'escalation', round: 3 })).toBe('升级审批 · 第 3 轮')
+  })
+
+  it('未知 approvalKind → 直接显示 kind 字面值 + 轮次', () => {
+    expect(buildDecisionModalTitle({ ...baseWaiter, approvalKind: 'qi_e2e_intervention', round: 1 })).toBe('qi_e2e_intervention · 第 1 轮')
+  })
+
+  it('waiter null → 空串', () => {
+    expect(buildDecisionModalTitle(null)).toBe('')
   })
 })

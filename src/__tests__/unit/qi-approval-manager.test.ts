@@ -18,6 +18,10 @@ describe('approvalKind kindLabel', () => {
     expect(getKindLabel('plan')).toBe('Plan 评审')
   })
 
+  it('dev → "Dev 评审"（v14 新增，dev_human_gate 不再借用 plan 标签）', () => {
+    expect(getKindLabel('dev')).toBe('Dev 评审')
+  })
+
   it('final → "最终确认"', () => {
     expect(getKindLabel('final')).toBe('最终确认')
   })

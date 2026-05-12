@@ -44,4 +44,17 @@ export const nodeTypes = {
   qi_e2e_runner: makeSimpleNode('#7cb305', 'E2E 测试'),
   im_input: makeSimpleNode('#531dab', 'IM 人工介入'),
   mr_create: makeSimpleNode('#c41d7f', '创建 MR'),
+  // QI v13 拓扑：spec/plan/dev 拆 author/ai_review/human_gate/commit_push
+  llm_author: makeSimpleNode('#1d39c4', 'LLM 创作', d => (d.params as { role?: string })?.role ?? '未配置 role'),
+  llm_review: makeSimpleNode('#9254de', 'LLM 评审', d => (d.params as { role?: string })?.role ?? '未配置 role'),
+  human_gate: makeSimpleNode('#d46b08', '人工审批', d => `mode: ${(d.params as { mode?: string })?.mode ?? 'required'}`),
+  git_commit_push: makeSimpleNode('#08979c', 'Git Commit + Push', d => {
+    const p = d.params as { branch?: string; pushOnly?: boolean }
+    return p?.pushOnly ? `push only · ${p.branch ?? '?'}` : (p?.branch ?? '未配置 branch')
+  }),
+  cleanup: makeSimpleNode('#bfbfbf', '资源清理', d => {
+    const targets = (d.params as { targets?: unknown[] })?.targets
+    return Array.isArray(targets) ? `${targets.length} targets` : '未配置 targets'
+  }),
+  end: makeSimpleNode('#595959', '结束'),
 }

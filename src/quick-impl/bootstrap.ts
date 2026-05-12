@@ -19,8 +19,13 @@ import type { PipelineGraph, PipelineNode, PipelineEdge } from '../pipeline/type
  * v11 → v12: spec/plan/dev 阶段拆为原子节点（author/ai_review/human_gate/commit_push），
  * final_approval 改用 human_gate，mr_create_skip 替换为 cleanup + done。共 25 节点。
  * v12 → v13: cleanup 节点 targets 加 remote_branch + draft_mr，abort 路径闭环清远端资源。
+ * v13 → v14: dev_push 后插 e2e_skip_router (switch)，按 triggerParams.skipE2E 路由：
+ *   true → final_approval（整段 E2E 跳过）；false → qi_e2e_runner（原拓扑不变）。
+ * v14 → v15: spec_human_gate.params 加 summaryKind/skillOutput/artifactPath/round，
+ *   让 buildHumanGateNode 调 buildSpecApprovalSummary 产 5 段 web 摘要（修空白决策弹窗 bug）。
+ *   dev_human_gate.approvalKind 'plan' → 'dev'，IM/Web 卡片标签不再错位。
  */
-export const QUICK_IMPL_TEMPLATE_VERSION = 13
+export const QUICK_IMPL_TEMPLATE_VERSION = 15
 export const QUICK_IMPL_PIPELINE_NAME = 'quick-impl'
 
 // ─── Node definitions ────────────────────────────────────────────────────────
@@ -43,7 +48,7 @@ function makeNode(id: string, partial: Omit<PipelineNode, 'id' | 'position' | 't
   } as PipelineNode
 }
 
-function buildQuickImplGraph(): PipelineGraph {
+export function buildQuickImplGraph(): PipelineGraph {
   _nodeIndex = 0  // reset counter for each build
   const nodes: PipelineNode[] = [
     makeNode('init_branch', {
@@ -110,6 +115,11 @@ function buildQuickImplGraph(): PipelineGraph {
         source: 'ai_pass',
         artifact: '{{steps.spec_author.output.skillOutput}}',
         aiReview: '{{steps.spec_ai_review.output}}',
+        // 高保真审批摘要：让 buildHumanGateNode 调 buildSpecApprovalSummary（5 段 web + 折叠 spec.md）
+        summaryKind: 'spec',
+        skillOutput: '{{steps.spec_author.output.skillOutput}}',
+        artifactPath: '{{steps.init_branch.output.worktreePath}}/docs/specs/qi-{{triggerParams.requirementId}}.md',
+        round: 1,
       },
     } as any),
 
@@ -256,7 +266,7 @@ function buildQuickImplGraph(): PipelineGraph {
         mode: 'on_fail',
         timeoutSeconds: 172800,
         onTimeout: 'reject',
-        approvalKind: 'plan',
+        approvalKind: 'dev',
         approverIds: '{{vars.qiApproverIds}}',
         source: 'ai_escalation',
         artifact: '{{steps.dev_author.output.skillOutput}}',
@@ -274,6 +284,22 @@ function buildQuickImplGraph(): PipelineGraph {
         branch: '{{steps.init_branch.output.branch}}',
         pushOnly: true,
         statusOnSuccess: 'testing',
+      },
+    } as any),
+
+    // v14: 触发时勾选「跳过 E2E」→ 整段 E2E 跳过，直接走到 final_approval
+    makeNode('e2e_skip_router', {
+      name: 'E2E Skip Router',
+      stageType: 'switch',
+      onFailure: 'stop',
+      params: {
+        cases: [
+          {
+            when: 'triggerParams.skipE2E == true',
+            target: 'final_approval',
+          },
+        ],
+        default: 'qi_e2e_runner',
       },
     } as any),
 
@@ -454,6 +480,7 @@ function buildQuickImplGraph(): PipelineGraph {
           devTasksDone: '{{steps.dev_author.output.skillOutput.tasksDone}}',
           e2eResult: '{{steps.qi_e2e_runner.output.result}}',
           e2eAttempt: '{{steps.qi_e2e_runner.output.attempt}}',
+          skipE2E: '{{triggerParams.skipE2E}}',
         },
       },
     } as any),
@@ -529,7 +556,12 @@ function buildQuickImplGraph(): PipelineGraph {
   edges.push({ id: 'dev_ai_review__dev_human_gate', source: 'dev_ai_review', target: 'dev_human_gate', condition: { kind: 'onFailure' } })
   edges.push({ id: 'dev_human_gate__dev_push', source: 'dev_human_gate', target: 'dev_push', condition: { kind: 'onSuccess' } })
   edges.push({ id: 'dev_human_gate__cleanup_reject', source: 'dev_human_gate', target: 'cleanup', condition: { kind: 'onFailure' } })
-  edges.push({ id: 'dev_push__qi_e2e_runner', source: 'dev_push', target: 'qi_e2e_runner' })
+  edges.push({ id: 'dev_push__e2e_skip_router', source: 'dev_push', target: 'e2e_skip_router' })
+
+  // === E2E skip router (v14)：skipE2E=true 时绕过整段 E2E ===
+  for (const target of ['final_approval', 'qi_e2e_runner']) {
+    edges.push({ id: `e2e_skip_router__${target}`, source: 'e2e_skip_router', target })
+  }
 
   // === E2E phase ===
   edges.push({ id: 'qi_e2e_runner__e2e_router', source: 'qi_e2e_runner', target: 'e2e_router' })

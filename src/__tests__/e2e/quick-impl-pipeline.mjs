@@ -7,8 +7,11 @@
 import { chromium } from '@playwright/test'
 
 // Find the running Vite port (5173 or 5175)
-const BASE = process.env.BASE_URL ?? 'http://localhost:5175'
-const CRED = { username: 'admin', password: 'admin123' }
+const BASE = process.env.BASE_URL ?? 'http://localhost:5173'
+const CRED = {
+  username: process.env.E2E_USERNAME ?? 'admin',
+  password: process.env.E2E_PASSWORD ?? 'admin123',
+}
 
 let passed = 0
 let failed = 0
@@ -243,9 +246,9 @@ try {
     await modal.waitFor({ timeout: 5000 })
 
     const ts = Date.now()
-    await modal.locator('input[id*="title"]').fill(`E2E测试需求-${ts}`)
-    await modal.locator('textarea[id*="rawInput"]').fill(`这是一个E2E自动化测试创建的需求，时间戳: ${ts}`)
-    await modal.locator('input[id*="gitlabProject"]').fill('chatops/chatops')
+    await modal.locator('input[id*="title"]').fill(`[E2E] 登录页 /login 新增「记住用户名」Checkbox-${ts}`)
+    await modal.locator('textarea[id*="rawInput"]').fill(`在登录页 /login 新增「记住用户名」Checkbox：用户勾选后下次访问自动填充用户名（localStorage 持久化）。时间戳: ${ts}`)
+    await modal.locator('input[id*="gitlabProject"]').fill('sherryswift1019-group/chatops')
 
     // Submit
     await modal.locator('.ant-modal-footer button.ant-btn-primary').click()
@@ -264,7 +267,7 @@ try {
     }
 
     // Find the created row and verify status is "草稿"
-    const newRow = page.locator('.ant-table-tbody tr.ant-table-row').filter({ hasText: `E2E测试需求-${ts}` })
+    const newRow = page.locator('.ant-table-tbody tr.ant-table-row').filter({ hasText: `[E2E] 登录页 /login 新增「记住用户名」Checkbox-${ts}` })
     const newRowCount = await newRow.count()
     log(`New row found: ${newRowCount > 0}`)
     if (newRowCount > 0) {
@@ -400,7 +403,7 @@ try {
 
     // Find E2E test draft row created earlier
     const e2eDraftRow = page.locator('.ant-table-tbody tr.ant-table-row').filter({
-      hasText: 'E2E测试需求-'
+      hasText: '[E2E] 登录页 /login 新增「记住用户名」Checkbox-'
     }).filter({
       has: page.locator('.ant-tag:has-text("草稿")')
     })
@@ -430,7 +433,7 @@ try {
 
     // Row status should no longer be "草稿"
     const updatedRow = page.locator('.ant-table-tbody tr.ant-table-row').filter({
-      hasText: e2eDraftRow ? 'E2E测试需求-' : ''
+      hasText: e2eDraftRow ? '[E2E] 登录页 /login 新增「记住用户名」Checkbox-' : ''
     })
     if (await updatedRow.count() > 0) {
       const newStatus = await updatedRow.first().locator('.ant-tag').first().innerText().catch(() => '?')
@@ -767,7 +770,7 @@ try {
   await goToRequirements(page)
   await page.waitForTimeout(1000)
   const e2eDrafts = page.locator('.ant-table-tbody tr.ant-table-row')
-    .filter({ hasText: 'E2E测试需求-' })
+    .filter({ hasText: '[E2E] 登录页 /login 新增「记住用户名」Checkbox-' })
     .filter({ has: page.locator('.ant-tag:has-text("草稿")') })
   const cleanupCount = await e2eDrafts.count()
   log(`E2E draft rows to clean up: ${cleanupCount}`)
@@ -775,7 +778,7 @@ try {
     try {
       // Refresh locator each iteration as DOM changes
       const row = page.locator('.ant-table-tbody tr.ant-table-row')
-        .filter({ hasText: 'E2E测试需求-' })
+        .filter({ hasText: '[E2E] 登录页 /login 新增「记住用户名」Checkbox-' })
         .filter({ has: page.locator('.ant-tag:has-text("草稿")') })
         .first()
       await row.locator('button:has-text("删除")').click()

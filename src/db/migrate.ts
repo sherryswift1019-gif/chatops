@@ -80,6 +80,7 @@ const SCHEMA_FILES: ReadonlyArray<readonly [string, string]> = [
   ['v61', 'schema-v61.sql'],
   ['v62', 'schema-v62.sql'],
   ['v63', 'schema-v63.sql'],
+  ['v64', 'schema-v64.sql'],
   ['v1000', 'schema-v1000.sql'],
   ['v1001', 'schema-v1001.sql'],
   ['v1002', 'schema-v1002.sql'],

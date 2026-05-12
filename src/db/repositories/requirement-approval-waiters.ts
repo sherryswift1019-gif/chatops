@@ -10,7 +10,7 @@ import { getPool } from '../client.js'
  * 设计：docs/prds/prd-quick-impl.md §4.2 / §6.2 / §7（IM 卡片与 Web 面板）
  */
 
-export type ApprovalKind = 'spec' | 'plan' | 'final' | 'escalation' | 'human_gate'
+export type ApprovalKind = 'spec' | 'plan' | 'dev' | 'final' | 'escalation' | 'human_gate'
 export type DecisionSet = 'binary' | 'escalation' | 'qi_e2e_intervention' | 'qi_sandbox_failed' | 'plan_escalation' | 'human_gate'
 export type ClaimSource = 'im' | 'web' | 'retry' | 'abort' | 'timeout'
 export type ApprovalDecision =

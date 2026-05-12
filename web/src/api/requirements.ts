@@ -33,6 +33,7 @@ export interface RequirementDTO {
   retryCounters: Record<string, unknown>
   source: 'web' | 'im' | 'api'
   createdBy: string | null
+  skipE2E: boolean
   createdAt: string
   updatedAt: string
   completedAt: string | null
@@ -43,7 +44,7 @@ export interface ApprovalWaiterDTO {
   requirementId: number
   pipelineRunId: number
   nodeId: string
-  approvalKind: 'spec' | 'plan' | 'final' | 'escalation' | 'human_gate' | 'qi_e2e_intervention' | 'qi_sandbox_failed'
+  approvalKind: 'spec' | 'plan' | 'dev' | 'final' | 'escalation' | 'human_gate' | 'qi_e2e_intervention' | 'qi_sandbox_failed'
   round: number
   decisionSet: 'binary' | 'escalation' | 'qi_e2e_intervention' | 'qi_sandbox_failed' | 'plan_escalation' | 'human_gate'
   imPlatform: string | null
@@ -179,6 +180,7 @@ export const requirementsApi = {
     gitlabProject: string
     baseBranch?: string
     createdBy?: string
+    skipE2E?: boolean
   }): Promise<RequirementDTO> {
     return client.post('/requirements', body).then(r => r.data)
   },
@@ -188,6 +190,7 @@ export const requirementsApi = {
     rawInput?: string
     gitlabProject?: string
     baseBranch?: string
+    skipE2E?: boolean
   }): Promise<RequirementDTO> {
     return client.patch(`/requirements/${id}`, body).then(r => r.data)
   },

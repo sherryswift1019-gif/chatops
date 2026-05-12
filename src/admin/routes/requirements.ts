@@ -51,9 +51,9 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
 
   // ── Create (draft) ────────────────────────────────────────────────────────
   app.post<{
-    Body: { title: string; rawInput: string; gitlabProject: string; baseBranch?: string; createdBy?: string }
+    Body: { title: string; rawInput: string; gitlabProject: string; baseBranch?: string; createdBy?: string; skipE2E?: boolean }
   }>('/requirements', async (req, reply) => {
-    const { title, rawInput, gitlabProject, baseBranch, createdBy } = req.body
+    const { title, rawInput, gitlabProject, baseBranch, createdBy, skipE2E } = req.body
     if (!title || !rawInput || !gitlabProject) {
       return reply.status(400).send({ error: 'title, rawInput, and gitlabProject are required' })
     }
@@ -64,7 +64,7 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
     }
     const req_ = await createRequirement({
       title, rawInput: sanitizeResult.sanitized, gitlabProject: normalizeProjectPath(gitlabProject),
-      baseBranch, source: 'web', createdBy, status: 'draft',
+      baseBranch, source: 'web', createdBy, status: 'draft', skipE2E,
     })
     return reply.status(201).send(req_)
   })
@@ -106,7 +106,7 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
   // ── Update (draft only) ───────────────────────────────────────────────────
   app.patch<{
     Params: { id: string }
-    Body: { title?: string; rawInput?: string; gitlabProject?: string; baseBranch?: string }
+    Body: { title?: string; rawInput?: string; gitlabProject?: string; baseBranch?: string; skipE2E?: boolean }
   }>('/requirements/:id', async (req, reply) => {
     const id = Number(req.params.id)
     if (isNaN(id)) return reply.status(400).send({ error: 'invalid id' })

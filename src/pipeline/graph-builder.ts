@@ -43,7 +43,7 @@ import { appendStageResult, getTestRunById } from '../db/repositories/test-runs.
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { execSync } from 'child_process'
-import { buildSpecApprovalSummary, buildFinalApprovalSummary, buildPlanApprovalSummary } from './approval-summary/index.js'
+import { buildSpecApprovalSummary, buildFinalApprovalSummary, buildPlanApprovalSummary, resolveHumanGateAdvancedSummary } from './approval-summary/index.js'
 import type { SpecAuthorOutput } from '../quick-impl/role-output-schemas.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
@@ -2569,12 +2569,21 @@ function buildHumanGateNode(
       source === 'ai_pass' ? 'AI 已通过（人工确认）' :
       source === 'ai_escalation' ? 'AI review 未通过 → 升级人审' :
       '最终人工确认'
-    const contextSummary = rawContextSummary
-      ?? [
+    const fallbackSummary = [
           `需求 #${requirementId}: ${requirementTitle}`,
           `来源：${sourceLabel}`,
           aiReviewNotes ? `AI review notes：\n${aiReviewNotes}` : null,
         ].filter(Boolean).join('\n\n')
+    // 高保真摘要：params.summaryKind 命中时调对应 builder（spec=5段web + 折叠 spec.md）
+    // 仅当 caller 未显式传 contextSummary（raw 覆盖）时尝试，避免冲掉显式值
+    const advancedSummary = rawContextSummary
+      ? null
+      : resolveHumanGateAdvancedSummary({
+          params,
+          readFile: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : ''),
+        })
+    const contextSummary = rawContextSummary ?? advancedSummary?.web ?? fallbackSummary
+    const imSummary = advancedSummary?.im ?? null
 
     // 复用 / 创建 waiter（replay 时可能已存在，getActiveWaiter 按 (requirementId, nodeId) 查）
     // approvalKind 从 params 取（默认 'human_gate'）→ sendQiApprovalCard 据此推 IM 卡片标题。
@@ -2613,7 +2622,7 @@ function buildHumanGateNode(
       requirementId,
       requirementTitle,
       contextSummary: waiterRow.contextSummary,
-      imSummary: null,
+      imSummary,
       timeoutSeconds,
       onTimeout,
       kindMeta,

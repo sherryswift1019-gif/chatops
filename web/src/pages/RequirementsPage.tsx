@@ -20,7 +20,7 @@ import {
   type ApprovalDecision,
   type V2StageResult,
 } from '../api/requirements'
-import { findStageForWaiter, shouldWarnPlanRework } from './requirements-helpers'
+import { findStageForWaiter, shouldWarnPlanRework, KIND_LABEL, buildDecisionModalTitle } from './requirements-helpers'
 import { QiE2eProgress } from './QiE2eProgress'
 import { StageResultsTimeline } from '../components/StageResultsTimeline'
 
@@ -54,13 +54,7 @@ const DECISION_CONFIG: Record<ApprovalDecision, { color: string; label: string }
   fix:            { color: 'processing', label: '再修一轮' },
 }
 
-const KIND_LABEL: Record<string, string> = {
-  spec:       '需求评审',
-  plan:       'Plan 评审',
-  final:      '最终审批',
-  escalation: '升级审批',
-  human_gate: '人工审批',
-}
+// KIND_LABEL & buildDecisionModalTitle 已搬到 ./requirements-helpers.ts
 
 const ALL_STATUSES: RequirementStatus[] = [
   'draft', 'queued', 'spec_review', 'planning', 'developing',
@@ -637,7 +631,7 @@ export default function RequirementsPage() {
   }, [detail, searchParams, setSearchParams])
 
   // ── Create ─────────────────────────────────────────────────────────────────
-  const handleCreate = async (values: { title: string; rawInput: string; gitlabProject: string; baseBranch?: string }) => {
+  const handleCreate = async (values: { title: string; rawInput: string; gitlabProject: string; baseBranch?: string; skipE2E?: boolean }) => {
     setCreateLoading(true)
     try {
       await requirementsApi.create(values)
@@ -660,10 +654,11 @@ export default function RequirementsPage() {
       rawInput: row.rawInput,
       gitlabProject: row.gitlabProject,
       baseBranch: row.baseBranch,
+      skipE2E: row.skipE2E,
     })
   }
 
-  const handleEdit = async (values: { title: string; rawInput: string; gitlabProject: string; baseBranch?: string }) => {
+  const handleEdit = async (values: { title: string; rawInput: string; gitlabProject: string; baseBranch?: string; skipE2E?: boolean }) => {
     if (!editTarget) return
     setEditLoading(true)
     try {
@@ -1021,6 +1016,11 @@ export default function RequirementsPage() {
               <Descriptions.Item label="来源">{detail.source}</Descriptions.Item>
               <Descriptions.Item label="GitLab 项目">{detail.gitlabProject}</Descriptions.Item>
               <Descriptions.Item label="基础分支">{detail.baseBranch}</Descriptions.Item>
+              {detail.skipE2E && (
+                <Descriptions.Item label="E2E">
+                  <Tag color="orange">已跳过</Tag>
+                </Descriptions.Item>
+              )}
               {detail.branch && <Descriptions.Item label="功能分支">{detail.branch}</Descriptions.Item>}
               {detail.pipelineRunId && (
                 <Descriptions.Item label="流水线 Run">#{detail.pipelineRunId}</Descriptions.Item>
@@ -1119,6 +1119,9 @@ export default function RequirementsPage() {
           <Form.Item name="baseBranch" label="基础分支">
             <Input placeholder="留空默认 main" />
           </Form.Item>
+          <Form.Item name="skipE2E" valuePropName="checked" extra="勾选后 Dev 完成直接走到 Final Approval，整段 E2E 不跑。仅适合调试/小改/紧急合入。">
+            <Checkbox>跳过 E2E 测试</Checkbox>
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -1145,12 +1148,15 @@ export default function RequirementsPage() {
           <Form.Item name="baseBranch" label="基础分支">
             <Input />
           </Form.Item>
+          <Form.Item name="skipE2E" valuePropName="checked" extra="勾选后 Dev 完成直接走到 Final Approval，整段 E2E 不跑。">
+            <Checkbox>跳过 E2E 测试</Checkbox>
+          </Form.Item>
         </Form>
       </Modal>
 
       {/* 审批决策 Modal */}
       <Modal
-        title={`审批决策 — ${decideState.waiter ? `${KIND_LABEL[decideState.waiter.approvalKind] ?? decideState.waiter.approvalKind} 第 ${decideState.waiter.round} 轮` : ''}`}
+        title={buildDecisionModalTitle(decideState.waiter)}
         open={decideState.open}
         onCancel={() => setDecideState(s => ({ ...s, open: false }))}
         onOk={() => decideForm.submit()}

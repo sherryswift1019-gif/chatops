@@ -43,6 +43,7 @@ export interface Requirement {
   retryCounters: Record<string, unknown>
   source: RequirementSource
   createdBy: string | null
+  skipE2E: boolean
   createdAt: Date
   updatedAt: Date
   completedAt: Date | null
@@ -56,6 +57,7 @@ export interface CreateRequirementInput {
   source?: RequirementSource
   createdBy?: string
   status?: RequirementStatus
+  skipE2E?: boolean
 }
 
 const TERMINAL_STATUSES: ReadonlySet<RequirementStatus> = new Set([
@@ -85,6 +87,7 @@ function mapRow(r: Record<string, unknown>): Requirement {
     retryCounters: (r.retry_counters as Record<string, unknown>) ?? {},
     source: r.source as RequirementSource,
     createdBy: (r.created_by as string | null) ?? null,
+    skipE2E: (r.skip_e2e as boolean | null) ?? false,
     createdAt: r.created_at as Date,
     updatedAt: r.updated_at as Date,
     completedAt: (r.completed_at as Date | null) ?? null,
@@ -97,8 +100,8 @@ export async function createRequirement(
   const pool = getPool()
   const { rows } = await pool.query(
     `INSERT INTO requirements
-       (title, raw_input, gitlab_project, base_branch, source, created_by, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (title, raw_input, gitlab_project, base_branch, source, created_by, status, skip_e2e)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       input.title,
@@ -108,6 +111,7 @@ export async function createRequirement(
       input.source ?? 'web',
       input.createdBy ?? null,
       input.status ?? 'draft',
+      input.skipE2E ?? false,
     ],
   )
   return mapRow(rows[0])
@@ -115,7 +119,7 @@ export async function createRequirement(
 
 export async function updateRequirement(
   id: number,
-  input: Partial<{ title: string; rawInput: string; gitlabProject: string; baseBranch: string }>,
+  input: Partial<{ title: string; rawInput: string; gitlabProject: string; baseBranch: string; skipE2E: boolean }>,
 ): Promise<Requirement | null> {
   const pool = getPool()
   const { rows } = await pool.query(
@@ -124,10 +128,11 @@ export async function updateRequirement(
          raw_input      = COALESCE($3, raw_input),
          gitlab_project = COALESCE($4, gitlab_project),
          base_branch    = COALESCE($5, base_branch),
+         skip_e2e       = COALESCE($6, skip_e2e),
          updated_at     = NOW()
      WHERE id = $1 AND status = 'draft'
      RETURNING *`,
-    [id, input.title ?? null, input.rawInput ?? null, input.gitlabProject ?? null, input.baseBranch ?? null],
+    [id, input.title ?? null, input.rawInput ?? null, input.gitlabProject ?? null, input.baseBranch ?? null, input.skipE2E ?? null],
   )
   return rows[0] ? mapRow(rows[0]) : null
 }

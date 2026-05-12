@@ -243,6 +243,8 @@ const SCHEMA_FILES = [
   'schema-v62.sql',
   // v63: requirement_approval_waiters 加 target_task_id / cited_ai_notes（PRD §7 step 6 字段级反馈）
   'schema-v63.sql',
+  // v64: requirements.skip_e2e — 触发时勾选「跳过 E2E」
+  'schema-v64.sql',
   'schema-v1000.sql',
   // v1001: e2e_runs status 加 awaiting_human_review；evidence_manifest 容量 32K→64K。
   'schema-v1001.sql',
