@@ -22,26 +22,10 @@ import { QiE2eProgress } from './QiE2eProgress'
 import { StageResultsTimeline } from '../components/StageResultsTimeline'
 import { WaiterTimeline } from '../components/WaiterTimeline'
 import { DecideModal } from '../components/DecideModal'
-import { effectiveStatus } from './requirement-detail/effectiveStatus'
+import { effectiveStatus, STATUS_LABELS } from './requirement-detail/effectiveStatus'
 
 const { Text, Paragraph } = Typography
 const { TextArea } = Input
-
-const STATUS_CONFIG: Record<RequirementStatus, { color: string; label: string }> = {
-  draft:       { color: 'default',    label: '草稿' },
-  queued:      { color: 'processing', label: '排队中' },
-  spec_review: { color: 'gold',       label: '需求审核' },
-  planning:    { color: 'cyan',       label: '规划中' },
-  developing:  { color: 'blue',       label: '开发中' },
-  reviewing:   { color: 'purple',     label: '代码审核' },
-  testing:     { color: 'geekblue',   label: '测试中' },
-  mr_pending:  { color: 'lime',       label: 'MR 待审' },
-  mr_open:     { color: 'success',    label: 'MR 已开' },
-  merged:      { color: 'success',    label: '已合入' },
-  aborting:    { color: 'warning',    label: '中止中' },
-  aborted:     { color: 'default',    label: '已中止' },
-  failed:      { color: 'error',      label: '失败' },
-}
 
 const ALL_STATUSES: RequirementStatus[] = [
   'draft', 'queued', 'spec_review', 'planning', 'developing',
@@ -366,7 +350,7 @@ export default function RequirementsPage() {
               style={{ width: 150 }}
               value={filterStatus}
               onChange={v => { setFilterStatus(v); setPage(1) }}
-              options={ALL_STATUSES.map(s => ({ value: s, label: STATUS_CONFIG[s]?.label ?? s }))}
+              options={ALL_STATUSES.map(s => ({ value: s, label: STATUS_LABELS[s]?.label ?? s }))}
             />
             <Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>

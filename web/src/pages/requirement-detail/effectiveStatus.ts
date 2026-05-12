@@ -6,8 +6,8 @@ export interface EffectiveStatus {
   tone: 'default' | 'processing' | 'success' | 'warning' | 'error'
 }
 
-// 与 RequirementsPage STATUS_CONFIG 同源 —— 终态 / 兜底用
-const STATUS_LABELS: Record<RequirementStatus, EffectiveStatus> = {
+// 13 个 RequirementStatus 的唯一 label/color 来源；RequirementsPage filter 下拉也用
+export const STATUS_LABELS: Record<RequirementStatus, EffectiveStatus> = {
   draft:       { label: '草稿',     color: 'default',    tone: 'default' },
   queued:      { label: '排队中',   color: 'processing', tone: 'processing' },
   spec_review: { label: '需求审核', color: 'gold',       tone: 'warning' },
@@ -60,7 +60,7 @@ interface MinimalDetail {
 
 /**
  * 从 detail 派生 UI 友好的细粒度状态：
- *   优先级：终态 > pending waiter > running 节点 > STATUS_CONFIG 兜底
+ *   优先级：终态 > pending waiter > running 节点 > STATUS_LABELS 兜底
  *
  * 详见 docs/superpowers/specs/2026-05-12-requirement-detail-page-redesign-design.md §「状态显示策略」
  */
@@ -73,8 +73,8 @@ export function effectiveStatus(detail: MinimalDetail): EffectiveStatus {
     return STATUS_LABELS[status]
   }
 
-  // 2. pending waiter（排除 system orphan）
-  const pending = waiters.find(w => !w.claimedBy && w.claimedBy !== 'system')
+  // 2. pending waiter（system orphan 的 claimedBy='system' 是 truthy，已被 !claimedBy 过滤）
+  const pending = waiters.find(w => !w.claimedBy)
   if (pending) {
     const label = WAITER_KIND_LABEL[pending.approvalKind]
     if (label) return label
