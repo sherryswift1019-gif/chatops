@@ -2663,10 +2663,13 @@ function buildHumanGateNode(
         ].filter(Boolean).join('\n\n')
     // 高保真摘要：params.summaryKind 命中时调对应 builder（spec=5段web + 折叠 spec.md）
     // 仅当 caller 未显式传 contextSummary（raw 覆盖）时尝试，避免冲掉显式值
+    // 注意：params.round 在 bootstrap 里硬编码 1；这里用 computeWaiterRound 算实际 round 覆盖，
+    // 保证 buildSpecApprovalSummary 渲染的 "第 N 轮" 跟 waiter.round 一致。
+    const computedRound = await computeWaiterRound(requirementId, nodeId)
     const advancedSummary = rawContextSummary
       ? null
       : resolveHumanGateAdvancedSummary({
-          params,
+          params: { ...params, round: computedRound },
           readFile: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : ''),
         })
     const contextSummary = rawContextSummary ?? advancedSummary?.web ?? fallbackSummary
@@ -2687,7 +2690,7 @@ function buildHumanGateNode(
         pipelineRunId: ctxBase.runId,
         nodeId,
         approvalKind,
-        round: await computeWaiterRound(requirementId, nodeId),
+        round: computedRound,
         decisionSet: 'human_gate',
         contextSummary,
       })
