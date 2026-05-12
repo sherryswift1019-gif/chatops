@@ -594,5 +594,5 @@ export async function getLastAiReviewNotes(
     [requirementId, authorNodeId],
   )
   const v = rows[0]?.notes
-  return Array.isArray(v) ? v as any[] : []
+  return (Array.isArray(v) ? v : []) as Array<{ severity: string; msg: string; file?: string }>
 }
