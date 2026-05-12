@@ -262,9 +262,23 @@ export async function restartRunFromNode(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   await (compiled as any).updateState(config, {}, predecessorStageName)
 
-  // 传 null 让 LangGraph 用 updateState 设的 snapshot.next 继续。
-  // 传 {runId} 会被当 fresh invocation 从 START 重跑，绕过 updateState 的定位。
-  await streamGraph(ctx, null)
+  // LangGraph 1.x bug workaround：compiled.stream(null) after updateState 只跑一个节点就退出，
+  // 不沿 edge 自动续下游（empirically observed in E2E #1 spec_commit_push retry success →
+  // plan_author 'skipped' 状态未变）。Mitigation：loop streamGraph 直到 snapshot.next 真空
+  // 或 next task 是 interrupt（waiting for human）。
+  const MAX_RESUME_ITERATIONS = 50
+  for (let i = 0; i < MAX_RESUME_ITERATIONS; i++) {
+    await streamGraph(ctx, null)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const snapshot = await (compiled as any).getState(config)
+    const nextNodes: string[] = snapshot?.next ?? []
+    if (nextNodes.length === 0) return  // truly END — finalize was called inside streamGraph
+    // 检测 interrupt waiting：LangGraph 1.x 在 snapshot.tasks[].interrupts 写 interrupt 元数据
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tasks: Array<{ interrupts?: unknown[] }> = snapshot?.tasks ?? []
+    if (tasks.some(t => Array.isArray(t.interrupts) && t.interrupts.length > 0)) return  // waiting for user
+  }
+  console.warn(`[graph-runner] restartRunFromNode reached max ${MAX_RESUME_ITERATIONS} iterations for run ${runId}, last next=${JSON.stringify((await (compiled as any).getState(config))?.next)}`)
 }
 
 /**
