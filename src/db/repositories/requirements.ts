@@ -438,3 +438,83 @@ export async function getRequirementByPipelineRunId(
   )
   return rows[0] ? mapRow(rows[0]) : null
 }
+
+/**
+ * 读 retry_counters.reject_counts[humanGateNodeId]，默认 0。
+ * 用于 *_human_gate 节点判断 reject 是否达 cap。
+ */
+export async function getRejectCount(
+  requirementId: number,
+  humanGateNodeId: string,
+): Promise<number> {
+  const pool = getPool()
+  const { rows } = await pool.query<{ count: number | null }>(
+    `SELECT (retry_counters->'reject_counts'->>$2)::int AS count
+     FROM requirements WHERE id = $1`,
+    [requirementId, humanGateNodeId],
+  )
+  return rows[0]?.count ?? 0
+}
+
+/**
+ * 原子累加 reject_counts[humanGateNodeId]++ 同时写入 last_reject_reasons[authorNodeId]。
+ * 用 jsonb_set 嵌套 4 层单事务保证一致。
+ *
+ * jsonb_set create_missing 仅创建末层键，所以先各自 ensure 中间对象存在
+ * （reject_counts / last_reject_reasons），再写叶子键。同 incrementNodeRetryCount 套路。
+ */
+export async function incrementRejectCount(args: {
+  requirementId: number
+  humanGateNodeId: string
+  authorNodeId: string
+  rejectReason: string
+}): Promise<{ newCount: number }> {
+  const { requirementId, humanGateNodeId, authorNodeId, rejectReason } = args
+  const pool = getPool()
+  const { rows } = await pool.query<{ count: number }>(
+    `UPDATE requirements
+     SET retry_counters = jsonb_set(
+       jsonb_set(
+         jsonb_set(
+           jsonb_set(
+             COALESCE(retry_counters, '{}'::jsonb),
+             '{reject_counts}'::text[],
+             COALESCE(COALESCE(retry_counters, '{}'::jsonb) -> 'reject_counts', '{}'::jsonb),
+             true
+           ),
+           '{last_reject_reasons}'::text[],
+           COALESCE(COALESCE(retry_counters, '{}'::jsonb) -> 'last_reject_reasons', '{}'::jsonb),
+           true
+         ),
+         ARRAY['reject_counts'::text, $2::text],
+         to_jsonb(COALESCE((COALESCE(retry_counters, '{}'::jsonb) #>> ARRAY['reject_counts'::text, $2::text]::text[])::int, 0) + 1),
+         true
+       ),
+       ARRAY['last_reject_reasons'::text, $3::text],
+       to_jsonb($4::text),
+       true
+     ),
+     updated_at = NOW()
+     WHERE id = $1
+     RETURNING (retry_counters #>> ARRAY['reject_counts'::text, $2::text]::text[])::int AS count`,
+    [requirementId, humanGateNodeId, authorNodeId, rejectReason],
+  )
+  return { newCount: rows[0]?.count ?? 0 }
+}
+
+/**
+ * 读 retry_counters.last_reject_reasons[authorNodeId]，不存在返回 null。
+ * 用于 buildLlmAuthorNode 注入 previousRound.rejectReason。
+ */
+export async function getLastRejectReason(
+  requirementId: number,
+  authorNodeId: string,
+): Promise<string | null> {
+  const pool = getPool()
+  const { rows } = await pool.query<{ reason: string | null }>(
+    `SELECT retry_counters->'last_reject_reasons'->>$2 AS reason
+     FROM requirements WHERE id = $1`,
+    [requirementId, authorNodeId],
+  )
+  return rows[0]?.reason ?? null
+}
