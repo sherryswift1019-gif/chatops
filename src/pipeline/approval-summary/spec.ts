@@ -70,7 +70,10 @@ export function buildSpecApprovalSummary(args: BuildSpecApprovalSummaryArgs): {
   // 1. 本次评估
   const evalParts: string[] = []
   if (skillOutput.confidenceLevel) {
-    evalParts.push(`${SpecSummaryI18n.CONFIDENCE_PREFIX} ${skillOutput.confidenceLevel}`)
+    const conf = skillOutput.confidenceLevel
+    const icon = conf === 'low' ? '🔴' : conf === 'medium' ? '🟡' : '🟢'
+    const text = `${SpecSummaryI18n.CONFIDENCE_PREFIX} ${conf}`
+    evalParts.push(conf === 'low' ? `${icon} **${text}**` : `${icon} ${text}`)
   }
   const risks = skillOutput.risks ?? []
   if (risks.length > 0) {

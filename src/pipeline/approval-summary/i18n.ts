@@ -24,7 +24,7 @@ export const SpecSummaryI18n = {
   AC_DIFF_ADDED: '新增 AC',
   AC_DIFF_REMOVED: '删除 AC',
   AC_DIFF_CHANGED: '修订 AC',
-  CONFIDENCE_PREFIX: '置信',
+  CONFIDENCE_PREFIX: '置信度:',
   IM_LINK_LABEL: '审批',
 }
 

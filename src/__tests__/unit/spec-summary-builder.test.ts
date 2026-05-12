@@ -240,6 +240,28 @@ describe('buildSpecApprovalSummary', () => {
     expect(web).toContain('建议关注下方 high 风险')
     expect(web).not.toContain('LLM 自信度低')
   })
+
+  it('AC-4: confidenceLevel=low → web 含 🔴 **置信度: low**（加粗）', () => {
+    const skillOutput = loadFixture('v3-minimal.json')
+    skillOutput.confidenceLevel = 'low'
+    const { web } = buildSpecApprovalSummary({
+      skillOutput,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 1,
+    })
+    expect(web).toContain('🔴 **置信度: low**')
+  })
+
+  it('AC-5: confidenceLevel=high → web 含 🟢 置信度: high（不加粗）', () => {
+    const skillOutput = loadFixture('v3-minimal.json')  // 已是 high
+    const { web } = buildSpecApprovalSummary({
+      skillOutput,
+      specMdContent: SAMPLE_SPEC_MD,
+      round: 1,
+    })
+    expect(web).toContain('🟢 置信度: high')
+    expect(web).not.toContain('🔴 **置信度')
+  })
 })
 
 describe('parseFeedbackForSummary', () => {
