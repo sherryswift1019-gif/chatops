@@ -100,6 +100,7 @@ export function buildQuickImplGraph(): PipelineGraph {
         artifactPath: 'docs/specs/qi-{{triggerParams.requirementId}}.md',
         maxTurns: 30,
         timeoutMs: 600000,
+        retryToOnFailure: 'spec_author',
       },
     } as any),
 

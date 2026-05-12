@@ -46,6 +46,7 @@ import { join } from 'path'
 import { execSync } from 'child_process'
 import { buildSpecApprovalSummary, buildFinalApprovalSummary, buildPlanApprovalSummary, resolveHumanGateAdvancedSummary } from './approval-summary/index.js'
 import type { SpecAuthorOutput } from '../quick-impl/role-output-schemas.js'
+import { loadQiConfig } from '../quick-impl/qi-config.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -2434,9 +2435,61 @@ function buildLlmReviewNode(
 
       const decision: 'pass' | 'fail' = result.output.decision === 'pass' ? 'pass' : 'fail'
 
+      // === AI REVIEW FAIL HANDLING (T9) ===
+      // fail 时调 handleAiReviewFailure 决定：retry within cap / cap reached escalate human_gate.
+      let aiReviewExhausted = false
+      let exhaustedNotes: Array<{ severity: string; msg: string; file?: string }> = []
+      let effectiveDecision: 'pass' | 'fail' = decision
+
+      if (decision === 'fail') {
+        const retryToOnFailure = typeof params.retryToOnFailure === 'string' ? params.retryToOnFailure : null
+        if (retryToOnFailure) {
+          const cfg = await loadQiConfig()
+          const reviewNotesArr: Array<{ severity: string; msg: string; file?: string }> =
+            Array.isArray(rawNotes)
+              ? (rawNotes as unknown[]).filter(
+                  (n): n is Record<string, unknown> =>
+                    n != null && typeof n === 'object' && 'msg' in (n as object) && 'severity' in (n as object)
+                ).map(n => ({ severity: String(n['severity']), msg: String(n['msg']), ...(n['file'] != null ? { file: String(n['file']) } : {}) }))
+              : []
+          const { shouldRetry, newCount } = await handleAiReviewFailure({
+            runId: ctxBase.runId,
+            requirementId,
+            reviewNodeId: node.name,
+            retryToOnFailure,
+            reviewNotes: reviewNotesArr,
+            aiReviewMaxRounds: cfg.aiReviewMaxRounds,
+          })
+          if (shouldRetry) {
+            // pipeline 停（status=failed），retryFromNode 异步触发 spec_author
+            const exec: StageExecutionResult = {
+              status: 'failed',
+              output: `${node.name} fail (round ${newCount}/${cfg.aiReviewMaxRounds}), scheduled retryFromNode(${retryToOnFailure})`,
+              error: 'ai_review_retry',
+            }
+            return {
+              currentStageIndex: index,
+              stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+              stepOutputs: {
+                [(node as PipelineNode).id ?? stageName]: {
+                  status: 'failed' as const,
+                  output: { decision: 'fail', notes: notesString, round: newCount, retryQueued: true },
+                },
+              },
+            }
+          }
+          // shouldRetry=false → cap reached. Escalate human_gate by forcing decision='pass'
+          // and marking exhausted so T15 approval summary can show AI history.
+          aiReviewExhausted = true
+          exhaustedNotes = reviewNotesArr
+          effectiveDecision = 'pass'
+        }
+      }
+      // === END AI REVIEW FAIL HANDLING ===
+
       const exec: StageExecutionResult = {
         status: 'success',
-        output: `llm_review round ${round} decision=${decision}`,
+        output: `llm_review round ${round} decision=${effectiveDecision}`,
       }
       return {
         currentStageIndex: index,
@@ -2445,10 +2498,12 @@ function buildLlmReviewNode(
           [(node as PipelineNode).id ?? stageName]: {
             status: 'success' as const,
             output: {
-              decision,
+              decision: effectiveDecision,
               notes: notesString,
               specCoverage: (result.output as { specCoverage?: unknown }).specCoverage ?? null,
               round,
+              aiReviewExhausted,
+              exhaustedNotes,
             },
           },
         },
