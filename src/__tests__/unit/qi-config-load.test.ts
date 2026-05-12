@@ -44,4 +44,15 @@ describe('loadQiConfig', () => {
     const cfg = await loadQiConfig()
     expect(cfg.aiReviewMaxRounds).toBe(1)
   })
+
+  it('clamps tokenBudgetPerRequirement below 10000 to lower bound 10000', async () => {
+    const pool = getTestPool()
+    await pool.query(
+      `INSERT INTO system_config(key, value) VALUES ('qi', $1)
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value`,
+      [JSON.stringify({ tokenBudgetPerRequirement: 5000 })],
+    )
+    const cfg = await loadQiConfig()
+    expect(cfg.tokenBudgetPerRequirement).toBe(10000)
+  })
 })
