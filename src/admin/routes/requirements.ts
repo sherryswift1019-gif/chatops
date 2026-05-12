@@ -77,14 +77,26 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
     if (!req_) return reply.status(404).send({ error: 'not found' })
     const waiters = await listWaitersByRequirement(id)
 
-    // Spec file fallback: DB spec_content is written by cleanup worker ~30min
-    // after completion; read from worktree immediately if available.
+    // Spec / Plan file fallback: DB spec_content / plan_content 由 cleanup worker
+    // 在流水线收尾时写入；之前如果 worktree 还在就从文件读，避免详情页 Tab 长时间显示
+    // "尚未生成"。spec 路径 docs/specs/qi-{id}.md，plan 路径 docs/plans/qi-{id}.md
+    // —— 与 quick-impl/bootstrap.ts 中 *_author.artifactPath 同源。
     let specContent = req_.specContent
-    if (!specContent && req_.worktreePath) {
-      const specPath = join(req_.worktreePath, 'docs', 'specs', `qi-${id}.md`)
-      if (existsSync(specPath)) {
-        specContent = readFileSync(specPath, 'utf8')
-        setSpecPlanContent(id, specContent, null).catch(() => {})
+    let planContent = req_.planContent
+    if (req_.worktreePath) {
+      if (!specContent) {
+        const specPath = join(req_.worktreePath, 'docs', 'specs', `qi-${id}.md`)
+        if (existsSync(specPath)) {
+          specContent = readFileSync(specPath, 'utf8')
+          setSpecPlanContent(id, specContent, null).catch(() => {})
+        }
+      }
+      if (!planContent) {
+        const planPath = join(req_.worktreePath, 'docs', 'plans', `qi-${id}.md`)
+        if (existsSync(planPath)) {
+          planContent = readFileSync(planPath, 'utf8')
+          setSpecPlanContent(id, null, planContent).catch(() => {})
+        }
       }
     }
 
@@ -100,7 +112,7 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
       }
     }
 
-    return reply.send({ ...req_, specContent, waiters, stageResults })
+    return reply.send({ ...req_, specContent, planContent, waiters, stageResults })
   })
 
   // ── Update (draft only) ───────────────────────────────────────────────────
