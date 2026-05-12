@@ -9,6 +9,7 @@ import {
 } from '../api/requirements'
 import { effectiveStatus } from './requirement-detail/effectiveStatus'
 import { usePolling } from './requirement-detail/usePolling'
+import { DetailSidebar } from './requirement-detail/DetailSidebar'
 import { DecideModal } from '../components/DecideModal'
 
 const { Text } = Typography
@@ -138,11 +139,10 @@ export default function RequirementDetailPage() {
 
       {/* 左右栏占位（Task 3 / 4 / 5 填充）*/}
       <div style={{ display: 'flex', gap: 16, padding: 16 }}>
-        <div style={{ width: 380, flexShrink: 0 }}>
-          <div style={{ padding: 16, background: '#FFFFFF', borderRadius: 8, border: '1px dashed #ccc' }}>
-            <Text type="secondary">左栏占位（Task 3 填充）</Text>
-          </div>
-        </div>
+        <DetailSidebar
+          detail={detail}
+          onDecide={(w) => setDecideWaiter(w)}
+        />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ padding: 16, background: '#FFFFFF', borderRadius: 8, border: '1px dashed #ccc' }}>
             <Text type="secondary">右栏 Tab 占位（Task 4/5 填充）</Text>
