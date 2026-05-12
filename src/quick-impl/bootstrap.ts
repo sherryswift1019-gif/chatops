@@ -543,7 +543,9 @@ export function buildQuickImplGraph(): PipelineGraph {
   // === Spec phase ===
   edges.push({ id: 'init_branch__spec_author', source: 'init_branch', target: 'spec_author' })
   edges.push({ id: 'spec_author__spec_ai_review', source: 'spec_author', target: 'spec_ai_review' })
-  edges.push({ id: 'spec_ai_review__spec_human_gate', source: 'spec_ai_review', target: 'spec_human_gate' })
+  // spec_ai_review pass → human_gate；fail → 回 spec_author（受 aiReviewMaxRounds 保护，T8/T9 实现）
+  edges.push({ id: 'spec_ai_review__spec_human_gate_pass', source: 'spec_ai_review', target: 'spec_human_gate', condition: { kind: 'onSuccess' } })
+  edges.push({ id: 'spec_ai_review__spec_author_retry', source: 'spec_ai_review', target: 'spec_author', condition: { kind: 'onFailure' } })
   edges.push({ id: 'spec_human_gate__spec_commit_push', source: 'spec_human_gate', target: 'spec_commit_push', condition: { kind: 'onSuccess' } })
   edges.push({ id: 'spec_human_gate__cleanup_reject', source: 'spec_human_gate', target: 'cleanup', condition: { kind: 'onFailure' } })
   edges.push({ id: 'spec_commit_push__plan_author', source: 'spec_commit_push', target: 'plan_author' })
