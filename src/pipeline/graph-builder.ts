@@ -2719,6 +2719,17 @@ function buildHumanGateNode(
     }
     const resume = interrupt(interruptPayload) as QiApprovalResume
 
+    // === ORPHAN WAITER INVALIDATION (resume-replay 通用) ===
+    // LangGraph interrupt-resume 让本函数从顶部重跑：createWaiter 在 interrupt 之前，
+    // 旧 waiter（resume.claimedWaiter）已被 claim，getActiveWaiter 返回 null，
+    // 于是 replay 又创了一个新 waiter (waiterRow.id !== resume.claimedWaiter.id)。
+    // 不管 decision 是 approved 还是 rejected 都要把这个 orphan invalidate，否则它
+    // 会成为下一轮 spec_human_gate 复用的"幽灵 waiter"（round/contextSummary 全错）。
+    if (waiterRow.id !== resume.claimedWaiter.id) {
+      await invalidateWaiter(waiterRow.id)
+    }
+    // === END ORPHAN INVALIDATION ===
+
     const rawDecision = resume.claimedWaiter.decision ?? 'rejected'
     const decision: 'approved' | 'rejected' = rawDecision === 'approved' || rawDecision === 'force_passed'
       ? 'approved'
@@ -2740,17 +2751,7 @@ function buildHumanGateNode(
         rejectReason: humanNotes ?? '',
       })
       if (shouldReroute) {
-        // === ORPHAN WAITER INVALIDATION ===
-        // 当 LangGraph interrupt-replay 让 buildHumanGateNode 从顶部重跑时，
-        // createWaiter 可能在 incrementRejectCount 之前再创一个 waiter
-        // （新 waiter round=1 stale contextSummary），下游 round 2 spec_human_gate
-        // 会 getActiveWaiter 命中它复用 → 用户看到 round=1 旧数据。
-        // 解决：检测到 waiterRow.id !== resume.claimedWaiter.id 时（说明本次
-        // resume-replay 又创了一个），把那个 invalidate 掉，下游 round 2 会正常 createWaiter。
-        if (waiterRow.id !== resume.claimedWaiter.id) {
-          await invalidateWaiter(waiterRow.id)
-        }
-        // === END ORPHAN INVALIDATION ===
+        // Orphan invalidation 已在 interrupt resume 后通用处理（见上方 ORPHAN WAITER INVALIDATION 块）。
         const exec: StageExecutionResult = {
           status: 'failed',
           output: `${nodeId} rejected, scheduled retryFromNode(${retryToOnReject}) — round ${newCount}`,
