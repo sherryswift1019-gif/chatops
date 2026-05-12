@@ -50,7 +50,7 @@ export interface ApprovalWaiterDTO {
   imPlatform: string | null
   imGroupId: string | null
   contextSummary: string | null
-  claimedBy: 'im' | 'web' | 'retry' | 'abort' | null
+  claimedBy: 'im' | 'web' | 'retry' | 'abort' | 'system' | null
   claimedAt: string | null
   decision: ApprovalDecision | null
   rejectReason: string | null

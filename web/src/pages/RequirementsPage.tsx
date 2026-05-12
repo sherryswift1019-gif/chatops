@@ -466,13 +466,18 @@ const CLAIMED_BY_LABEL: Record<NonNullable<ApprovalWaiterDTO['claimedBy']>, stri
   web: '管理后台',
   retry: '重试',
   abort: '中止',
+  system: '系统',  // orphan invalidate；WaiterTimeline 已过滤这种 waiter，此处只为满足 Record 类型完备
 }
 
 function WaiterTimeline({ waiters }: { waiters: ApprovalWaiterDTO[] }) {
-  if (waiters.length === 0) return <Text type="secondary">暂无审批记录</Text>
+  // 过滤掉 orphan waiter（system-aborted）—— LangGraph interrupt-replay 时
+  // buildHumanGateNode 会创建一个 orphan waiter，由 invalidateWaiter 标 claimed_by='system' +
+  // decision='aborted'，对用户来说是后端实现细节，不该展示在审批记录里。
+  const visible = waiters.filter(w => w.claimedBy !== 'system')
+  if (visible.length === 0) return <Text type="secondary">暂无审批记录</Text>
   return (
     <Timeline
-      items={waiters.map(w => {
+      items={visible.map(w => {
         const isPending = !w.claimedBy
         const dec = w.decision ? DECISION_CONFIG[w.decision] : null
         return {
