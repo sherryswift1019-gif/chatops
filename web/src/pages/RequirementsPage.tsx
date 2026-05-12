@@ -20,7 +20,7 @@ import {
   type ApprovalDecision,
   type V2StageResult,
 } from '../api/requirements'
-import { findStageForWaiter, shouldWarnPlanRework, KIND_LABEL, buildDecisionModalTitle } from './requirements-helpers'
+import { findStageForWaiter, shouldWarnPlanRework, KIND_LABEL, buildDecisionModalTitle, buildDecisionOptions } from './requirements-helpers'
 import { QiE2eProgress } from './QiE2eProgress'
 import { StageResultsTimeline } from '../components/StageResultsTimeline'
 
@@ -1187,22 +1187,10 @@ export default function RequirementsPage() {
         <Form form={decideForm} layout="vertical" onFinish={handleDecide}>
           <Form.Item name="decision" label="决策" rules={[{ required: true, message: '请选择决策' }]}>
             <Select
-              options={
-                decideState.waiter?.decisionSet === 'plan_escalation'
-                  ? [
-                      { value: 'approved',       label: '✅ 通过（plan 可用，AI 抠的是 nitpick）' },
-                      { value: 'rejected_plan',  label: '❌ 拒绝 plan（让 plan-decomposer 重拆）' },
-                      { value: 'rejected_spec',  label: '⛔ 拒绝 spec（spec 本身有问题，需手工重新提交需求）' },
-                      { value: 'aborted',        label: '🛑 终止（说不准 / 不该 AI 拆）' },
-                    ]
-                  : [
-                      { value: 'approved',        label: '✅ 通过' },
-                      { value: 'rejected',        label: '❌ 拒绝（要求修改）' },
-                      { value: 'force_passed',    label: '⚡ 强制通过（跳过评审）' },
-                      { value: 'budget_extended', label: '⏳ 延期（追加预算）' },
-                      { value: 'aborted',         label: '🛑 中止需求' },
-                    ]
-              }
+              options={buildDecisionOptions(
+                decideState.waiter,
+                detail?.retryCounters as { reject_counts?: Record<string, number> } | null,
+              )}
             />
           </Form.Item>
           {(selectedDecision === 'rejected' || selectedDecision === 'rejected_plan' || selectedDecision === 'rejected_spec') && (

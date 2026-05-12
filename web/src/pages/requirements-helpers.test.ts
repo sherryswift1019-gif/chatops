@@ -6,7 +6,7 @@
  * 设计参考：docs/prds/quick-impl-roles-v2/01-roles.md / 02-data-flow.md §6
  */
 import { describe, it, expect } from 'vitest'
-import { findStageForWaiter, shouldWarnPlanRework, buildDecisionModalTitle } from './requirements-helpers'
+import { findStageForWaiter, shouldWarnPlanRework, buildDecisionModalTitle, buildDecisionOptions, REJECT_CAP } from './requirements-helpers'
 import type { ApprovalWaiterDTO, V2StageResult } from '../api/requirements'
 
 const baseWaiter: ApprovalWaiterDTO = {
@@ -163,5 +163,57 @@ describe('buildDecisionModalTitle', () => {
 
   it('waiter null → 空串', () => {
     expect(buildDecisionModalTitle(null)).toBe('')
+  })
+})
+
+// =============================================================================
+// buildDecisionOptions — reject disable when cap exhausted
+// =============================================================================
+
+describe('buildDecisionOptions — reject disable when cap exhausted', () => {
+  // 新拓扑：reject 计数键名是 human_gate 节点名（非 review_loop）
+  const baseW: ApprovalWaiterDTO = { ...baseWaiter, nodeId: 'spec_human_gate' }
+
+  it('count=0 → reject 可用', () => {
+    const opts = buildDecisionOptions(baseW, { reject_counts: { spec_human_gate: 0 } })
+    const reject = opts.find(o => o.value === 'rejected')
+    expect(reject?.disabled).toBeFalsy()
+    expect(reject?.label).toContain('要求修改')
+  })
+
+  it('count=3 → reject disabled + label 含"已达"', () => {
+    const opts = buildDecisionOptions(baseW, { reject_counts: { spec_human_gate: 3 } })
+    const reject = opts.find(o => o.value === 'rejected')
+    expect(reject?.disabled).toBe(true)
+    expect(reject?.label).toContain('已达')
+  })
+
+  it('count=3 → approved / force_passed / aborted / budget_extended 仍可用', () => {
+    const opts = buildDecisionOptions(baseW, { reject_counts: { spec_human_gate: 3 } })
+    const enabled = opts.filter(o => !o.disabled).map(o => o.value)
+    expect(enabled).toContain('approved')
+    expect(enabled).toContain('force_passed')
+    expect(enabled).toContain('aborted')
+    expect(enabled).toContain('budget_extended')
+  })
+
+  it('plan_human_gate 独立计数（spec_human_gate.count=3 不影响 plan_human_gate）', () => {
+    const planW = { ...baseW, nodeId: 'plan_human_gate', approvalKind: 'plan' as const }
+    const opts = buildDecisionOptions(planW, { reject_counts: { spec_human_gate: 3, plan_human_gate: 0 } })
+    const reject = opts.find(o => o.value === 'rejected')
+    expect(reject?.disabled).toBeFalsy()
+  })
+
+  it('REJECT_CAP 常量导出值 = 3', () => {
+    expect(REJECT_CAP).toBe(3)
+  })
+
+  it('plan_escalation decisionSet → 走老 4-way 分支（不被 reject disable 影响）', () => {
+    const planEscW = { ...baseW, decisionSet: 'plan_escalation' as const }
+    const opts = buildDecisionOptions(planEscW, { reject_counts: { spec_human_gate: 3 } })
+    const values = opts.map(o => o.value)
+    expect(values).toContain('rejected_plan')
+    expect(values).toContain('rejected_spec')
+    expect(values).not.toContain('rejected')
   })
 })
