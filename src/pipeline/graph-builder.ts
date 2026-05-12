@@ -2422,20 +2422,28 @@ function buildLlmReviewNode(
       // notes 字符串化：SkillOutputSchema notes 是 Array<{severity,msg,...}>，join 成 string
       // 供下游 buildLlmAuthorNode 读 priorReviewerNotes 时得到 string，无类型错配
       const rawNotes = result.output.notes
-      let notesString: string
-      if (Array.isArray(rawNotes)) {
-        notesString = rawNotes.map((n: unknown) => {
-          if (typeof n === 'string') return n
-          if (n && typeof n === 'object' && 'msg' in n) return String((n as { msg: unknown }).msg)
-          return JSON.stringify(n)
-        }).join('\n')
-      } else {
-        notesString = String(rawNotes ?? '')
-      }
+      const reviewNotesArr: Array<{ severity: string; msg: string; file?: string }> =
+        Array.isArray(rawNotes)
+          ? rawNotes.flatMap((n: unknown): Array<{ severity: string; msg: string; file?: string }> => {
+              if (typeof n === 'string') {
+                return [{ severity: 'warn', msg: n }]
+              }
+              if (n != null && typeof n === 'object' && 'msg' in n) {
+                const obj = n as { severity?: string; msg: unknown; file?: string }
+                return [{
+                  severity: typeof obj.severity === 'string' ? obj.severity : 'warn',
+                  msg: String(obj.msg),
+                  ...(typeof obj.file === 'string' ? { file: obj.file } : {}),
+                }]
+              }
+              return []
+            })
+          : (rawNotes != null ? [{ severity: 'warn', msg: String(rawNotes) }] : [])
+      const notesString = reviewNotesArr.map(n => n.msg).join('\n')
 
       const decision: 'pass' | 'fail' = result.output.decision === 'pass' ? 'pass' : 'fail'
 
-      // === AI REVIEW FAIL HANDLING (T9) ===
+      // === AI REVIEW FAIL HANDLING ===
       // fail 时调 handleAiReviewFailure 决定：retry within cap / cap reached escalate human_gate.
       let aiReviewExhausted = false
       let exhaustedNotes: Array<{ severity: string; msg: string; file?: string }> = []
@@ -2445,13 +2453,6 @@ function buildLlmReviewNode(
         const retryToOnFailure = typeof params.retryToOnFailure === 'string' ? params.retryToOnFailure : null
         if (retryToOnFailure) {
           const cfg = await loadQiConfig()
-          const reviewNotesArr: Array<{ severity: string; msg: string; file?: string }> =
-            Array.isArray(rawNotes)
-              ? (rawNotes as unknown[]).filter(
-                  (n): n is Record<string, unknown> =>
-                    n != null && typeof n === 'object' && 'msg' in (n as object) && 'severity' in (n as object)
-                ).map(n => ({ severity: String(n['severity']), msg: String(n['msg']), ...(n['file'] != null ? { file: String(n['file']) } : {}) }))
-              : []
           const { shouldRetry, newCount } = await handleAiReviewFailure({
             runId: ctxBase.runId,
             requirementId,
