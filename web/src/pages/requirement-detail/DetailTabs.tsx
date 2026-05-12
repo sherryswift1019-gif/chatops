@@ -2,6 +2,9 @@ import { Tabs } from 'antd'
 import { useSearchParams } from 'react-router-dom'
 import type { RequirementDetailDTO } from '../../api/requirements'
 import { NodesTab } from './NodesTab'
+import { SpecTab } from './SpecTab'
+import { PlanTab } from './PlanTab'
+import { ApprovalsTab } from './ApprovalsTab'
 
 const VALID_TABS = new Set(['nodes', 'spec', 'plan', 'approvals'])
 
@@ -35,17 +38,17 @@ export function DetailTabs({ detail, onRetried }: Props) {
           {
             key: 'spec',
             label: 'Spec',
-            children: <div>（Task 5 填充）</div>,
+            children: <SpecTab source={detail.specContent} emptyText="Spec 尚未生成" />,
           },
           {
             key: 'plan',
             label: 'Plan',
-            children: <div>（Task 5 填充）</div>,
+            children: <PlanTab source={detail.planContent} />,
           },
           {
             key: 'approvals',
             label: '审批历史',
-            children: <div>（Task 5 填充）</div>,
+            children: <ApprovalsTab waiters={detail.waiters ?? []} />,
           },
         ]}
       />

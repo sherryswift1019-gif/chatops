@@ -1,32 +1,20 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
-import { Spin, Result, Button, Tag, Space, Typography } from 'antd'
-import { ArrowLeftOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Spin, Result, Button } from 'antd'
 import {
   requirementsApi,
   type RequirementDetailDTO,
   type ApprovalWaiterDTO,
 } from '../api/requirements'
-import { effectiveStatus } from './requirement-detail/effectiveStatus'
 import { usePolling } from './requirement-detail/usePolling'
 import { DetailSidebar } from './requirement-detail/DetailSidebar'
 import { DetailTabs } from './requirement-detail/DetailTabs'
+import { DetailHeader } from './requirement-detail/DetailHeader'
 import { DecideModal } from '../components/DecideModal'
-
-const { Text } = Typography
 
 function isValidId(s: string | undefined): s is string {
   if (!s) return false
   return /^\d+$/.test(s)
-}
-
-function formatRelativeSeconds(date: Date | null): string {
-  if (!date) return '—'
-  const sec = Math.floor((Date.now() - date.getTime()) / 1000)
-  if (sec < 5) return '刚刚'
-  if (sec < 60) return `${sec}s 前`
-  const min = Math.floor(sec / 60)
-  return `${min}m 前`
 }
 
 export default function RequirementDetailPage() {
@@ -104,41 +92,17 @@ export default function RequirementDetailPage() {
     )
   }
 
-  const eff = effectiveStatus(detail)
-
   return (
     <div style={{ background: '#F6F7FA', minHeight: 'calc(100vh - 56px)' }}>
-      {/* Header 占位（Task 5 替换为 DetailHeader 组件）*/}
-      <div style={{
-        position: 'sticky', top: 0, zIndex: 10,
-        background: '#FFFFFF', padding: '16px 24px',
-        borderBottom: '1px solid #EEF0F4',
-      }}>
-        <Space size="middle">
-          <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/requirements')}>
-            返回
-          </Button>
-          <Text strong style={{ fontSize: 16 }}>
-            需求 #{detail.id} — {detail.title}
-          </Text>
-          <Tag color={eff.color}>{eff.label}</Tag>
-        </Space>
-        <div style={{ float: 'right', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            上次更新 {formatRelativeSeconds(lastFetchedAt)}
-          </Text>
-          <Button
-            icon={<ReloadOutlined />}
-            size="small"
-            loading={loading}
-            onClick={() => void refetch()}
-          >
-            刷新
-          </Button>
-        </div>
-      </div>
+      <DetailHeader
+        detail={detail}
+        lastFetchedAt={lastFetchedAt}
+        loading={loading}
+        onRefresh={() => void refetch()}
+        onActed={() => void refetch()}
+      />
 
-      {/* 左右栏占位（Task 3 / 4 / 5 填充）*/}
+      {/* 左右栏 */}
       <div style={{ display: 'flex', gap: 16, padding: 16 }}>
         <DetailSidebar
           detail={detail}
