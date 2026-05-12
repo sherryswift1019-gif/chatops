@@ -1086,7 +1086,12 @@ export default function RequirementsPage() {
               <StageResultsTimeline
                 stageResults={detail.stageResults ?? []}
                 pipelineNodes={undefined}
-                onRetry={detail?.status === 'failed' ? async (nodeId) => {
+                onRetry={
+                  // 触发条件：requirement 整体 failed OR stage_results 里有 failed 节点。
+                  // 后者覆盖 "stage_results 有 failed 但 requirement.status 还在中间态"
+                  // 的场景（如 spec_commit_push 失败但 requirement.status 还是 spec_review）。
+                  (detail?.status === 'failed' || (detail.stageResults ?? []).some(s => s.status === 'failed'))
+                    ? async (nodeId) => {
                   try {
                     await requirementsApi.retryFromNode(detail.id, nodeId)
                     message.success(`已从节点「${nodeId}」重试`)
