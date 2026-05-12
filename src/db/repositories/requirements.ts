@@ -518,3 +518,81 @@ export async function getLastRejectReason(
   )
   return rows[0]?.reason ?? null
 }
+
+/**
+ * 读 retry_counters.ai_review_rounds[reviewNodeId]，默认 0。
+ * 用于 *_ai_review 节点判断 AI review 是否达 cap。
+ */
+export async function getAiReviewRound(
+  requirementId: number,
+  reviewNodeId: string,
+): Promise<number> {
+  const pool = getPool()
+  const { rows } = await pool.query<{ count: number | null }>(
+    `SELECT (retry_counters->'ai_review_rounds'->>$2)::int AS count
+     FROM requirements WHERE id = $1`,
+    [requirementId, reviewNodeId],
+  )
+  return rows[0]?.count ?? 0
+}
+
+/**
+ * 原子累加 ai_review_rounds[reviewNodeId]++ 同时写入 last_ai_review_notes[authorNodeId]。
+ * 结构与 incrementRejectCount 对称。
+ */
+export async function incrementAiReviewRound(args: {
+  requirementId: number
+  reviewNodeId: string
+  authorNodeId: string
+  reviewNotes: Array<{ severity: string; msg: string; file?: string }>
+}): Promise<{ newCount: number }> {
+  const { requirementId, reviewNodeId, authorNodeId, reviewNotes } = args
+  const pool = getPool()
+  const { rows } = await pool.query<{ count: number }>(
+    `UPDATE requirements
+     SET retry_counters = jsonb_set(
+       jsonb_set(
+         jsonb_set(
+           jsonb_set(
+             COALESCE(retry_counters, '{}'::jsonb),
+             '{ai_review_rounds}'::text[],
+             COALESCE(COALESCE(retry_counters, '{}'::jsonb) -> 'ai_review_rounds', '{}'::jsonb),
+             true
+           ),
+           '{last_ai_review_notes}'::text[],
+           COALESCE(COALESCE(retry_counters, '{}'::jsonb) -> 'last_ai_review_notes', '{}'::jsonb),
+           true
+         ),
+         ARRAY['ai_review_rounds'::text, $2::text],
+         to_jsonb(COALESCE((COALESCE(retry_counters, '{}'::jsonb) #>> ARRAY['ai_review_rounds'::text, $2::text]::text[])::int, 0) + 1),
+         true
+       ),
+       ARRAY['last_ai_review_notes'::text, $3::text],
+       $4::jsonb,
+       true
+     ),
+     updated_at = NOW()
+     WHERE id = $1
+     RETURNING (retry_counters #>> ARRAY['ai_review_rounds'::text, $2::text]::text[])::int AS count`,
+    [requirementId, reviewNodeId, authorNodeId, JSON.stringify(reviewNotes)],
+  )
+  return { newCount: rows[0]?.count ?? 0 }
+}
+
+/**
+ * 读 retry_counters.last_ai_review_notes[authorNodeId]，不存在返回空数组。
+ * 用于 buildLlmReviewNode round 2+ 注入 previousReviewNotes（T10 消费）。
+ */
+export async function getLastAiReviewNotes(
+  requirementId: number,
+  authorNodeId: string,
+): Promise<Array<{ severity: string; msg: string; file?: string }>> {
+  const pool = getPool()
+  const { rows } = await pool.query<{ notes: unknown }>(
+    `SELECT retry_counters->'last_ai_review_notes'->$2 AS notes
+     FROM requirements WHERE id = $1`,
+    [requirementId, authorNodeId],
+  )
+  const v = rows[0]?.notes
+  return Array.isArray(v) ? v as any[] : []
+}

@@ -39,7 +39,7 @@ import {
   shouldEscalate,
   computeNewBudget,
 } from '../quick-impl/approval-claim.js'
-import { setRequirementStatus, getRejectCount, incrementRejectCount, getLastRejectReason } from '../db/repositories/requirements.js'
+import { setRequirementStatus, getRejectCount, incrementRejectCount, getLastRejectReason, getAiReviewRound, incrementAiReviewRound, getLastAiReviewNotes } from '../db/repositories/requirements.js'
 import { appendStageResult, getTestRunById } from '../db/repositories/test-runs.js'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
@@ -2565,6 +2565,41 @@ export async function resolveLlmAuthorPreviousRound(
   const reason = await getLastRejectReason(requirementId, authorNodeId)
   if (!reason) return undefined
   return { rejectReason: reason }
+}
+
+/**
+ * AI review fail 处理：累加 ai_review_round 计数；未达 cap 则 setTimeout fire-and-forget retryFromNode；
+ * 已达 cap 则返回 shouldRetry=false，由调用方走 onFailure 边到 human_gate（强制升级人工）。
+ * 与 handleHumanGateRejection 结构对称。
+ */
+export async function handleAiReviewFailure(args: {
+  runId: number
+  requirementId: number
+  reviewNodeId: string
+  retryToOnFailure: string
+  reviewNotes: Array<{ severity: string; msg: string; file?: string }>
+  aiReviewMaxRounds: number
+}): Promise<{ shouldRetry: boolean; newCount: number }> {
+  const { runId, requirementId, reviewNodeId, retryToOnFailure, reviewNotes, aiReviewMaxRounds } = args
+  const currentCount = await getAiReviewRound(requirementId, reviewNodeId)
+  if (currentCount >= aiReviewMaxRounds) {
+    return { shouldRetry: false, newCount: currentCount }
+  }
+  const { newCount } = await incrementAiReviewRound({
+    requirementId, reviewNodeId, authorNodeId: retryToOnFailure, reviewNotes,
+  })
+
+  // Dynamic import inside setTimeout avoids circular dep (graph-runner imports graph-builder).
+  setTimeout(async () => {
+    try {
+      const { retryFromNode } = await import('./graph-runner.js')
+      await retryFromNode(runId, retryToOnFailure)
+    } catch (err) {
+      console.error(`[ai_review] retryFromNode(${retryToOnFailure}) for run ${runId} failed:`, err)
+    }
+  }, 100)
+
+  return { shouldRetry: true, newCount }
 }
 
 function buildHumanGateNode(
