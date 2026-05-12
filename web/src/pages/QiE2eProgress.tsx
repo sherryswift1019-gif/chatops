@@ -78,6 +78,9 @@ function extractQiE2eAttempts(stageResults: V2StageResult[] | null): E2eAttemptI
   let i = 0
   for (const sr of stageResults) {
     if (sr.type !== 'qi_e2e_runner') continue
+    // skipE2E=true 时 e2e_skip_router 路由直接到 final_approval，qi_e2e_runner 节点 skipped。
+    // 不展示「共 0 次执行」式的空 attempt。
+    if (sr.status === 'skipped') continue
     // output 字段在 V2StageResult 里是 string；qi_e2e_runner 的实际 output 对象
     // 应该塞到 skillOutput 或一个新的扩展字段。这里 try parse output JSON 兜底
     let parsed: QiE2eRunnerOutput = {}
