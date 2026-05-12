@@ -42,7 +42,12 @@ export default function RequirementDetailPage() {
   // 3. 数据加载 + 轮询
   // active 策略：决策 Modal 打开时暂停；其它情况都 5s 轮询。
   // 终态需求每 5s 一次空 GET 代价可忽略，省去 chicken-and-egg 的派生 active 复杂度。
-  const fetcher = useCallback(() => requirementsApi.get(id), [id])
+  const fetcher = useCallback(async () => {
+    if (!validId) {
+      throw new Error('invalid id, skipping fetch')
+    }
+    return requirementsApi.get(id)
+  }, [id, validId])
   const { data: detail, loading, error, lastFetchedAt, refetch } = usePolling<RequirementDetailDTO>(
     fetcher,
     {
