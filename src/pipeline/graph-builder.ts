@@ -30,6 +30,7 @@ import {
   createWaiter,
   getActiveWaiter,
   getWaiterByNodeAndRound,
+  invalidateWaiter,
   type ApprovalKind,
   type DecisionSet,
   type RequirementApprovalWaiter,
@@ -2736,6 +2737,17 @@ function buildHumanGateNode(
         rejectReason: humanNotes ?? '',
       })
       if (shouldReroute) {
+        // === ORPHAN WAITER INVALIDATION ===
+        // 当 LangGraph interrupt-replay 让 buildHumanGateNode 从顶部重跑时，
+        // createWaiter 可能在 incrementRejectCount 之前再创一个 waiter
+        // （新 waiter round=1 stale contextSummary），下游 round 2 spec_human_gate
+        // 会 getActiveWaiter 命中它复用 → 用户看到 round=1 旧数据。
+        // 解决：检测到 waiterRow.id !== resume.claimedWaiter.id 时（说明本次
+        // resume-replay 又创了一个），把那个 invalidate 掉，下游 round 2 会正常 createWaiter。
+        if (waiterRow.id !== resume.claimedWaiter.id) {
+          await invalidateWaiter(waiterRow.id)
+        }
+        // === END ORPHAN INVALIDATION ===
         const exec: StageExecutionResult = {
           status: 'failed',
           output: `${nodeId} rejected, scheduled retryFromNode(${retryToOnReject}) — round ${newCount}`,

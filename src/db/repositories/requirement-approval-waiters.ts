@@ -12,7 +12,7 @@ import { getPool } from '../client.js'
 
 export type ApprovalKind = 'spec' | 'plan' | 'dev' | 'final' | 'escalation' | 'human_gate'
 export type DecisionSet = 'binary' | 'escalation' | 'qi_e2e_intervention' | 'qi_sandbox_failed' | 'plan_escalation' | 'human_gate'
-export type ClaimSource = 'im' | 'web' | 'retry' | 'abort' | 'timeout'
+export type ClaimSource = 'im' | 'web' | 'retry' | 'abort' | 'timeout' | 'system'
 export type ApprovalDecision =
   | 'approved'
   | 'rejected'
@@ -266,4 +266,25 @@ export async function forceClaimAllPending(
     [requirementId, source, decision],
   )
   return rowCount ?? 0
+}
+
+/**
+ * 标记一个 waiter 为 system-aborted。
+ * 用于 reject reroute 路径里 LangGraph interrupt-replay 偶发创建的 orphan waiter
+ * （resume-replay 在 createWaiter 处会再创一个，因为旧 waiter 刚被 claim）。
+ * 标记后 getActiveWaiter 不再命中它，下游 round 2 可以 createWaiter 创建带正确 round
+ * 的新 waiter。
+ */
+export async function invalidateWaiter(id: number): Promise<boolean> {
+  const pool = getPool()
+  const { rowCount } = await pool.query(
+    `UPDATE requirement_approval_waiters
+        SET claimed_by = 'system',
+            claimed_at = NOW(),
+            decision = 'aborted',
+            reject_reason = 'orphan waiter from LangGraph interrupt-replay; invalidated by reject reroute'
+      WHERE id = $1 AND claimed_by IS NULL`,
+    [id],
+  )
+  return (rowCount ?? 0) > 0
 }
