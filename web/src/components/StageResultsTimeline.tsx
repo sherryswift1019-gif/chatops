@@ -1,5 +1,5 @@
-import React from 'react'
-import { Timeline, Tag, Tooltip, Space, Typography, Button, Popconfirm } from 'antd'
+import React, { useState } from 'react'
+import { Timeline, Tag, Tooltip, Space, Typography, Button, Popconfirm, Switch } from 'antd'
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -57,13 +57,29 @@ export function StageResultsTimeline({
     if (n.id && n.name) nodeNameMap.set(n.id, n.name)
   }
 
+  // 默认隐藏 skipped（onFailure='stop' / 路由跳过 / 未到达节点）。
+  // 想看完整执行图（debug 用）可点 toggle 显示。
+  const [showSkipped, setShowSkipped] = useState(false)
+  const skippedCount = stageResults.filter(s => s.status === 'skipped').length
+  const visibleResults = showSkipped ? stageResults : stageResults.filter(s => s.status !== 'skipped')
+
   if (!stageResults.length) {
     return <Typography.Text type="secondary">还没有任何节点执行记录</Typography.Text>
   }
 
   return (
-    <Timeline mode="left">
-      {stageResults.map((sr, idx) => {
+    <>
+      {skippedCount > 0 && (
+        <div style={{ marginBottom: 8, fontSize: 12, color: '#8c8c8c' }}>
+          <Space size={6}>
+            <span>跳过节点 {skippedCount} 个</span>
+            <Switch size="small" checked={showSkipped} onChange={setShowSkipped} />
+            <span>{showSkipped ? '已展开' : '已隐藏'}</span>
+          </Space>
+        </div>
+      )}
+      <Timeline mode="left">
+      {visibleResults.map((sr, idx) => {
         const meta = STATUS_META[sr.status] ?? STATUS_META.pending
         const displayName = nodeNameMap.get(sr.name) ?? sr.name
         return (
@@ -112,5 +128,6 @@ export function StageResultsTimeline({
         )
       })}
     </Timeline>
+    </>
   )
 }
