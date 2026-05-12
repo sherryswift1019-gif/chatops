@@ -10,6 +10,7 @@ import {
 import { effectiveStatus } from './requirement-detail/effectiveStatus'
 import { usePolling } from './requirement-detail/usePolling'
 import { DetailSidebar } from './requirement-detail/DetailSidebar'
+import { DetailTabs } from './requirement-detail/DetailTabs'
 import { DecideModal } from '../components/DecideModal'
 
 const { Text } = Typography
@@ -144,9 +145,7 @@ export default function RequirementDetailPage() {
           onDecide={(w) => setDecideWaiter(w)}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ padding: 16, background: '#FFFFFF', borderRadius: 8, border: '1px dashed #ccc' }}>
-            <Text type="secondary">右栏 Tab 占位（Task 4/5 填充）</Text>
-          </div>
+          <DetailTabs detail={detail} onRetried={() => void refetch()} />
         </div>
       </div>
 
