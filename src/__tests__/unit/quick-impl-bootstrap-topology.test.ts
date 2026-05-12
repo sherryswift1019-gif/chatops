@@ -37,3 +37,38 @@ describe('quick-impl bootstrap topology', () => {
     expect(node.params.artifact?.skipE2E).toBe('{{triggerParams.skipE2E}}')
   })
 })
+
+describe('Quick-Impl bootstrap v16 — reject reroute params', () => {
+  it('QUICK_IMPL_TEMPLATE_VERSION bumped to 16', () => {
+    expect(QUICK_IMPL_TEMPLATE_VERSION).toBe(16)
+  })
+
+  it('spec_human_gate.params.retryToOnReject = "spec_author"', () => {
+    const g = buildQuickImplGraph()
+    const n = g.nodes.find((x) => x.id === 'spec_human_gate')
+    expect(n).toBeDefined()
+    const params = (n as { params?: Record<string, unknown> }).params ?? {}
+    expect(params.retryToOnReject).toBe('spec_author')
+  })
+
+  it('plan_human_gate.params.retryToOnReject = "plan_author"', () => {
+    const g = buildQuickImplGraph()
+    const n = g.nodes.find((x) => x.id === 'plan_human_gate')
+    const params = (n as { params?: Record<string, unknown> }).params ?? {}
+    expect(params.retryToOnReject).toBe('plan_author')
+  })
+
+  it('dev_human_gate.params.retryToOnReject = "dev_author"', () => {
+    const g = buildQuickImplGraph()
+    const n = g.nodes.find((x) => x.id === 'dev_human_gate')
+    const params = (n as { params?: Record<string, unknown> }).params ?? {}
+    expect(params.retryToOnReject).toBe('dev_author')
+  })
+
+  it('final_approval.params **不含** retryToOnReject（reject = abort 语义）', () => {
+    const g = buildQuickImplGraph()
+    const n = g.nodes.find((x) => x.id === 'final_approval')
+    const params = (n as { params?: Record<string, unknown> }).params ?? {}
+    expect(params.retryToOnReject).toBeUndefined()
+  })
+})

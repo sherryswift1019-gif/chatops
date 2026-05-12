@@ -24,8 +24,10 @@ import type { PipelineGraph, PipelineNode, PipelineEdge } from '../pipeline/type
  * v14 → v15: spec_human_gate.params 加 summaryKind/skillOutput/artifactPath/round，
  *   让 buildHumanGateNode 调 buildSpecApprovalSummary 产 5 段 web 摘要（修空白决策弹窗 bug）。
  *   dev_human_gate.approvalKind 'plan' → 'dev'，IM/Web 卡片标签不再错位。
+ * v15 → v16: spec/plan/dev_human_gate.params 加 retryToOnReject = '<author_node_id>'，
+ *   让 reject 决策触发 retryFromNode 重跑对应 author。final_approval 不配（reject = abort 语义）。
  */
-export const QUICK_IMPL_TEMPLATE_VERSION = 15
+export const QUICK_IMPL_TEMPLATE_VERSION = 16
 export const QUICK_IMPL_PIPELINE_NAME = 'quick-impl'
 
 // ─── Node definitions ────────────────────────────────────────────────────────
@@ -120,6 +122,8 @@ export function buildQuickImplGraph(): PipelineGraph {
         skillOutput: '{{steps.spec_author.output.skillOutput}}',
         artifactPath: '{{steps.init_branch.output.worktreePath}}/docs/specs/qi-{{triggerParams.requirementId}}.md',
         round: 1,
+        // v16: reject 决策时让 buildHumanGateNode 调 retryFromNode(spec_author) 重写 spec
+        retryToOnReject: 'spec_author',
       },
     } as any),
 
@@ -194,6 +198,8 @@ export function buildQuickImplGraph(): PipelineGraph {
         artifact: '{{steps.plan_author.output.skillOutput}}',
         aiReview: '{{steps.plan_ai_review.output}}',
         aiAttempts: 3,
+        // v16: reject → plan_author 重写
+        retryToOnReject: 'plan_author',
       },
     } as any),
 
@@ -272,6 +278,8 @@ export function buildQuickImplGraph(): PipelineGraph {
         artifact: '{{steps.dev_author.output.skillOutput}}',
         aiReview: '{{steps.dev_ai_review.output}}',
         aiAttempts: 3,
+        // v16: reject → dev_author 重写
+        retryToOnReject: 'dev_author',
       },
     } as any),
 
