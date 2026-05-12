@@ -38,7 +38,7 @@ import {
   shouldEscalate,
   computeNewBudget,
 } from '../quick-impl/approval-claim.js'
-import { setRequirementStatus, getRejectCount, incrementRejectCount } from '../db/repositories/requirements.js'
+import { setRequirementStatus, getRejectCount, incrementRejectCount, getLastRejectReason } from '../db/repositories/requirements.js'
 import { appendStageResult, getTestRunById } from '../db/repositories/test-runs.js'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
@@ -2186,6 +2186,27 @@ function buildLlmAuthorNode(
       ...((params.inputs as SkillContextInputs) ?? {}),
     }
 
+    // previousRound: 优先 DB last_reject_reasons[node.id]（T2 human_gate reject 路径写入，
+    // 跨 retryFromNode 重启保持），fallback 到本进程 stepOutputs.priorHumanNotes（同一次执行内）。
+    const dbPrevRound = await resolveLlmAuthorPreviousRound(requirementId, node.id ?? node.name)
+    const previousRound =
+      round > 1 && (priorReviewerNotes !== null || priorHumanNotes !== null || dbPrevRound)
+        ? {
+            round: round - 1,
+            decision: 'rejected' as const,
+            reviewerNotes: priorReviewerNotes
+              ? [{ severity: 'error' as const, msg: priorReviewerNotes }]
+              : undefined,
+            rejectReason: dbPrevRound?.rejectReason ?? priorHumanNotes ?? undefined,
+          }
+        : dbPrevRound
+          ? {
+              round: 1,
+              decision: 'rejected' as const,
+              rejectReason: dbPrevRound.rejectReason,
+            }
+          : undefined
+
     try {
       const result = await runSkill(
         {
@@ -2199,16 +2220,7 @@ function buildLlmAuthorNode(
           artifactPath,
           inputs,
           specSources: params.specSources as string[] | undefined,
-          previousRound: round > 1 && (priorReviewerNotes !== null || priorHumanNotes !== null)
-            ? {
-                round: round - 1,
-                decision: 'rejected',
-                reviewerNotes: priorReviewerNotes
-                  ? [{ severity: 'error' as const, msg: priorReviewerNotes }]
-                  : undefined,
-                rejectReason: priorHumanNotes ?? undefined,
-              }
-            : undefined,
+          previousRound,
         },
         skillExecutor,
         ctxBase.mcpServerPath,
@@ -2537,6 +2549,21 @@ export async function computeWaiterRound(
 ): Promise<number> {
   const count = await getRejectCount(requirementId, humanGateNodeId)
   return count + 1
+}
+
+/**
+ * 读 last_reject_reasons[authorNodeId] 构造 previousRound 入参。
+ * 空 / null 返回 undefined（让 skill-runner 跳过 feedback.md 写入）。
+ *
+ * 用于 LLM author 节点在 round N+1 看到上轮 rejectReason，调整产出（spec §3.4）。
+ */
+export async function resolveLlmAuthorPreviousRound(
+  requirementId: number,
+  authorNodeId: string,
+): Promise<{ rejectReason: string } | undefined> {
+  const reason = await getLastRejectReason(requirementId, authorNodeId)
+  if (!reason) return undefined
+  return { rejectReason: reason }
 }
 
 function buildHumanGateNode(
