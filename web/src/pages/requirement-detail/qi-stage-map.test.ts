@@ -61,6 +61,16 @@ describe('qi-stage-map', () => {
     expect(mapNodeNameToStage('foo_bar')).toBeNull()
   })
 
+  it('accepts display name from backend stage_results (Spec Author / Init Branch etc.)', () => {
+    expect(mapNodeNameToStage('Init Branch')).toBe('init')
+    expect(mapNodeNameToStage('Spec Author')).toBe('spec')
+    expect(mapNodeNameToStage('Plan AI Review')).toBe('plan')
+    expect(mapNodeNameToStage('Dev Push')).toBe('dev')
+    expect(mapNodeNameToStage('QI E2E Test')).toBe('e2e')
+    expect(mapNodeNameToStage('Final Approval')).toBe('review')
+    expect(mapNodeNameToStage('Create MR')).toBe('mr')
+  })
+
   describe('stageStatus', () => {
     it('empty / all skipped → pending', () => {
       expect(stageStatus('spec', [])).toBe('pending')

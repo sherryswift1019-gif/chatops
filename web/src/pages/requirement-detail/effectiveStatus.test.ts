@@ -70,6 +70,17 @@ describe('effectiveStatus', () => {
     expect(effectiveStatus(d).label).toBe('Spec 生成中')
   })
 
+  it('running node accepts backend display name (Spec Author 而非 spec_author)', () => {
+    const d = makeDetail({
+      status: 'spec_review',
+      stageResults: [
+        { name: 'Init Branch', type: 'init_qi_branch', status: 'success' },
+        { name: 'Spec Author', type: 'llm_author', status: 'running' },
+      ],
+    })
+    expect(effectiveStatus(d).label).toBe('Spec 生成中')
+  })
+
   it('falls back to STATUS_CONFIG when no waiter and no running node', () => {
     const d = makeDetail({
       status: 'planning',

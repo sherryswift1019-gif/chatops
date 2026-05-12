@@ -1,4 +1,5 @@
 import type { RequirementStatus, ApprovalWaiterDTO, V2StageResult } from '../../api/requirements'
+import { resolveNodeId } from './node-id-resolver'
 
 export interface EffectiveStatus {
   label: string
@@ -81,9 +82,10 @@ export function effectiveStatus(detail: MinimalDetail): EffectiveStatus {
   }
 
   // 3. running 节点
+  // stageResults.name 是后端 display name（"Spec Author"），先 resolve 成 node id 再查表
   const running = (stageResults ?? []).find(s => s.status === 'running')
   if (running) {
-    const label = NODE_RUNNING_LABEL[running.name]
+    const label = NODE_RUNNING_LABEL[resolveNodeId(running.name)]
     if (label) return label
   }
 

@@ -1,3 +1,5 @@
+import { resolveNodeId } from './node-id-resolver'
+
 export const STEPPER_STAGES = ['init', 'spec', 'plan', 'dev', 'review', 'e2e', 'mr'] as const
 export type StepperStage = typeof STEPPER_STAGES[number]
 
@@ -10,25 +12,28 @@ export type StageStatusValue = 'pending' | 'running' | 'failed' | 'done'
 
 /**
  * 把节点 name 映射到 stepper 段。
+ * stage_results.name 实际是后端 display name（"Spec Author"），先 resolve 成 node id 再判定。
  * 节点 ID 来源：src/quick-impl/bootstrap.ts makeNode 第一个参数。
  */
 export function mapNodeNameToStage(name: string): StepperStage | null {
-  if (name === 'init_branch') return 'init'
+  const id = resolveNodeId(name)
+
+  if (id === 'init_branch') return 'init'
 
   // dev_fix_* 在 e2e 阶段（E2E 失败后修复 loop）
-  if (name === 'dev_fix_author' || name === 'dev_fix_ai_review') return 'e2e'
+  if (id === 'dev_fix_author' || id === 'dev_fix_ai_review') return 'e2e'
 
-  if (name.startsWith('spec_')) return 'spec'
-  if (name.startsWith('plan_')) return 'plan'
-  if (name.startsWith('dev_')) return 'dev'
+  if (id.startsWith('spec_')) return 'spec'
+  if (id.startsWith('plan_')) return 'plan'
+  if (id.startsWith('dev_')) return 'dev'
 
-  if (name === 'qi_e2e_runner') return 'e2e'
-  if (name.startsWith('e2e_')) return 'e2e'
-  if (name.startsWith('sandbox_')) return 'e2e'
+  if (id === 'qi_e2e_runner') return 'e2e'
+  if (id.startsWith('e2e_')) return 'e2e'
+  if (id.startsWith('sandbox_')) return 'e2e'
 
-  if (name === 'final_approval') return 'review'
+  if (id === 'final_approval') return 'review'
 
-  if (name === 'mr_create' || name === 'cleanup' || name === 'done') return 'mr'
+  if (id === 'mr_create' || id === 'cleanup' || id === 'done') return 'mr'
 
   return null
 }
