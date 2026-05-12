@@ -45,8 +45,8 @@ describe('handleHumanGateRejection (extracted helper)', () => {
       authorNodeId: 'spec_author',
       rejectReason: 'AC 不够具体',
     })
-    // retryFromNode scheduled via setImmediate — wait one event-loop tick
-    await new Promise(r => setTimeout(r, 10))
+    // retryFromNode scheduled via setTimeout(100ms) — wait for it to fire
+    await new Promise(r => setTimeout(r, 150))
     expect(retryFromNode).toHaveBeenCalledWith(100, 'spec_author')
   })
 
@@ -62,8 +62,9 @@ describe('handleHumanGateRejection (extracted helper)', () => {
     })
 
     expect(result.shouldReroute).toBe(false)
+    expect(result.newCount).toBe(3)
     expect(incrementRejectCount).not.toHaveBeenCalled()
-    await new Promise(r => setTimeout(r, 10))
+    await new Promise(r => setTimeout(r, 150))
     expect(retryFromNode).not.toHaveBeenCalled()
   })
 
@@ -79,9 +80,10 @@ describe('handleHumanGateRejection (extracted helper)', () => {
     })
 
     expect(result.shouldReroute).toBe(false)
+    expect(result.newCount).toBeNull()
     expect(getRejectCount).not.toHaveBeenCalled()
     expect(incrementRejectCount).not.toHaveBeenCalled()
-    await new Promise(r => setTimeout(r, 10))
+    await new Promise(r => setTimeout(r, 150))
     expect(retryFromNode).not.toHaveBeenCalled()
   })
 
@@ -99,5 +101,22 @@ describe('handleHumanGateRejection (extracted helper)', () => {
 
     expect(result.shouldReroute).toBe(true)
     expect(result.newCount).toBe(3)
+    // Drain pending setTimeout so it doesn't leak into the next test
+    await new Promise(r => setTimeout(r, 150))
+  })
+
+  it('retryToOnReject="" → 视为无配置（不调 retry，不查 count）', async () => {
+    const result = await handleHumanGateRejection({
+      runId: 100,
+      requirementId: 7,
+      humanGateNodeId: 'spec_human_gate',
+      retryToOnReject: '',
+      rejectReason: 'x',
+    })
+    expect(result.shouldReroute).toBe(false)
+    expect(result.newCount).toBeNull()
+    expect(getRejectCount).not.toHaveBeenCalled()
+    await new Promise(r => setTimeout(r, 150))
+    expect(retryFromNode).not.toHaveBeenCalled()
   })
 })

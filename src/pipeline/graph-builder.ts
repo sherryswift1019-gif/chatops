@@ -2485,11 +2485,13 @@ function buildLlmReviewNode(
  *
  * Returns:
  *   shouldReroute=true  → caller should mark stage failed (so onFailure='stop' halts current stream);
- *                          setImmediate has already scheduled retryFromNode for next event-loop tick.
- *   shouldReroute=false → caller proceeds to original rejected path (cap exhausted or no retryToOnReject).
+ *                          setTimeout has already scheduled retryFromNode for ~100ms later.
+ *   shouldReroute=false → caller proceeds to original rejected path. newCount=null 表示无 retry 配置；
+ *                          newCount=number 表示 cap 已达，当前 count 透出（区分两种 case）。
  *
- * setImmediate 确保本函数 return + caller stage return + LangGraph 完成 stage_results write +
- * stream END，之后下个 tick 才启 retryFromNode 新 stream，避免两 stream 并发抢同一个 checkpoint。
+ * setTimeout(100ms) 是 pragmatic delay：给 caller stage return + LangGraph stage_results commit +
+ * stream END 留 buffer，避免 retryFromNode 看到 stale 'running' 状态。100ms 远超典型 commit
+ * 延迟，但并非硬保证；retryFromNode 内部错误已 catch + log 兜底。
  */
 export const REJECT_CAP = 3
 
@@ -2499,10 +2501,10 @@ export async function handleHumanGateRejection(args: {
   humanGateNodeId: string
   retryToOnReject: string | null
   rejectReason: string
-}): Promise<{ shouldReroute: boolean; newCount: number }> {
+}): Promise<{ shouldReroute: boolean; newCount: number | null }> {
   const { runId, requirementId, humanGateNodeId, retryToOnReject, rejectReason } = args
 
-  if (!retryToOnReject) return { shouldReroute: false, newCount: 0 }
+  if (!retryToOnReject) return { shouldReroute: false, newCount: null }
 
   const currentCount = await getRejectCount(requirementId, humanGateNodeId)
   if (currentCount >= REJECT_CAP) return { shouldReroute: false, newCount: currentCount }
@@ -2511,15 +2513,15 @@ export async function handleHumanGateRejection(args: {
     requirementId, humanGateNodeId, authorNodeId: retryToOnReject, rejectReason,
   })
 
-  // Dynamic import inside setImmediate avoids circular dep (graph-runner imports graph-builder).
-  setImmediate(async () => {
+  // Dynamic import inside setTimeout avoids circular dep (graph-runner imports graph-builder).
+  setTimeout(async () => {
     try {
       const { retryFromNode } = await import('./graph-runner.js')
       await retryFromNode(runId, retryToOnReject)
     } catch (err) {
       console.error(`[human_gate] retryFromNode(${retryToOnReject}) for run ${runId} failed:`, err)
     }
-  })
+  }, 100)
 
   return { shouldReroute: true, newCount }
 }
