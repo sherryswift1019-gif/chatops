@@ -2439,6 +2439,24 @@ function buildLlmReviewNode(
               return []
             })
           : (rawNotes != null ? [{ severity: 'warn', msg: String(rawNotes) }] : [])
+
+      // Round 2+ drift detection: inject warn when newIssues > resolvedFromPrevious (not blocking)
+      const outputAsAny = result.output as unknown as Record<string, unknown>
+      if (outputAsAny['round'] != null && Number(outputAsAny['round']) >= 2) {
+        const newCount = Array.isArray(outputAsAny['newIssues'])
+          ? (outputAsAny['newIssues'] as unknown[]).length
+          : 0
+        const resolvedCount = Array.isArray(outputAsAny['resolvedFromPrevious'])
+          ? (outputAsAny['resolvedFromPrevious'] as unknown[]).length
+          : 0
+        if (newCount > resolvedCount) {
+          reviewNotesArr.push({
+            severity: 'warn',
+            msg: `reviewer drift suspect: newIssues (${newCount}) > resolved (${resolvedCount})`,
+          })
+        }
+      }
+
       const notesString = reviewNotesArr.map(n => n.msg).join('\n')
 
       const decision: 'pass' | 'fail' = result.output.decision === 'pass' ? 'pass' : 'fail'
