@@ -274,6 +274,9 @@ const SCHEMA_FILES = [
   // v1011: 注册 'human_gate' 节点类型（Pipeline Stage Types Sub-plan A Task 6）。
   // 纯 ON CONFLICT INSERT/UPDATE pipeline_node_types，无 seed 污染，安全加入。
   'schema-v1011.sql',
+  // v1012: retry_counters JSONB extension for ai_review_rounds + last_ai_review_notes。
+  // 纯 CREATE TABLE IF NOT EXISTS _migrations + INSERT + COMMENT，无 seed 污染，安全加入。
+  'schema-v1012.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
