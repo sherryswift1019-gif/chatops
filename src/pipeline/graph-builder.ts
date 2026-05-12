@@ -2526,6 +2526,19 @@ export async function handleHumanGateRejection(args: {
   return { shouldReroute: true, newCount }
 }
 
+/**
+ * 计算 waiter.round。规则：getRejectCount + 1。
+ * count=0 → round 1（首次进入）；reject 一次后 count=1 → round 2；以此类推。
+ * 取代之前的硬编码 round=1（spec §3.5）。
+ */
+export async function computeWaiterRound(
+  requirementId: number,
+  humanGateNodeId: string,
+): Promise<number> {
+  const count = await getRejectCount(requirementId, humanGateNodeId)
+  return count + 1
+}
+
 function buildHumanGateNode(
   node: PipelineNode,
   index: number,
@@ -2646,7 +2659,7 @@ function buildHumanGateNode(
         pipelineRunId: ctxBase.runId,
         nodeId,
         approvalKind,
-        round: 1,
+        round: await computeWaiterRound(requirementId, nodeId),
         decisionSet: 'human_gate',
         contextSummary,
       })

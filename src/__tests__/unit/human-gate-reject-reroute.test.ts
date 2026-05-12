@@ -120,3 +120,21 @@ describe('handleHumanGateRejection (extracted helper)', () => {
     expect(retryFromNode).not.toHaveBeenCalled()
   })
 })
+
+describe('computeWaiterRound (extracted helper)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('count=0 → round 1（首次进入 spec_human_gate）', async () => {
+    vi.mocked(getRejectCount).mockResolvedValue(0)
+    const { computeWaiterRound } = await import('../../pipeline/graph-builder.js')
+    expect(await computeWaiterRound(7, 'spec_human_gate')).toBe(1)
+  })
+
+  it('count=2 → round 3（已被 reject 2 次，下一轮是第 3 轮）', async () => {
+    vi.mocked(getRejectCount).mockResolvedValue(2)
+    const { computeWaiterRound } = await import('../../pipeline/graph-builder.js')
+    expect(await computeWaiterRound(7, 'spec_human_gate')).toBe(3)
+  })
+})
