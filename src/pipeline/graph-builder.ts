@@ -38,7 +38,7 @@ import {
   shouldEscalate,
   computeNewBudget,
 } from '../quick-impl/approval-claim.js'
-import { setRequirementStatus } from '../db/repositories/requirements.js'
+import { setRequirementStatus, getRejectCount, incrementRejectCount } from '../db/repositories/requirements.js'
 import { appendStageResult, getTestRunById } from '../db/repositories/test-runs.js'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
@@ -2480,6 +2480,50 @@ function buildLlmReviewNode(
  *   source      原始 source 字段
  *   decidedBy   审批人 id（string | null）
  */
+/**
+ * Reject reroute helper — extracted from buildHumanGateNode for unit testability.
+ *
+ * Returns:
+ *   shouldReroute=true  → caller should mark stage failed (so onFailure='stop' halts current stream);
+ *                          setImmediate has already scheduled retryFromNode for next event-loop tick.
+ *   shouldReroute=false → caller proceeds to original rejected path (cap exhausted or no retryToOnReject).
+ *
+ * setImmediate 确保本函数 return + caller stage return + LangGraph 完成 stage_results write +
+ * stream END，之后下个 tick 才启 retryFromNode 新 stream，避免两 stream 并发抢同一个 checkpoint。
+ */
+export const REJECT_CAP = 3
+
+export async function handleHumanGateRejection(args: {
+  runId: number
+  requirementId: number
+  humanGateNodeId: string
+  retryToOnReject: string | null
+  rejectReason: string
+}): Promise<{ shouldReroute: boolean; newCount: number }> {
+  const { runId, requirementId, humanGateNodeId, retryToOnReject, rejectReason } = args
+
+  if (!retryToOnReject) return { shouldReroute: false, newCount: 0 }
+
+  const currentCount = await getRejectCount(requirementId, humanGateNodeId)
+  if (currentCount >= REJECT_CAP) return { shouldReroute: false, newCount: currentCount }
+
+  const { newCount } = await incrementRejectCount({
+    requirementId, humanGateNodeId, authorNodeId: retryToOnReject, rejectReason,
+  })
+
+  // Dynamic import inside setImmediate avoids circular dep (graph-runner imports graph-builder).
+  setImmediate(async () => {
+    try {
+      const { retryFromNode } = await import('./graph-runner.js')
+      await retryFromNode(runId, retryToOnReject)
+    } catch (err) {
+      console.error(`[human_gate] retryFromNode(${retryToOnReject}) for run ${runId} failed:`, err)
+    }
+  })
+
+  return { shouldReroute: true, newCount }
+}
+
 function buildHumanGateNode(
   node: PipelineNode,
   index: number,
@@ -2635,6 +2679,40 @@ function buildHumanGateNode(
       : 'rejected'
     const humanNotes = resume.claimedWaiter.rejectReason ?? null
     const decidedBy = resume.claimedWaiter.decidedBy ?? resume.claimedWaiter.claimedBy ?? null
+
+    // === REJECT REROUTE ===
+    // When *_human_gate has a retryToOnReject param AND reject hasn't reached cap,
+    // schedule retryFromNode to re-run the upstream author with rejectReason as feedback.
+    // See docs/superpowers/specs/2026-05-12-reject-topology-round2-design.md
+    if (decision === 'rejected') {
+      const retryToOnReject = typeof params.retryToOnReject === 'string' ? params.retryToOnReject : null
+      const { shouldReroute, newCount } = await handleHumanGateRejection({
+        runId: ctxBase.runId,
+        requirementId,
+        humanGateNodeId: nodeId,
+        retryToOnReject,
+        rejectReason: humanNotes ?? '',
+      })
+      if (shouldReroute) {
+        const exec: StageExecutionResult = {
+          status: 'failed',
+          output: `${nodeId} rejected, scheduled retryFromNode(${retryToOnReject}) — round ${newCount}`,
+          error: 'reject_reroute',
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [nodeId]: {
+              status: 'failed' as const,
+              output: { decision: 'rejected', retryQueued: true, round: newCount, rejectReason: humanNotes },
+            },
+          },
+        }
+      }
+      // shouldReroute=false → fall through to original rejected path (cap reached or no retryToOnReject configured)
+    }
+    // === END REJECT REROUTE ===
 
     if (decision === 'approved') {
       const exec: StageExecutionResult = {
