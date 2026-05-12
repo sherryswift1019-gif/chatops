@@ -3,8 +3,9 @@
  *
  * Verifies:
  *   - reject → retry_counters.reject_counts++ + last_reject_reasons 写入
- *   - cap=3 边界
+ *   - cap=REJECT_CAP 边界（当前=2）
  *   - approved 路径不触发 reject 计数
+ *   - REJECT_CAP 常量对 spec/plan/dev 三个 human_gate 均生效（cross-stage propagation）
  *
  * NOT verified here (留 manual E2E)：
  *   - retryFromNode 真重起 graph stream（依赖 LangGraph runtime）
@@ -44,7 +45,7 @@ describe('reject reroute integration', () => {
     expect(await getLastRejectReason(reqId, 'spec_author')).toBe('AC 不够具体，缺边界条件')
   })
 
-  it('e2e 5.3: 连续 3 次 reject → reject_counts=3 = REJECT_CAP', async () => {
+  it('e2e 5.3: 连续 REJECT_CAP 次 reject → reject_counts=REJECT_CAP', async () => {
     for (let i = 1; i <= REJECT_CAP; i++) {
       await incrementRejectCount({
         requirementId: reqId, humanGateNodeId: 'spec_human_gate', authorNodeId: 'spec_author',
@@ -75,7 +76,38 @@ describe('reject reroute integration', () => {
     expect(await getLastRejectReason(reqId, 'dev_author')).toBeNull()
   })
 
-  it('REJECT_CAP 后端常量值 = 3', () => {
-    expect(REJECT_CAP).toBe(3)
+  it('REJECT_CAP 后端常量值 = 2', () => {
+    expect(REJECT_CAP).toBe(2)
+  })
+
+  it('cross-stage: plan_human_gate 连续 REJECT_CAP 次 reject → reject_counts=REJECT_CAP', async () => {
+    for (let i = 1; i <= REJECT_CAP; i++) {
+      await incrementRejectCount({
+        requirementId: reqId, humanGateNodeId: 'plan_human_gate', authorNodeId: 'plan_author',
+        rejectReason: `plan round ${i} reject reason`,
+      })
+      expect(await getRejectCount(reqId, 'plan_human_gate')).toBe(i)
+    }
+
+    expect(await getRejectCount(reqId, 'plan_human_gate')).toBe(REJECT_CAP)
+    expect(await getLastRejectReason(reqId, 'plan_author')).toBe(`plan round ${REJECT_CAP} reject reason`)
+    // spec 阶段不受影响
+    expect(await getRejectCount(reqId, 'spec_human_gate')).toBe(0)
+  })
+
+  it('cross-stage: dev_human_gate 连续 REJECT_CAP 次 reject → reject_counts=REJECT_CAP', async () => {
+    for (let i = 1; i <= REJECT_CAP; i++) {
+      await incrementRejectCount({
+        requirementId: reqId, humanGateNodeId: 'dev_human_gate', authorNodeId: 'dev_author',
+        rejectReason: `dev round ${i} reject reason`,
+      })
+      expect(await getRejectCount(reqId, 'dev_human_gate')).toBe(i)
+    }
+
+    expect(await getRejectCount(reqId, 'dev_human_gate')).toBe(REJECT_CAP)
+    expect(await getLastRejectReason(reqId, 'dev_author')).toBe(`dev round ${REJECT_CAP} reject reason`)
+    // plan/spec 阶段不受影响
+    expect(await getRejectCount(reqId, 'plan_human_gate')).toBe(0)
+    expect(await getRejectCount(reqId, 'spec_human_gate')).toBe(0)
   })
 })

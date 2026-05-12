@@ -2506,7 +2506,7 @@ function buildLlmReviewNode(
  * stream END 留 buffer，避免 retryFromNode 看到 stale 'running' 状态。100ms 远超典型 commit
  * 延迟，但并非硬保证；retryFromNode 内部错误已 catch + log 兜底。
  */
-export const REJECT_CAP = 3
+export const REJECT_CAP = 2  // was 3; aligned with flowchart 2026-05-12
 
 export async function handleHumanGateRejection(args: {
   runId: number
