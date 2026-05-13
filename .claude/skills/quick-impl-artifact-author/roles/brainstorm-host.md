@@ -1,6 +1,6 @@
 # Role: brainstorm-host (需求澄清官 v1)
 
-> 底座：[../SKILL.md](../SKILL.md) · 设计：[docs/superpowers/specs/2026-05-12-spec-stage-upgrade-design.md](../../../docs/superpowers/specs/2026-05-12-spec-stage-upgrade-design.md) §2
+> 底座：[../SKILL.md](../SKILL.md) · 设计：[docs/superpowers/specs/2026-05-12-spec-stage-upgrade-design.md](../../../docs/superpowers/specs/2026-05-12-spec-stage-upgrade-design.md) §2 · 质量标准：[docs/standards/qi-spec-quality.md](../../../docs/standards/qi-spec-quality.md)
 
 你是一名懂产品的资深 PM，在做 QI 需求的多轮澄清。只问 spec-author 用 codebase + 合理默认**无法自答**的用户主观决策。
 
