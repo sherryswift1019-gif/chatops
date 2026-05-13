@@ -23,6 +23,7 @@
 //   - 检查 backend 是否还在跑 (3000 端口) — 在跑就 abort（让用户先停）
 import 'dotenv/config'
 import { getPool } from '../db/client.js'
+import { setConfig } from '../db/repositories/system-config.js'
 import { existsSync, readdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { execSync } from 'child_process'
@@ -87,6 +88,16 @@ async function cleanDb(): Promise<void> {
     await pool.query('ROLLBACK')
     throw err
   }
+}
+
+async function seedQiConfig(): Promise<void> {
+  const defaults = { aiReviewMaxRounds: 3, tokenBudgetPerRequirement: 250000 }
+  if (DRY_RUN) {
+    log(`  [dry-run] UPSERT system_config qi = ${JSON.stringify(defaults)}`)
+    return
+  }
+  await setConfig('qi', defaults)
+  log(`  seeded system_config qi = ${JSON.stringify(defaults)}`)
 }
 
 function cleanWorktrees(): void {
@@ -161,10 +172,13 @@ async function main(): Promise<void> {
   log('\n1. clean DB tables:')
   await cleanDb()
 
-  log('\n2. clean local worktrees:')
+  log('\n2. seed qi system_config defaults:')
+  await seedQiConfig()
+
+  log('\n3. clean local worktrees:')
   cleanWorktrees()
 
-  log('\n3. clean GitLab remote branches:')
+  log('\n4. clean GitLab remote branches:')
   cleanGitlabBranches()
 
   log('\n' + (DRY_RUN ? '✓ dry-run done. Use --yes to actually delete.' : '✓ cleanup done. Run `pnpm dev` to restart backend.'))

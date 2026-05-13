@@ -1,9 +1,12 @@
-import { Tag, Typography } from 'antd'
+import { Alert, Tag, Typography } from 'antd'
+import MarkdownViewer from '../../components/MarkdownViewer'
 import type { ApprovalWaiterDTO, V2StageResult } from '../../api/requirements'
 import { DECISION_CONFIG, formatDateTime, CLAIMED_BY_LABEL } from '../../components/WaiterTimeline'
 import { KIND_LABEL } from '../requirements-helpers'
 
 const { Text } = Typography
+
+const AI_REVIEW_SECTION = 'AI 历次 review notes'
 
 interface Props {
   stage: V2StageResult
@@ -54,6 +57,20 @@ export function NodeApprovalView({ stage, waiters }: Props) {
         <Text type="secondary" style={{ fontSize: 11 }}>
           该节点共 {nodeWaiters.length} 轮决策，仅显示最近一轮。完整历史请看「审批历史」Tab。
         </Text>
+      )}
+      {latest.contextSummary && (
+        <div style={{ marginTop: 12 }}>
+          {latest.contextSummary.includes(AI_REVIEW_SECTION) && (
+            <Alert
+              type="warning"
+              showIcon
+              message="该 spec 经过 AI review 多轮均 fail，已升级人工审批"
+              description="请查看下方「AI 历次 review notes」section 了解 AI 卡在哪些点。"
+              style={{ marginBottom: 12 }}
+            />
+          )}
+          <MarkdownViewer source={latest.contextSummary} />
+        </div>
       )}
     </div>
   )

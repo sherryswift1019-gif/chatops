@@ -28,6 +28,7 @@ export interface StageDefinition {
     | 'skill_with_approval'
     | 'skill_with_review'
     | 'llm_author'
+    | 'llm_brainstorm'
     | 'llm_review'
     | 'human_gate'
     | 'mr_create'

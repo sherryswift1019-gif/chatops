@@ -10,6 +10,23 @@ async function git(cwd: string, args: string[]): Promise<{ stdout: string; stder
   return { stdout: stdout.toString(), stderr: stderr.toString() }
 }
 
+/**
+ * Merge feature branch into base branch with --no-ff, preserving all round commits.
+ * Switches back to featureBranch after merge so callers can continue working on it.
+ */
+export async function runMergePreserveRounds(args: {
+  worktreePath: string
+  featureBranch: string
+  baseBranch: string
+  mergeMessage: string
+}): Promise<void> {
+  const { worktreePath, featureBranch, baseBranch, mergeMessage } = args
+  await git(worktreePath, ['checkout', baseBranch])
+  await git(worktreePath, ['merge', '--no-ff', featureBranch, '-m', mergeMessage])
+  // Switch back to feature branch so caller state is unchanged
+  await git(worktreePath, ['checkout', featureBranch])
+}
+
 async function hasChangesToCommit(worktreePath: string, artifactPaths: string[]): Promise<boolean> {
   if (artifactPaths.length === 0) return false
   const { stdout } = await git(worktreePath, ['status', '--porcelain', '--', ...artifactPaths])
@@ -37,11 +54,16 @@ registerNodeType({
     const artifactPaths = (params.artifactPaths ?? []) as string[]
     const commitMessage = String(params.commitMessage ?? '')
     const pushOnly = params.pushOnly === true
+    const mergeStrategy = params.mergeStrategy as string | undefined
+    const baseBranch = params.baseBranch ? String(params.baseBranch) : undefined
 
     if (!worktreePath) return { status: 'failed', output: {}, error: 'git_commit_push: worktreePath required' }
     if (!branch)       return { status: 'failed', output: {}, error: 'git_commit_push: branch required' }
     if (!pushOnly && !commitMessage) {
       return { status: 'failed', output: {}, error: 'git_commit_push: commitMessage required (unless pushOnly)' }
+    }
+    if (mergeStrategy === 'preserve-rounds' && !baseBranch) {
+      return { status: 'failed', output: {}, error: 'git_commit_push: baseBranch required when mergeStrategy=preserve-rounds' }
     }
 
     try {
@@ -64,6 +86,18 @@ registerNodeType({
       }
 
       await git(worktreePath, ['push', 'origin', `HEAD:${branch}`])
+
+      if (mergeStrategy === 'preserve-rounds' && baseBranch) {
+        // Pull base branch to get latest remote state, then merge --no-ff to preserve round commits
+        await git(worktreePath, ['fetch', 'origin', baseBranch])
+        await runMergePreserveRounds({
+          worktreePath,
+          featureBranch: branch,
+          baseBranch,
+          mergeMessage: commitMessage,
+        })
+        await git(worktreePath, ['push', 'origin', `HEAD:${baseBranch}`])
+      }
 
       return {
         status: 'success',

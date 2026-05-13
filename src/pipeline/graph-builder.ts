@@ -39,13 +39,14 @@ import {
   shouldEscalate,
   computeNewBudget,
 } from '../quick-impl/approval-claim.js'
-import { setRequirementStatus, getRejectCount, incrementRejectCount, getLastRejectReason } from '../db/repositories/requirements.js'
+import { setRequirementStatus, getRejectCount, incrementRejectCount, getLastRejectReason, getAiReviewRound, incrementAiReviewRound, getLastAiReviewNotes } from '../db/repositories/requirements.js'
 import { appendStageResult, getTestRunById } from '../db/repositories/test-runs.js'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { execSync } from 'child_process'
 import { buildSpecApprovalSummary, buildFinalApprovalSummary, buildPlanApprovalSummary, resolveHumanGateAdvancedSummary } from './approval-summary/index.js'
 import type { SpecAuthorOutput } from '../quick-impl/role-output-schemas.js'
+import { loadQiConfig, checkTokenBudget, getCumulativeTokenUsage } from '../quick-impl/qi-config.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -2299,6 +2300,39 @@ function buildLlmReviewNode(
     const stageName = nodeStageResultName(node)
     await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
 
+    // === TOKEN BUDGET GATE ===
+    // Applies uniformly to spec_ai_review / plan_ai_review / dev_ai_review.
+    {
+      const cfg = await loadQiConfig()
+      const usedTokens = await getCumulativeTokenUsage(ctxBase.runId)
+      const budgetCheck = checkTokenBudget({ usedTokens, budget: cfg.tokenBudgetPerRequirement })
+      if (!budgetCheck.ok) {
+        const nodeId = (node as PipelineNode).id ?? stageName
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: `${nodeId} skipped: token budget exceeded (${usedTokens}/${cfg.tokenBudgetPerRequirement}); escalating to human_gate`,
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [nodeId]: {
+              status: 'success' as const,
+              output: {
+                decision: 'pass',
+                notes: `token budget exceeded; AI review skipped, escalating to human_gate (${usedTokens}/${cfg.tokenBudgetPerRequirement})`,
+                tokenBudgetExceeded: true,
+                usedTokens,
+                budget: cfg.tokenBudgetPerRequirement,
+                round: 1,
+              },
+            },
+          },
+        }
+      }
+    }
+    // === END TOKEN BUDGET GATE ===
+
     const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
     const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
     let params: Record<string, unknown>
@@ -2421,22 +2455,93 @@ function buildLlmReviewNode(
       // notes 字符串化：SkillOutputSchema notes 是 Array<{severity,msg,...}>，join 成 string
       // 供下游 buildLlmAuthorNode 读 priorReviewerNotes 时得到 string，无类型错配
       const rawNotes = result.output.notes
-      let notesString: string
-      if (Array.isArray(rawNotes)) {
-        notesString = rawNotes.map((n: unknown) => {
-          if (typeof n === 'string') return n
-          if (n && typeof n === 'object' && 'msg' in n) return String((n as { msg: unknown }).msg)
-          return JSON.stringify(n)
-        }).join('\n')
-      } else {
-        notesString = String(rawNotes ?? '')
+      const reviewNotesArr: Array<{ severity: string; msg: string; file?: string }> =
+        Array.isArray(rawNotes)
+          ? rawNotes.flatMap((n: unknown): Array<{ severity: string; msg: string; file?: string }> => {
+              if (typeof n === 'string') {
+                return [{ severity: 'warn', msg: n }]
+              }
+              if (n != null && typeof n === 'object' && 'msg' in n) {
+                const obj = n as { severity?: string; msg: unknown; file?: string }
+                return [{
+                  severity: typeof obj.severity === 'string' ? obj.severity : 'warn',
+                  msg: String(obj.msg),
+                  ...(typeof obj.file === 'string' ? { file: obj.file } : {}),
+                }]
+              }
+              return []
+            })
+          : (rawNotes != null ? [{ severity: 'warn', msg: String(rawNotes) }] : [])
+
+      // Round 2+ drift detection: inject warn when newIssues > resolvedFromPrevious (not blocking)
+      const outputAsAny = result.output as unknown as Record<string, unknown>
+      if (outputAsAny['round'] != null && Number(outputAsAny['round']) >= 2) {
+        const newCount = Array.isArray(outputAsAny['newIssues'])
+          ? (outputAsAny['newIssues'] as unknown[]).length
+          : 0
+        const resolvedCount = Array.isArray(outputAsAny['resolvedFromPrevious'])
+          ? (outputAsAny['resolvedFromPrevious'] as unknown[]).length
+          : 0
+        if (newCount > resolvedCount) {
+          reviewNotesArr.push({
+            severity: 'warn',
+            msg: `reviewer drift suspect: newIssues (${newCount}) > resolved (${resolvedCount})`,
+          })
+        }
       }
+
+      const notesString = reviewNotesArr.map(n => n.msg).join('\n')
 
       const decision: 'pass' | 'fail' = result.output.decision === 'pass' ? 'pass' : 'fail'
 
+      // === AI REVIEW FAIL HANDLING ===
+      // fail 时调 handleAiReviewFailure 决定：retry within cap / cap reached escalate human_gate.
+      let aiReviewExhausted = false
+      let exhaustedNotes: Array<{ severity: string; msg: string; file?: string }> = []
+      let effectiveDecision: 'pass' | 'fail' = decision
+
+      if (decision === 'fail') {
+        const retryToOnFailure = typeof params.retryToOnFailure === 'string' ? params.retryToOnFailure : null
+        if (retryToOnFailure) {
+          const cfg = await loadQiConfig()
+          const { shouldRetry, newCount } = await handleAiReviewFailure({
+            runId: ctxBase.runId,
+            requirementId,
+            reviewNodeId: node.name,
+            retryToOnFailure,
+            reviewNotes: reviewNotesArr,
+            aiReviewMaxRounds: cfg.aiReviewMaxRounds,
+          })
+          if (shouldRetry) {
+            // pipeline 停（status=failed），retryFromNode 异步触发 spec_author
+            const exec: StageExecutionResult = {
+              status: 'failed',
+              output: `${node.name} fail (round ${newCount}/${cfg.aiReviewMaxRounds}), scheduled retryFromNode(${retryToOnFailure})`,
+              error: 'ai_review_retry',
+            }
+            return {
+              currentStageIndex: index,
+              stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+              stepOutputs: {
+                [(node as PipelineNode).id ?? stageName]: {
+                  status: 'failed' as const,
+                  output: { decision: 'fail', notes: notesString, round: newCount, retryQueued: true },
+                },
+              },
+            }
+          }
+          // shouldRetry=false → cap reached. Escalate human_gate by forcing decision='pass'
+          // and marking exhausted so T15 approval summary can show AI history.
+          aiReviewExhausted = true
+          exhaustedNotes = reviewNotesArr
+          effectiveDecision = 'pass'
+        }
+      }
+      // === END AI REVIEW FAIL HANDLING ===
+
       const exec: StageExecutionResult = {
         status: 'success',
-        output: `llm_review round ${round} decision=${decision}`,
+        output: `llm_review round ${round} decision=${effectiveDecision}`,
       }
       return {
         currentStageIndex: index,
@@ -2445,10 +2550,12 @@ function buildLlmReviewNode(
           [(node as PipelineNode).id ?? stageName]: {
             status: 'success' as const,
             output: {
-              decision,
+              decision: effectiveDecision,
               notes: notesString,
               specCoverage: (result.output as { specCoverage?: unknown }).specCoverage ?? null,
               round,
+              aiReviewExhausted,
+              exhaustedNotes,
             },
           },
         },
@@ -2463,6 +2570,88 @@ function buildLlmReviewNode(
         currentStageIndex: index,
         stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
       }
+    }
+  }
+}
+
+/**
+ * llm_brainstorm — 需求澄清多轮交互节点（skeleton）。
+ *
+ * 在 spec_author 之前收集需求澄清问题（最多 maxRounds 轮）。
+ * brainstorm-host role.md 通过 .claude/roles/ 注入，当前 worktree 不含该文件，
+ * skeleton mode 直接返回 partial=true，让 spec_author 以 rawInput 继续。
+ * 完整 LLM 路径在 T30 E2E（mock skill executor）验证。
+ */
+function buildLlmBrainstormNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const nodeId = (node as PipelineNode).id ?? stageName
+
+    // === TOKEN BUDGET GATE ===
+    {
+      const cfg = await loadQiConfig()
+      const usedTokens = await getCumulativeTokenUsage(ctxBase.runId)
+      const budgetCheck = checkTokenBudget({ usedTokens, budget: cfg.tokenBudgetPerRequirement })
+      if (!budgetCheck.ok) {
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: `${nodeId} skipped: token budget exceeded (${usedTokens}/${cfg.tokenBudgetPerRequirement}); spec_author proceeds with rawInput`,
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [nodeId]: {
+              status: 'success' as const,
+              output: {
+                rounds: 0,
+                readyForSpec: true,
+                partial: true,
+                earlyDone: false,
+                tokenBudgetExceeded: true,
+                enrichedInputPath: null,
+                brainstormPath: null,
+              },
+            },
+          },
+        }
+      }
+    }
+    // === END TOKEN BUDGET GATE ===
+
+    // Skeleton: brainstorm-host role.md is not present in this worktree (.claude/ is gitignored).
+    // Return partial=true immediately so spec_author runs with rawInput.
+    // Full multi-round interrupt + LLM invocation: T30 E2E with mock skillExecutor.
+    const exec: StageExecutionResult = {
+      status: 'success',
+      output: `${nodeId} skeleton (brainstorm-host role.md not in worktree; deferred to main-repo sync); spec_author proceeds with rawInput`,
+    }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      stepOutputs: {
+        [nodeId]: {
+          status: 'success' as const,
+          output: {
+            rounds: 0,
+            readyForSpec: true,
+            partial: true,
+            earlyDone: false,
+            enrichedInputPath: null,
+            brainstormPath: null,
+            skeletonMode: true,
+          },
+        },
+      },
     }
   }
 }
@@ -2506,7 +2695,7 @@ function buildLlmReviewNode(
  * stream END 留 buffer，避免 retryFromNode 看到 stale 'running' 状态。100ms 远超典型 commit
  * 延迟，但并非硬保证；retryFromNode 内部错误已 catch + log 兜底。
  */
-export const REJECT_CAP = 3
+export const REJECT_CAP = 2  // was 3; aligned with flowchart 2026-05-12
 
 export async function handleHumanGateRejection(args: {
   runId: number
@@ -2565,6 +2754,41 @@ export async function resolveLlmAuthorPreviousRound(
   const reason = await getLastRejectReason(requirementId, authorNodeId)
   if (!reason) return undefined
   return { rejectReason: reason }
+}
+
+/**
+ * AI review fail 处理：累加 ai_review_round 计数；未达 cap 则 setTimeout fire-and-forget retryFromNode；
+ * 已达 cap 则返回 shouldRetry=false，由调用方走 onFailure 边到 human_gate（强制升级人工）。
+ * 与 handleHumanGateRejection 结构对称。
+ */
+export async function handleAiReviewFailure(args: {
+  runId: number
+  requirementId: number
+  reviewNodeId: string
+  retryToOnFailure: string
+  reviewNotes: Array<{ severity: string; msg: string; file?: string }>
+  aiReviewMaxRounds: number
+}): Promise<{ shouldRetry: boolean; newCount: number }> {
+  const { runId, requirementId, reviewNodeId, retryToOnFailure, reviewNotes, aiReviewMaxRounds } = args
+  const currentCount = await getAiReviewRound(requirementId, reviewNodeId)
+  if (currentCount >= aiReviewMaxRounds) {
+    return { shouldRetry: false, newCount: currentCount }
+  }
+  const { newCount } = await incrementAiReviewRound({
+    requirementId, reviewNodeId, authorNodeId: retryToOnFailure, reviewNotes,
+  })
+
+  // Dynamic import inside setTimeout avoids circular dep (graph-runner imports graph-builder).
+  setTimeout(async () => {
+    try {
+      const { retryFromNode } = await import('./graph-runner.js')
+      await retryFromNode(runId, retryToOnFailure)
+    } catch (err) {
+      console.error(`[ai_review] retryFromNode(${retryToOnFailure}) for run ${runId} failed:`, err)
+    }
+  }, 100)
+
+  return { shouldRetry: true, newCount }
 }
 
 function buildHumanGateNode(
@@ -3129,6 +3353,10 @@ export function buildGraphFromPipeline(
 
       case 'llm_author':
         builder = builder.addNode(name, buildLlmAuthorNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'llm_brainstorm':
+        builder = builder.addNode(name, buildLlmBrainstormNode(node, i, stageContext, triggerParams ?? {}))
         break
 
       case 'llm_review':

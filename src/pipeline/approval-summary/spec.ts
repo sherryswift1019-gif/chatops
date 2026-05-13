@@ -47,13 +47,18 @@ export interface BuildSpecApprovalSummaryArgs {
   prevSkillOutput?: SpecAuthorOutput | null
   /** budget 是否已被延期（影响 hint）*/
   budgetExtended?: boolean
+  /** AI review 历史（spec_ai_review 触发 N 轮后升级人审时给审批人参考） */
+  aiReviewHistory?: {
+    rounds: number
+    notes: Array<{ severity: string; msg: string; file?: string }>
+  }
 }
 
 export function buildSpecApprovalSummary(args: BuildSpecApprovalSummaryArgs): {
   web: string
   im: string
 } {
-  const { skillOutput, specMdContent, round, acDiff, feedbackMd, budgetExtended } = args
+  const { skillOutput, specMdContent, round, acDiff, feedbackMd, budgetExtended, aiReviewHistory } = args
 
   // === 降级路径：拿不到结构化输出时返回 spec.md 原文 ===
   if (!skillOutput) {
@@ -154,6 +159,16 @@ export function buildSpecApprovalSummary(args: BuildSpecApprovalSummaryArgs): {
       for (let i = 0; i < rows; i++) {
         lines.push(`| ${left[i] ?? ''} | ${right[i] ?? ''} |`)
       }
+    }
+  }
+
+  // AI 历次 review notes（spec_ai_review 耗尽轮次升级人审时显示）
+  if (aiReviewHistory && aiReviewHistory.rounds > 0 && aiReviewHistory.notes.length > 0) {
+    lines.push('')
+    lines.push(`### AI 历次 review notes (round ${aiReviewHistory.rounds})`)
+    for (const n of aiReviewHistory.notes) {
+      const tag = n.severity === 'error' ? '🔴' : '🟡'
+      lines.push(`- ${tag} ${n.msg}${n.file ? ` (${n.file})` : ''}`)
     }
   }
 

@@ -39,8 +39,8 @@ describe('quick-impl bootstrap topology', () => {
 })
 
 describe('Quick-Impl bootstrap v16 — reject reroute params', () => {
-  it('QUICK_IMPL_TEMPLATE_VERSION bumped to 16', () => {
-    expect(QUICK_IMPL_TEMPLATE_VERSION).toBe(16)
+  it('QUICK_IMPL_TEMPLATE_VERSION bumped to 18 (v18: spec_commit_push mergeStrategy)', () => {
+    expect(QUICK_IMPL_TEMPLATE_VERSION).toBe(18)
   })
 
   it('spec_human_gate.params.retryToOnReject = "spec_author"', () => {
