@@ -85,3 +85,27 @@ S3 行末追加：
 ## Sync 时机
 
 在 worktree merge 回 main **之后**，在 `/Users/zhangshanshan/AI-ChatOps/` 主仓库直接 Edit 上述文件。注意 `.claude/` 改动**不会进 git commit history**——这是项目本身的设计选择（CLAUDE.md 没有说要追踪 skills 配置）。
+
+---
+
+## 非 .claude/ 类 deferred work
+
+虽然不属于 `.claude/` skill 改动，但同样是 plan 没覆盖、本 implementation 不实现的 follow-up：
+
+### Token usage 写入侧（从 T11 review 发现）
+
+T11 (commit 05e6267) 实现了 budget gate：从 `pipeline_run_state.data.token_total` SUM 拿累计 token，超 budget 跳过 AI review。但 **plan 里没有任何 task 实施"LLM 节点跑完写入 token_total"**。当前 gate 因为 `getCumulativeTokenUsage` 永远返回 0，**实际不生效**。
+
+修法（merge 后另开 follow-up PR）：
+- 在 `buildLlmAuthorNode` / `buildLlmReviewNode` / `buildLlmBrainstormNode`（T20 加）的 LLM call 之后：
+  ```typescript
+  await pool.query(
+    `INSERT INTO pipeline_run_state(pipeline_run_id, data) VALUES ($1, $2::jsonb)`,
+    [runId, JSON.stringify({ node_id: nodeId, token_total: result.tokenUsage?.total ?? 0 })],
+  )
+  ```
+- Porygon (skill runner) 返回值需要 surface `tokenUsage.total`（参考现有 LLM call 框架）
+- 加单测验证"超 budget 时 gate 真生效"
+
+scope：1-2 task，约 1 天工程量。可作为 Phase 2。
+
