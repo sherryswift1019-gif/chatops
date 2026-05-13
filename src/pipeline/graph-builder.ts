@@ -46,7 +46,7 @@ import { join } from 'path'
 import { execSync } from 'child_process'
 import { buildSpecApprovalSummary, buildFinalApprovalSummary, buildPlanApprovalSummary, resolveHumanGateAdvancedSummary } from './approval-summary/index.js'
 import type { SpecAuthorOutput } from '../quick-impl/role-output-schemas.js'
-import { loadQiConfig } from '../quick-impl/qi-config.js'
+import { loadQiConfig, checkTokenBudget, getCumulativeTokenUsage } from '../quick-impl/qi-config.js'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -2299,6 +2299,39 @@ function buildLlmReviewNode(
     const startedMs = Date.now()
     const stageName = nodeStageResultName(node)
     await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    // === TOKEN BUDGET GATE ===
+    // Applies uniformly to spec_ai_review / plan_ai_review / dev_ai_review.
+    {
+      const cfg = await loadQiConfig()
+      const usedTokens = await getCumulativeTokenUsage(ctxBase.runId)
+      const budgetCheck = checkTokenBudget({ usedTokens, budget: cfg.tokenBudgetPerRequirement })
+      if (!budgetCheck.ok) {
+        const nodeId = (node as PipelineNode).id ?? stageName
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: `${nodeId} skipped: token budget exceeded (${usedTokens}/${cfg.tokenBudgetPerRequirement}); escalating to human_gate`,
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [nodeId]: {
+              status: 'success' as const,
+              output: {
+                decision: 'pass',
+                notes: `token budget exceeded; AI review skipped, escalating to human_gate (${usedTokens}/${cfg.tokenBudgetPerRequirement})`,
+                tokenBudgetExceeded: true,
+                usedTokens,
+                budget: cfg.tokenBudgetPerRequirement,
+                round: 1,
+              },
+            },
+          },
+        }
+      }
+    }
+    // === END TOKEN BUDGET GATE ===
 
     const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
     const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)

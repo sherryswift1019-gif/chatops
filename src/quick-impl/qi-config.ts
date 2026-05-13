@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { getConfig } from '../db/repositories/system-config.js'
+import { getPool } from '../db/client.js'
 
 const AI_REVIEW_MAX_ROUNDS_DEFAULT = 3
 const TOKEN_BUDGET_DEFAULT = 250000
@@ -29,4 +30,25 @@ export async function loadQiConfig(): Promise<QiConfig> {
   }
 
   return QiConfigSchema.parse(sanitized)
+}
+
+export function checkTokenBudget(args: {
+  usedTokens: number
+  budget: number
+}): { ok: boolean; usedTokens: number; budget: number } {
+  return {
+    ok: args.usedTokens < args.budget,
+    usedTokens: args.usedTokens,
+    budget: args.budget,
+  }
+}
+
+export async function getCumulativeTokenUsage(pipelineRunId: number): Promise<number> {
+  const pool = getPool()
+  const { rows } = await pool.query<{ total: string | null }>(
+    `SELECT COALESCE(SUM((data->>'token_total')::int), 0)::text AS total
+     FROM pipeline_run_state WHERE pipeline_run_id = $1`,
+    [pipelineRunId],
+  )
+  return Number(rows[0]?.total ?? 0)
 }

@@ -277,6 +277,9 @@ const SCHEMA_FILES = [
   // v1012: retry_counters JSONB extension for ai_review_rounds + last_ai_review_notes。
   // 纯 CREATE TABLE IF NOT EXISTS _migrations + INSERT + COMMENT，无 seed 污染，安全加入。
   'schema-v1012.sql',
+  // v1013: pipeline_run_state 表 — 累计 token 用量，供 budget gate 查询。
+  // 纯 DDL（CREATE TABLE IF NOT EXISTS + INDEX），无 seed 数据，安全加入。
+  'schema-v1013.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
