@@ -37,6 +37,7 @@ const WAITER_KIND_LABEL: Record<ApprovalWaiterDTO['approvalKind'], EffectiveStat
 
 const NODE_RUNNING_LABEL: Record<string, EffectiveStatus> = {
   init_branch:        { label: '初始化分支中',    color: 'default',  tone: 'processing' },
+  spec_brainstorm:    { label: 'Spec 头脑风暴中',  color: 'cyan',     tone: 'processing' },
   spec_author:        { label: 'Spec 生成中',     color: 'cyan',     tone: 'processing' },
   spec_ai_review:     { label: 'Spec AI 审查中',  color: 'cyan',     tone: 'processing' },
   spec_commit_push:   { label: 'Spec 提交中',     color: 'cyan',     tone: 'processing' },

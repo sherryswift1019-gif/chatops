@@ -37,6 +37,10 @@ export interface RequirementDTO {
   createdAt: string
   updatedAt: string
   completedAt: string | null
+  /** 列表 endpoint 也返这两个字段，供前端 effectiveStatus 派生细粒度状态。
+   *  详情 endpoint 仍由 RequirementDetailDTO 用非可选字段表达。 */
+  waiters?: ApprovalWaiterDTO[]
+  stageResults?: V2StageResult[] | null
 }
 
 export interface ApprovalWaiterDTO {

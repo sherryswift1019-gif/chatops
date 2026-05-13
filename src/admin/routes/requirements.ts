@@ -46,7 +46,22 @@ export async function registerRequirementsRoutes(app: FastifyInstance): Promise<
       page: page ? Number(page) : undefined,
       size: size ? Number(size) : undefined,
     })
-    return reply.send(result)
+    // 派生字段（stageResults / waiters）让前端 effectiveStatus 能算出真实细粒度状态，
+    // 不再退化为按 status 兜底。详见 requirement-detail/effectiveStatus.ts。
+    const enriched = await Promise.all(
+      result.items.map(async (r) => {
+        const [stageResults, waiters] = await Promise.all([
+          r.pipelineRunId
+            ? getTestRunById(r.pipelineRunId)
+                .then((tr) => tr?.stageResults ?? null)
+                .catch(() => null)
+            : Promise.resolve(null),
+          listWaitersByRequirement(r.id).catch(() => []),
+        ])
+        return { ...r, stageResults, waiters }
+      }),
+    )
+    return reply.send({ items: enriched, total: result.total })
   })
 
   // ── Create (draft) ────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@
 
 export const STAGE_NAME_TO_NODE_ID: Record<string, string> = {
   'Init Branch': 'init_branch',
+  'Spec Brainstorm': 'spec_brainstorm',
   'Spec Author': 'spec_author',
   'Spec AI Review': 'spec_ai_review',
   'Spec Human Gate': 'spec_human_gate',

@@ -199,8 +199,7 @@ export default function RequirementsPage() {
       title: '状态',
       width: 140,
       render: (_, row) => {
-        // 列表项是 RequirementDTO，没有 waiters/stageResults，effectiveStatus 退化为按 status 兜底
-        const eff = effectiveStatus({ status: row.status })
+        const eff = effectiveStatus(row)
         return <Tag color={eff.color}>{eff.label}</Tag>
       },
     },

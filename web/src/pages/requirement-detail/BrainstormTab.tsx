@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Card,
   Radio,
@@ -40,6 +40,17 @@ export function BrainstormTab({ requirementId, state, loading, onAnswered }: Pro
   }
 
   const { active, history } = state
+
+  // 提交后写的乐观文案（"等待 LLM 生成下一轮..."）只在还有 active waiter 时有意义。
+  // LLM 这一轮就 decision=ready 时 active 会立刻变 null，旧 feedback 会和"已结束"
+  // 徽章打架，所以在 active truthy→falsy 翻转时清掉。
+  const prevActiveRef = useRef(active)
+  useEffect(() => {
+    if (prevActiveRef.current && !active) {
+      setFeedback(null)
+    }
+    prevActiveRef.current = active
+  }, [active])
 
   const canSubmit = !!chosenOption || freeText.trim().length > 0
   const submitDisabled = !active || !canSubmit
