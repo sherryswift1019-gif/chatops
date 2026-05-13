@@ -93,6 +93,14 @@ export function advanceBrainstormState(state: BrainstormState, args: AdvanceArgs
     enrichedInput: { ...state.enrichedInput, ...(args.llmOutput.enrichedInputDelta ?? {}) },
   }
 
+  // /done detection: highest priority, checked before all decision branches
+  const userText = args.userAnswer?.freeText?.trim() ?? ''
+  if (userText && /^\/?(done|stop|结束|够了)$/i.test(userText)) {
+    next.earlyDone = true
+    next.readyForSpec = true
+    return next
+  }
+
   if (args.llmOutput.decision === 'ready') {
     next.readyForSpec = true
     return next
@@ -108,7 +116,12 @@ export function advanceBrainstormState(state: BrainstormState, args: AdvanceArgs
     const parsed = parseFiveSectionMarkdown(args.llmOutput.question, { round: state.round })
     if (!parsed.valid) {
       next.failedQualityRounds += 1
-      return next  // do not advance round; T22 handles consecutive 2x fail → readyForSpec
+      // consecutive 2x quality fail → force close (priority: quality fail > round cap)
+      if (next.failedQualityRounds >= 2) {
+        next.readyForSpec = true
+        next.partial = true
+      }
+      return next  // do not advance round
     }
   }
 
