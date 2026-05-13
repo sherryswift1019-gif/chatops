@@ -28,6 +28,7 @@ import { dirname, isAbsolute, join, resolve as pathResolve } from 'path'
 import { fileURLToPath } from 'url'
 import { z } from 'zod'
 import { acquireLock, releaseLock } from './worktree.js'
+import { linkBrainstormArtifacts } from '../pipeline/qi-context-helpers.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -747,6 +748,9 @@ export async function runSkill(
     role: opts.role,
     previousRound: opts.previousRound,
   })
+
+  // brainstorm artifacts（forward-compatible：brainstorm 节点未产出时静默跳过）
+  await linkBrainstormArtifacts({ worktreePath: opts.worktreePath, requirementId: opts.requirementId })
 
   // 3. 系统提示词 = SKILL 底座契约 + role 引用
   const systemPrompt = [
