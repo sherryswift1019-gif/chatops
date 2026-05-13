@@ -2575,6 +2575,88 @@ function buildLlmReviewNode(
 }
 
 /**
+ * llm_brainstorm — 需求澄清多轮交互节点（skeleton）。
+ *
+ * 在 spec_author 之前收集需求澄清问题（最多 maxRounds 轮）。
+ * brainstorm-host role.md 通过 .claude/roles/ 注入，当前 worktree 不含该文件，
+ * skeleton mode 直接返回 partial=true，让 spec_author 以 rawInput 继续。
+ * 完整 LLM 路径在 T30 E2E（mock skill executor）验证。
+ */
+function buildLlmBrainstormNode(
+  node: PipelineNode,
+  index: number,
+  ctxBase: StageContextBase,
+  triggerParams: Record<string, unknown>,
+) {
+  return async (state: typeof PipelineStateAnnotation.State) => {
+    const startedAt = nowIso()
+    const startedMs = Date.now()
+    const stageName = nodeStageResultName(node)
+    await markStageRunning(ctxBase.runId, { ...node, name: stageName }, startedAt)
+
+    const nodeId = (node as PipelineNode).id ?? stageName
+
+    // === TOKEN BUDGET GATE ===
+    {
+      const cfg = await loadQiConfig()
+      const usedTokens = await getCumulativeTokenUsage(ctxBase.runId)
+      const budgetCheck = checkTokenBudget({ usedTokens, budget: cfg.tokenBudgetPerRequirement })
+      if (!budgetCheck.ok) {
+        const exec: StageExecutionResult = {
+          status: 'success',
+          output: `${nodeId} skipped: token budget exceeded (${usedTokens}/${cfg.tokenBudgetPerRequirement}); spec_author proceeds with rawInput`,
+        }
+        return {
+          currentStageIndex: index,
+          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+          stepOutputs: {
+            [nodeId]: {
+              status: 'success' as const,
+              output: {
+                rounds: 0,
+                readyForSpec: true,
+                partial: true,
+                earlyDone: false,
+                tokenBudgetExceeded: true,
+                enrichedInputPath: null,
+                brainstormPath: null,
+              },
+            },
+          },
+        }
+      }
+    }
+    // === END TOKEN BUDGET GATE ===
+
+    // Skeleton: brainstorm-host role.md is not present in this worktree (.claude/ is gitignored).
+    // Return partial=true immediately so spec_author runs with rawInput.
+    // Full multi-round interrupt + LLM invocation: T30 E2E with mock skillExecutor.
+    const exec: StageExecutionResult = {
+      status: 'success',
+      output: `${nodeId} skeleton (brainstorm-host role.md not in worktree; deferred to main-repo sync); spec_author proceeds with rawInput`,
+    }
+    return {
+      currentStageIndex: index,
+      stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      stepOutputs: {
+        [nodeId]: {
+          status: 'success' as const,
+          output: {
+            rounds: 0,
+            readyForSpec: true,
+            partial: true,
+            earlyDone: false,
+            enrichedInputPath: null,
+            brainstormPath: null,
+            skeletonMode: true,
+          },
+        },
+      },
+    }
+  }
+}
+
+/**
  * human_gate — 人工 binary 批准节点（interrupt-bound）。
  *
  * 调用 LangGraph interrupt() 挂起 graph，待人工审批（IM 卡片或 Web）后恢复。
@@ -3271,6 +3353,10 @@ export function buildGraphFromPipeline(
 
       case 'llm_author':
         builder = builder.addNode(name, buildLlmAuthorNode(node, i, stageContext, triggerParams ?? {}))
+        break
+
+      case 'llm_brainstorm':
+        builder = builder.addNode(name, buildLlmBrainstormNode(node, i, stageContext, triggerParams ?? {}))
         break
 
       case 'llm_review':

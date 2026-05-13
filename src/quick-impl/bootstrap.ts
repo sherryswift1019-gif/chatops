@@ -26,8 +26,11 @@ import type { PipelineGraph, PipelineNode, PipelineEdge } from '../pipeline/type
  *   dev_human_gate.approvalKind 'plan' → 'dev'，IM/Web 卡片标签不再错位。
  * v15 → v16: spec/plan/dev_human_gate.params 加 retryToOnReject = '<author_node_id>'，
  *   让 reject 决策触发 retryFromNode 重跑对应 author。final_approval 不配（reject = abort 语义）。
+ * v16 → v17: 在 init_branch → spec_author 之间插入 spec_brainstorm (llm_brainstorm)，
+ *   收集需求澄清问题（最多 5 轮）；skeleton mode 下 brainstorm-host role.md 不在 worktree，
+ *   节点立即返回 partial=true，spec_author 继续用 rawInput 生成 spec。
  */
-export const QUICK_IMPL_TEMPLATE_VERSION = 16
+export const QUICK_IMPL_TEMPLATE_VERSION = 17
 export const QUICK_IMPL_PIPELINE_NAME = 'quick-impl'
 
 // ─── Node definitions ────────────────────────────────────────────────────────
@@ -61,6 +64,28 @@ export function buildQuickImplGraph(): PipelineGraph {
         requirementId: '{{triggerParams.requirementId}}',
         gitlabProject: '{{triggerParams.gitlabProject}}',
         baseBranch: '{{triggerParams.baseBranch}}',
+      },
+    } as any),
+
+    // Spec Brainstorm：init_branch 之后、spec_author 之前的需求澄清多轮交互
+    // skeleton mode: brainstorm-host role.md 不在 worktree（.claude/ gitignore），
+    // 节点直接返回 partial=true，spec_author 继续用 rawInput。T30 E2E 加 mock 验证完整路径。
+    makeNode('spec_brainstorm', {
+      name: 'Spec Brainstorm',
+      stageType: 'llm_brainstorm',
+      onFailure: 'continue',  // brainstorm 失败不阻断 pipeline，spec_author 用 partial enrichedInput 继续
+      params: {
+        requirementId: '{{triggerParams.requirementId}}',
+        skill: 'quick-impl-artifact-author',
+        role: 'brainstorm-host',
+        worktreePath: '{{steps.init_branch.output.worktreePath}}',
+        branch: '{{steps.init_branch.output.branch}}',
+        baseBranch: '{{triggerParams.baseBranch}}',
+        maxRounds: 5,
+        timeoutMs: 86400000,
+        inputs: {
+          rawInput: '{{triggerParams.rawInput}}',
+        },
       },
     } as any),
 
@@ -542,7 +567,8 @@ export function buildQuickImplGraph(): PipelineGraph {
   const edges: PipelineEdge[] = []
 
   // === Spec phase ===
-  edges.push({ id: 'init_branch__spec_author', source: 'init_branch', target: 'spec_author' })
+  edges.push({ id: 'init_branch__spec_brainstorm', source: 'init_branch', target: 'spec_brainstorm' })
+  edges.push({ id: 'spec_brainstorm__spec_author', source: 'spec_brainstorm', target: 'spec_author' })
   edges.push({ id: 'spec_author__spec_ai_review', source: 'spec_author', target: 'spec_ai_review' })
   // spec_ai_review pass → human_gate；fail → 回 spec_author（受 aiReviewMaxRounds 保护）
   edges.push({ id: 'spec_ai_review__spec_human_gate_pass', source: 'spec_ai_review', target: 'spec_human_gate', condition: { kind: 'onSuccess' } })
