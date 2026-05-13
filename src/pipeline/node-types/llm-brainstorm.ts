@@ -27,6 +27,13 @@ export type BrainstormState = {
   earlyDone: boolean
   partial: boolean
   failedQualityRounds: number
+  /** 上一次 5-section 校验失败的反馈，供下一轮 LLM 输入参考。
+   *  成功通过校验后清空。不持久化到 waiter（5-section invalid 路径不建 waiter）。 */
+  lastInvalidFeedback?: {
+    round: number
+    missingSections: string[]
+    violations: string[]
+  }
 }
 
 export function initBrainstormState(): BrainstormState {
@@ -111,7 +118,8 @@ export function parseFiveSectionMarkdown(
   }
 
   if (opts?.round && opts.round >= 2) {
-    const hasHistoryRef = /上一轮|前轮|round\s*\d|之前|上次/i.test(sections.context ?? '')
+    // 历史引用词放宽：覆盖常见近义/英文/口语形式
+    const hasHistoryRef = /上一轮|前一轮|前轮|上回|上次|之前|先前|回顾|round\s*\d|prior\s+round|previous\s+round/i.test(sections.context ?? '')
     if (!hasHistoryRef) {
       violations.push('round2_missing_history_reference')
     }

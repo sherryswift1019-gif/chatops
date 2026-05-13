@@ -44,6 +44,48 @@
 - 或：`都不对，我想要 XX`
 ```
 
+## 多轮上下文延续（round ≥ 2 必读）
+
+第 2 轮起，「## 已查证的现状」段除了 codebase 事实外，**必须明确引用上一轮用户的决策**作为本轮提问的前提。这是系统级硬规则（5-section 校验 regex），**缺失会让本轮 question 被丢弃、悄悄重跑一次 LLM**（浪费 token + 时间，用户也看不到本轮）。
+
+**触发条件**：「已查证的现状」段中至少出现以下引用词之一：`上一轮` / `前轮` / `round N`（N 为数字） / `之前` / `上次`。
+
+**反例**（命中违规 `round2_missing_history_reference`，被丢弃）：
+```markdown
+## 已查证的现状
+- `LoginPage.tsx:44` 当前表单仅 username/password
+- 前端无 localStorage 使用
+```
+
+**正例**（通过校验）：
+```markdown
+## 已查证的现状
+- 上一轮你选了 **C（仅延长 session）**，方向已定为后端 session maxAge 调整。基于这个选择，下面要决策"延多长"。
+- `session-plugin.ts:8` 当前 maxAge = 7 天
+- 历史 commit 中无 session 时长调整记录
+```
+
+第 1 轮无此约束。
+
+## 上一轮被丢弃的反馈（lastInvalidFeedback 字段）
+
+如果 `inputs.lastInvalidFeedback` 字段存在，说明你**上一轮的 question 被系统级 5-section 校验丢弃了**，用户从未看到那一轮。该字段结构：
+
+```json
+{
+  "round": <被丢弃的轮号>,
+  "missingSections": ["context"],         // 缺失的 ## 段（5 段中哪几段没写）
+  "violations": ["round2_missing_history_reference", "no_options_listed"]
+}
+```
+
+**本轮你必须做的**：
+1. 针对 `missingSections` 补齐对应 ## 段
+2. 针对 `violations` 修正违规：
+   - `round2_missing_history_reference` → context 段加历史引用词
+   - `no_options_listed` → options 段加 A/B/C 三选项加粗格式
+3. **不要** 重复上一轮的同样错误（系统会再次丢弃，浪费 token 和你的 round 配额）
+
 ## 反模式黑名单（命中即节点 fail）
 
 - 元问题（"你希望我怎么实现？"）
@@ -83,4 +125,5 @@
 
 - [ ] 本轮 5 段全填，无空段
 - [ ] 没有触发任何反模式
+- [ ] round ≥ 2 时「已查证的现状」段含 `上一轮` / `前轮` / `round N` / `之前` / `上次` 之一（系统硬规则）
 - [ ] readyForSpec 真的对应"本需求范围内决策全收集"，不是凑数下结论

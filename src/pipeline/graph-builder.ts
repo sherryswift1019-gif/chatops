@@ -2837,6 +2837,9 @@ function buildLlmBrainstormNode(
               enrichedInput: bs.enrichedInput,
               round,
               maxRounds,
+              // 上一轮 5-section 校验失败时把反馈塞给 LLM，让它知道为什么被丢弃。
+              // brainstorm-host.md prompt 要求 LLM 看到此字段时按 violations/missingSections 修正。
+              ...(bs.lastInvalidFeedback ? { lastInvalidFeedback: bs.lastInvalidFeedback } : {}),
             } as unknown as SkillContextInputs,
             timeoutMs: llmCallTimeoutMs,
             skipOutputParse: true,
@@ -2866,6 +2869,11 @@ function buildLlmBrainstormNode(
       const pf = parseFiveSectionMarkdown(parsed.question ?? '', { round })
       if (!pf.valid) {
         bs.failedQualityRounds += 1
+        bs.lastInvalidFeedback = {
+          round,
+          missingSections: pf.missingSections,
+          violations: pf.violations,
+        }
         if (bs.failedQualityRounds >= 2) {
           bs.partial = true
           bs.readyForSpec = true
@@ -2873,6 +2881,9 @@ function buildLlmBrainstormNode(
         console.warn(`[llm_brainstorm] round=${round} 5-section invalid: missing=${pf.missingSections.join(',')} violations=${pf.violations.join(',')}`)
         continue
       }
+
+      // 通过校验：清掉 lastInvalidFeedback，避免污染后续轮
+      bs.lastInvalidFeedback = undefined
 
       // 5. 写 waiter + interrupt
       const expiresAt = new Date(Date.now() + timeoutMs).toISOString()
