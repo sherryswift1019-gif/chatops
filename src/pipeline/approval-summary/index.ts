@@ -86,6 +86,32 @@ export function resolveHumanGateAdvancedSummary(args: {
   }
   if (skillOutput == null || typeof skillOutput !== 'object') return null
 
+  // 解析 aiReview（{{steps.spec_ai_review.output}}，含 aiReviewExhausted / exhaustedNotes）
+  let aiReviewParam: unknown = params.aiReview
+  if (typeof aiReviewParam === 'string') {
+    try {
+      aiReviewParam = JSON.parse(aiReviewParam)
+    } catch {
+      aiReviewParam = null
+    }
+  }
+  const aiReviewObj = aiReviewParam != null && typeof aiReviewParam === 'object'
+    ? aiReviewParam as Record<string, unknown>
+    : null
+  const aiReviewExhausted = aiReviewObj?.aiReviewExhausted === true
+  const exhaustedNotesRaw = Array.isArray(aiReviewObj?.exhaustedNotes) ? aiReviewObj!.exhaustedNotes : []
+  const exhaustedNotes = exhaustedNotesRaw.flatMap((n: unknown): Array<{ severity: string; msg: string; file?: string }> => {
+    if (n != null && typeof n === 'object' && 'msg' in n) {
+      const obj = n as { severity?: string; msg: unknown; file?: string }
+      return [{ severity: typeof obj.severity === 'string' ? obj.severity : 'warn', msg: String(obj.msg), ...(typeof obj.file === 'string' ? { file: obj.file } : {}) }]
+    }
+    return []
+  })
+  const aiReviewRound = typeof aiReviewObj?.round === 'number' ? aiReviewObj.round : 0
+  const aiReviewHistory = aiReviewExhausted && exhaustedNotes.length > 0
+    ? { rounds: aiReviewRound, notes: exhaustedNotes }
+    : undefined
+
   const artifactPath = typeof params.artifactPath === 'string' ? params.artifactPath : ''
   const specMdContent = artifactPath ? readFile(artifactPath) : ''
   const round = Number(params.round ?? 1)
@@ -95,6 +121,7 @@ export function resolveHumanGateAdvancedSummary(args: {
     skillOutput: skillOutput as Parameters<typeof _buildSpecApprovalSummary>[0]['skillOutput'],
     specMdContent,
     round,
+    aiReviewHistory,
   })
   return result
 }
