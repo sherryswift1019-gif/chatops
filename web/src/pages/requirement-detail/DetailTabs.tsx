@@ -5,8 +5,9 @@ import { NodesTab } from './NodesTab'
 import { SpecTab } from './SpecTab'
 import { PlanTab } from './PlanTab'
 import { ApprovalsTab } from './ApprovalsTab'
+import { BrainstormTab } from './BrainstormTab'
 
-const VALID_TABS = new Set(['nodes', 'spec', 'plan', 'approvals'])
+const VALID_TABS = new Set(['nodes', 'spec', 'plan', 'approvals', 'brainstorm'])
 
 interface Props {
   detail: RequirementDetailDTO
@@ -49,6 +50,11 @@ export function DetailTabs({ detail, onRetried }: Props) {
             key: 'approvals',
             label: '审批历史',
             children: <ApprovalsTab waiters={detail.waiters ?? []} />,
+          },
+          {
+            key: 'brainstorm',
+            label: 'Brainstorm',
+            children: <BrainstormTab requirementId={detail.id} />,
           },
         ]}
       />
