@@ -50,19 +50,19 @@ describe('handleHumanGateRejection (extracted helper)', () => {
     expect(retryFromNode).toHaveBeenCalledWith(100, 'spec_author')
   })
 
-  it('reject 已达 cap=3 → 不调 retryFromNode + 不累加 + shouldReroute=false', async () => {
-    vi.mocked(getRejectCount).mockResolvedValue(3)
+  it('reject 已达 cap=2 → 不调 retryFromNode + 不累加 + shouldReroute=false', async () => {
+    vi.mocked(getRejectCount).mockResolvedValue(2)
 
     const result = await handleHumanGateRejection({
       runId: 100,
       requirementId: 7,
       humanGateNodeId: 'spec_human_gate',
       retryToOnReject: 'spec_author',
-      rejectReason: '4th try',
+      rejectReason: '3rd try',
     })
 
     expect(result.shouldReroute).toBe(false)
-    expect(result.newCount).toBe(3)
+    expect(result.newCount).toBe(2)
     expect(incrementRejectCount).not.toHaveBeenCalled()
     await new Promise(r => setTimeout(r, 150))
     expect(retryFromNode).not.toHaveBeenCalled()
@@ -87,9 +87,26 @@ describe('handleHumanGateRejection (extracted helper)', () => {
     expect(retryFromNode).not.toHaveBeenCalled()
   })
 
-  it('cap 边界：count=2 时 reject 可执行（< 3）', async () => {
+  it('cap 边界：count=1 时 reject 可执行（< 2 = REJECT_CAP）', async () => {
+    vi.mocked(getRejectCount).mockResolvedValue(1)
+    vi.mocked(incrementRejectCount).mockResolvedValue({ newCount: 2 })
+
+    const result = await handleHumanGateRejection({
+      runId: 100,
+      requirementId: 7,
+      humanGateNodeId: 'spec_human_gate',
+      retryToOnReject: 'spec_author',
+      rejectReason: 'round 2 reject',
+    })
+
+    expect(result.shouldReroute).toBe(true)
+    expect(result.newCount).toBe(2)
+    // Drain pending setTimeout so it doesn't leak into the next test
+    await new Promise(r => setTimeout(r, 150))
+  })
+
+  it('cap 边界：count=2 时 reject 已 cap（>= REJECT_CAP=2）', async () => {
     vi.mocked(getRejectCount).mockResolvedValue(2)
-    vi.mocked(incrementRejectCount).mockResolvedValue({ newCount: 3 })
 
     const result = await handleHumanGateRejection({
       runId: 100,
@@ -99,10 +116,11 @@ describe('handleHumanGateRejection (extracted helper)', () => {
       rejectReason: 'round 3 reject',
     })
 
-    expect(result.shouldReroute).toBe(true)
-    expect(result.newCount).toBe(3)
-    // Drain pending setTimeout so it doesn't leak into the next test
+    expect(result.shouldReroute).toBe(false)
+    expect(result.newCount).toBe(2)
+    expect(incrementRejectCount).not.toHaveBeenCalled()
     await new Promise(r => setTimeout(r, 150))
+    expect(retryFromNode).not.toHaveBeenCalled()
   })
 
   it('retryToOnReject="" → 视为无配置（不调 retry，不查 count）', async () => {

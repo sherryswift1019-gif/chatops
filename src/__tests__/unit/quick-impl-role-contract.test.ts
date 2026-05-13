@@ -31,30 +31,35 @@ describe('quick-impl role.md docs commit contract', () => {
     const md = readRole('spec-author')
     expect(md).toContain('commit_artifact')
     expect(md).toContain('docs/specs/qi-{requirement_id}.md')
-    expect(md).toMatch(/docs\(qi-\{requirement_id\}\): spec round \{N\}/)
+    // round 1 format: docs(qi-{id}): spec — {summary}
+    expect(md).toMatch(/docs\(qi-\{id\}\): spec /)
   })
 
   it('spec-author.md DoD checklist enforces commit_artifact', () => {
     const md = readRole('spec-author')
+    // DoD section exists (v3 版本已精简为主观决策类自查)
     const dod = extractSection(md, /## DoD 自检 checklist[^\n]*\n/)
     expect(dod).not.toBeNull()
-    expect(dod!).toContain('commit_artifact')
-    expect(dod!).toMatch(/commit.*spec\.md/)
+    // commit_artifact 约束在多轮修订章节中强制执行
+    expect(md).toContain('每轮都 commit')
+    expect(md).toContain('commit_artifact')
   })
 
   it('plan-decomposer.md instructs commit_artifact with docs/plans/qi- path', () => {
     const md = readRole('plan-decomposer')
     expect(md).toContain('commit_artifact')
     expect(md).toContain('docs/plans/qi-{requirement_id}.md')
-    expect(md).toMatch(/docs\(qi-\{requirement_id\}\): plan round \{N\}/)
+    // round 1 format: docs(qi-{id}): plan — {summary}
+    expect(md).toMatch(/docs\(qi-\{id\}\): plan /)
   })
 
   it('plan-decomposer.md DoD checklist enforces commit_artifact', () => {
     const md = readRole('plan-decomposer')
-    const dod = extractSection(md, /## DoD 自检 checklist[^\n]*\n/)
-    expect(dod).not.toBeNull()
-    expect(dod!).toContain('commit_artifact')
-    expect(dod!).toMatch(/commit.*plan\.md/)
+    // plan-decomposer 在 Step 6 中强制 commit_artifact（无独立 DoD 节）
+    expect(md).toContain('commit_artifact')
+    // Step 6 节明确规定 commit path 和格式
+    expect(md).toContain('docs/plans/qi-{requirement_id}.md')
+    expect(md).toContain('message')
   })
 
   it('dev-loop.md forbids re-committing docs/specs or docs/plans files', () => {

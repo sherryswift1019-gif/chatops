@@ -423,7 +423,7 @@ describe('schema-v60 / requirement_approval_waiters race-claim', () => {
 })
 
 describe('schema-v60 / pipeline_node_types extension', () => {
-  it('4 quick_impl node types are registered', async () => {
+  it('8 quick_impl node types are registered (v60 + v61 + v62)', async () => {
     const pool = getPool()
     const { rows } = await pool.query(
       `SELECT key, category, is_system FROM pipeline_node_types
@@ -431,10 +431,14 @@ describe('schema-v60 / pipeline_node_types extension', () => {
     )
     const keys = rows.map((r) => r.key)
     expect(keys).toEqual([
-      'mr_create',
-      'skill_node',
-      'skill_with_approval',
-      'skill_with_review',
+      'e2e_stub',        // v61
+      'im_input',        // v62
+      'init_qi_branch',  // v61
+      'mr_create',       // v60
+      'qi_e2e_runner',   // v62
+      'skill_node',      // v60
+      'skill_with_approval', // v60
+      'skill_with_review',   // v60
     ])
     for (const r of rows) {
       expect(r.is_system).toBe(true)

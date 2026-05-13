@@ -128,10 +128,25 @@ describe('awaitHumanReviewNode (web review path)', () => {
     expect(result.humanReviewDecision).toBe('reject')
   })
 
-  it('缺 manifest/scenario/scenarioRunId → 兜底 reject 且不挂 waiter', async () => {
-    const result = await awaitHumanReviewNode({
+  it('currentManifest=null 且有 scenarioRunId → 仍挂 web waiter（04d9450: manifest 不再阻断人审）', async () => {
+    const nodePromise = awaitHumanReviewNode({
       ...baseState,
       currentManifest: null,
+    } as never)
+    // 让 node 注册 waiter
+    await new Promise((r) => setTimeout(r, 5))
+    // waiter 应该被注册（manifest 缺失不再立即 reject）
+    expect(getPendingWebReview(42n)).toEqual({ scenarioRunId: 100n })
+    // 提交决策以解除 waiter
+    submitWebReviewDecision(42n, 'reject')
+    const result = await nodePromise
+    expect(result.humanReviewDecision).toBe('reject')
+  })
+
+  it('currentScenarioRunId=null 且无 imContext → 兜底 reject 且不挂 waiter', async () => {
+    const result = await awaitHumanReviewNode({
+      ...baseState,
+      currentScenarioRunId: null,
     } as never)
     expect(result.humanReviewDecision).toBe('reject')
     expect(getPendingWebReview(42n)).toBeNull()
