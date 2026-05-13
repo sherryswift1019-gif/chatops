@@ -109,3 +109,35 @@ T11 (commit 05e6267) 实现了 budget gate：从 `pipeline_run_state.data.token_
 
 scope：1-2 task，约 1 天工程量。可作为 Phase 2。
 
+### T22.5 24h interrupt timeout integration test（deferred）
+
+依赖 brainstorm 节点真 interrupt（**当前 skeleton mode 直接 return partial=true，不真 interrupt**）。完整 integration test 要求：
+1. brainstorm-host role.md 已 sync 到主仓库
+2. buildLlmBrainstormNode skeleton 升级为完整 multi-round interrupt + LLM 调用
+3. im_input 基建的 interrupt 超时机制 hook 到 brainstorm 节点（24h 超时 → requirement.status='aborted'）
+
+修法（role.md sync 后另开 follow-up PR）：
+- 测试文件：`src/__tests__/integration/qi-brainstorm-timeout.integration.test.ts`
+- 验证场景：
+  - 用户长时间不回（mock timeout 5s 不是 24h）→ requirement.status='aborted'
+  - LLM partial 失败 5 段 fail → requirement.status='spec_review'（继续 spec_author），不 aborted
+
+scope：1 task，约 0.5 天。等 brainstorm 完整 path 上线后做。
+
+### T20 完整 LLM path（skeleton 升级）
+
+T20 commit 8b67505 是 skeleton：直接 return partial=true、skeletonMode=true，spec_author 用 rawInput 跑。
+
+升级路径：
+1. brainstorm-host role.md sync 到主仓库 `.claude/`
+2. 修改 `buildLlmBrainstormNode`：
+   - 替换 skeleton 立即 return → 真调 `prepareSkillContext` + `executor.execute()` 跑 brainstorm-host
+   - 解析 LLM 输出 5 段 markdown，调用 `advanceBrainstormState`
+   - 如果 readyForSpec → 写 worktree `docs/brainstorm/qi-{id}.md` + `.json`，返回 stepOutputs
+   - 如果还没 ready → 注册 interrupt waiter（复用 im_input router），通知 Web/IM 等用户回答
+   - resume 时拿 user answer，advanceBrainstormState 推进，循环
+3. 完整 E2E（T30 mock skill executor）才能验证
+
+scope：2-3 task，约 2 天。M3 完整运行依赖此。
+
+
