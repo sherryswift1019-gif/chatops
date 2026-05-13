@@ -1,0 +1,33 @@
+{
+  "$schema": "./role-manifest.schema.json",
+  "_comment": "v2 精准注入声明。详见 docs/prds/quick-impl-roles-v2/02-data-flow.md §4。skill-runner 启动时按 standards 子集 symlink 到 .qi-context/standards/，按 inputs 字段子集填 .qi-context/inputs.json。",
+
+  "spec-author": {
+    "standards": ["frontend-enum-select.md", "qi-spec-quality.md"],
+    "inputs": ["rawInput", "enrichedInput", "brainstormPath", "codebaseEvidence"]
+  },
+  "spec-reviewer": {
+    "standards": ["qi-spec-quality.md"],
+    "inputs": ["devOutput", "rawInput", "enrichedInput", "round", "reviewNotes", "previousReviewNotes"]
+  },
+  "brainstorm-host": {
+    "standards": ["qi-spec-quality.md"],
+    "inputs": ["rawInput", "previousTurns", "round"]
+  },
+  "plan-decomposer": {
+    "standards": [
+      "db-schema-versioning.md",
+      "test-conventions.md",
+      "frontend-enum-select.md"
+    ],
+    "inputs": ["specPath", "specAcceptanceCriteria"]
+  },
+  "dev-loop": {
+    "standards": ["*"],
+    "inputs": ["planPath", "planTasks", "previousCommits", "spec", "requirementId", "failureReport", "humanNote", "attempt"]
+  },
+  "code-quality-reviewer": {
+    "standards": ["*"],
+    "inputs": ["specAcceptanceCriteria", "planTasks", "branch"]
+  }
+}
