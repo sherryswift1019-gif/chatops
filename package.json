@@ -14,7 +14,8 @@
     "test:e2e:ui": "playwright test --ui",
     "migrate": "tsx src/db/migrate.ts",
     "seed": "docker exec -i chatops-postgres-1 psql -U chatops -d chatops < src/db/seed.sql",
-    "qi-clean": "tsx src/scripts/qi-clean.ts"
+    "qi-clean": "tsx src/scripts/qi-clean.ts",
+    "qi-standards-lint": "tsx scripts/check-qi-standards-consistency.ts"
   },
   "keywords": [],
   "author": "",

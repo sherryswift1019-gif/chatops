@@ -509,6 +509,12 @@ EOF
         warn "node_modules 缺失，先跑 ./test.sh --setup-env"; exit 1
     fi
 
+    # QI 规范一致性 lint（role.md gitignored 时软警告，不阻塞 CI）
+    info "==> Checking QI standards consistency..."
+    (cd "$PROJ_ROOT" && npx tsx scripts/check-qi-standards-consistency.ts) || {
+        fail "QI standards consistency check failed (hard errors found)"; exit 1
+    }
+
     declare -a ROUND_PASSED=() ROUND_FAILED=() ROUND_SKIPPED=() ROUND_DURATION=() ROUND_LOG=() ROUND_RC=()
     local any_failed=false
 
