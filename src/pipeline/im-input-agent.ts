@@ -98,3 +98,18 @@ export async function consultImInputAgent(input: ConsultInput): Promise<ConsultR
 
   return { done: true, params: merged }
 }
+
+export function parseBrainstormAnswer(raw: string): { chosenOption?: string; freeText?: string } {
+  const trimmed = raw.trim()
+  if (!trimmed) return { freeText: '' }
+
+  // single letter A-Z (optionally trailing whitespace already trimmed)
+  const single = trimmed.match(/^([A-Za-z])\s*$/)
+  if (single) return { chosenOption: single[1].toUpperCase() }
+
+  // letter + separator (space / ASCII comma / fullwidth comma) + text
+  const composite = trimmed.match(/^([A-Za-z])[\s,，]+(.+)$/)
+  if (composite) return { chosenOption: composite[1].toUpperCase(), freeText: composite[2].trim() }
+
+  return { freeText: trimmed }
+}
