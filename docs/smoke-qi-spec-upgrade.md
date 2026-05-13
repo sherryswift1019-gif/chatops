@@ -61,7 +61,7 @@ pnpm migrate
 
 确认迁移包含：
 - `schema-v65.sql` — retry_counters JSONB 扩展（ai_review_rounds + last_ai_review_notes）
-- `schema-v1012.sql` — 同上（备注：schema-v65 与 v1012 等价，deploy 时按 SCHEMA_FILES 顺序）
+- `schema-v1015.sql` — 同上（备注：schema-v65 与 v1015 等价，deploy 时按 SCHEMA_FILES 顺序）
 - `schema-v1013.sql` — pipeline_run_state 表（brainstorm 状态持久化）
 - `schema-v1014.sql` — llm_brainstorm 节点类型注册
 
@@ -155,7 +155,7 @@ cd web && pnpm build
 | `src/quick-impl/enriched-input-schema.ts` | brainstorm/spec-author/reviewer 共享的 zod schema |
 | `src/quick-impl/qi-config.ts` | `loadQiConfig()` 读 aiReviewMaxRounds / tokenBudgetPerRequirement |
 | `src/db/schema-v65.sql` | retry_counters JSONB 扩展（ai_review_rounds + last_ai_review_notes） |
-| `src/db/schema-v1012.sql` | 同上（schema rename 后实际文件） |
+| `src/db/schema-v1015.sql` | 同上（schema rename 后实际文件） |
 | `src/db/schema-v1013.sql` | pipeline_run_state 表 |
 | `src/db/schema-v1014.sql` | llm_brainstorm 节点类型注册 |
 | `src/pipeline/node-types/llm-brainstorm.ts` | brainstorm 节点 stage type 定义 |
@@ -197,5 +197,5 @@ cd web && pnpm build
 2. 同步 `.claude/skills/quick-impl-artifact-author/roles/spec-author.md`（enrichedInput 3 状态分支）
 3. 同步 `.claude/skills/quick-impl-artifact-author/roles/spec-reviewer.md`（round 2+ 逐项追踪）
 4. 同步 `.claude/skills/quick-impl-artifact-author/role-manifest.json`（brainstorm-host 注册）
-5. 运行 `pnpm migrate` 应用 schema-v65/v1012/v1013/v1014
+5. 运行 `pnpm migrate` 应用 schema-v1015/v1013/v1014
 6. 可选：`pnpm qi-clean --yes` 清空历史执行记录并 seed 新默认配置
