@@ -35,6 +35,8 @@ import './cleanup.js'
 import './git-commit-push.js'
 // Pipeline Stage Types Sub-plan A: LLM 生成 artifact（不 commit）
 import './llm-author.js'
+// Pipeline Stage Types Sub-plan A: LLM brainstorm（多轮澄清，interrupt-bound by graph-builder）
+import './llm-brainstorm.js'
 // Pipeline Stage Types Sub-plan A: LLM 审 artifact
 import './llm-review.js'
 // Pipeline Stage Types Sub-plan A: 人工 binary 批准（interrupt-bound）

@@ -139,6 +139,8 @@ export async function updateRequirement(
 
 export async function deleteRequirement(id: number): Promise<boolean> {
   const pool = getPool()
+  // 级联清 brainstorm_waiters（无 FK，需手动）。先删 child，避免悬挂行。
+  await pool.query(`DELETE FROM brainstorm_waiters WHERE requirement_id = $1`, [id])
   const { rowCount } = await pool.query(
     `DELETE FROM requirements WHERE id = $1 AND status IN ('draft', 'queued')`,
     [id],
@@ -368,6 +370,7 @@ export function isTerminalStatus(status: RequirementStatus): boolean {
 
 export async function forceDeleteRequirement(id: number): Promise<void> {
   const pool = getPool()
+  await pool.query(`DELETE FROM brainstorm_waiters WHERE requirement_id = $1`, [id])
   await pool.query(`DELETE FROM requirements WHERE id = $1`, [id])
 }
 

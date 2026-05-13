@@ -19,7 +19,7 @@ import { resolveCapabilityParams } from './executor-hooks.js'
 import { evalExpression } from './expressions.js'
 import { extractJsonObject, NotJsonObjectError } from './json-extract.js'
 import { markStageRunning } from './stage-status.js'
-import type { SkillExecutor, RunSkillOptions, SkillContextInputs, PreviousRoundData, AcceptanceCriterion, AcDiff } from '../quick-impl/skill-runner.js'
+import type { SkillExecutor, SkillContextInputs, PreviousRoundData, AcceptanceCriterion, AcDiff } from '../quick-impl/skill-runner.js'
 import {
   runSkill,
   defaultMcpServerPath,
@@ -47,6 +47,23 @@ import { execSync } from 'child_process'
 import { buildSpecApprovalSummary, buildFinalApprovalSummary, buildPlanApprovalSummary, resolveHumanGateAdvancedSummary } from './approval-summary/index.js'
 import type { SpecAuthorOutput } from '../quick-impl/role-output-schemas.js'
 import { loadQiConfig, checkTokenBudget, getCumulativeTokenUsage } from '../quick-impl/qi-config.js'
+import {
+  createBrainstormWaiter,
+  getBrainstormWaiterById,
+  getBrainstormWaiterByRound,
+  listBrainstormWaitersForRun,
+  type BrainstormWaiter,
+} from '../db/repositories/brainstorm-waiters.js'
+import {
+  initBrainstormState,
+  rebuildAfterWaiter,
+  parseBrainstormLlmJson,
+  parseFiveSectionMarkdown,
+  advanceBrainstormState,
+  BrainstormLlmParseError,
+  type BrainstormState,
+} from './node-types/llm-brainstorm.js'
+import { writeFile, mkdir } from 'fs/promises'
 
 // Hooks let the builder stay agnostic of SSH / capability implementations.
 // The executor (Task 4) wires real implementations; tests wire plain stubs.
@@ -216,6 +233,33 @@ export interface QiImInputInterruptValue {
 
 export interface QiImInputResume {
   claimedWaiter: RequirementApprovalWaiter
+}
+
+// ---- Quick-Impl brainstorm interrupt/resume types ------------------------
+// spec_brainstorm 多轮 interrupt（1..maxRounds），每轮一个 brainstorm_waiters 行。
+// 详见 docs/superpowers/specs/2026-05-13-brainstorm-real-impl-design.md
+
+export const QI_BRAINSTORM_INTERRUPT = 'qi_brainstorm' as const
+
+export interface QiBrainstormInterruptValue {
+  type: typeof QI_BRAINSTORM_INTERRUPT
+  waiterId: number
+  runId: number
+  nodeId: string
+  requirementId: number
+  round: number
+  maxRounds: number
+  questionMd: string
+  options: Array<{ id: string; label: string }>
+  expiresAt: string
+  /** timeoutMs at interrupt time (for scheduleBrainstormTimeout register) */
+  timeoutMs: number
+}
+
+export interface QiBrainstormResume {
+  chosenOption?: string
+  freeText?: string
+  source: 'web' | 'im'
 }
 
 // Shape of the value passed to interrupt() for approval stages.
@@ -2575,12 +2619,83 @@ function buildLlmReviewNode(
 }
 
 /**
- * llm_brainstorm — 需求澄清多轮交互节点（skeleton）。
+ * writeBrainstormArtifacts — 把最终 BrainstormState 写到 worktree 的 docs/brainstorm/qi-{id}.{md,json}。
  *
- * 在 spec_author 之前收集需求澄清问题（最多 maxRounds 轮）。
- * brainstorm-host role.md 通过 .claude/roles/ 注入，当前 worktree 不含该文件，
- * skeleton mode 直接返回 partial=true，让 spec_author 以 rawInput 继续。
- * 完整 LLM 路径在 T30 E2E（mock skill executor）验证。
+ * .md = 人读：每轮 question + 用户答复 markdown 拼接
+ * .json = 机器读：完整 BrainstormState 序列化 + final enrichedInput
+ *
+ * 路径相对 worktreePath。docs/brainstorm/ 不在 .gitignore，commit_push 节点会带上。
+ */
+async function writeBrainstormArtifacts(
+  worktreePath: string,
+  requirementId: number,
+  bs: BrainstormState,
+): Promise<{ brainstormPath: string; enrichedInputPath: string }> {
+  const relMd = `docs/brainstorm/qi-${requirementId}.md`
+  const relJson = `docs/brainstorm/qi-${requirementId}.json`
+  const absMdDir = join(worktreePath, 'docs', 'brainstorm')
+  await mkdir(absMdDir, { recursive: true })
+
+  const mdParts: string[] = [
+    `# QI #${requirementId} Brainstorm 记录`,
+    '',
+    `- 轮数：${bs.history.length}`,
+    `- 完成：readyForSpec=${bs.readyForSpec} / partial=${bs.partial} / earlyDone=${bs.earlyDone}`,
+    `- 终止原因：${bs.partial ? '部分完成（fallback 到 rawInput 补缺）' : bs.earlyDone ? '用户提前结束' : '正常完成'}`,
+    '',
+    '## EnrichedInput',
+    '',
+    '```json',
+    JSON.stringify(bs.enrichedInput, null, 2),
+    '```',
+    '',
+    '## 历轮对话',
+    '',
+  ]
+  for (const turn of bs.history) {
+    mdParts.push(`### Round ${turn.round}（来源：${turn.source}，时间：${turn.answeredAt}）`)
+    mdParts.push('')
+    mdParts.push('**问题：**')
+    mdParts.push('')
+    mdParts.push(turn.question)
+    mdParts.push('')
+    mdParts.push(`**答复：** ${turn.answer || '（空）'}`)
+    mdParts.push('')
+  }
+  await writeFile(join(worktreePath, relMd), mdParts.join('\n'), 'utf-8')
+  await writeFile(
+    join(worktreePath, relJson),
+    JSON.stringify(
+      {
+        requirementId,
+        readyForSpec: bs.readyForSpec,
+        partial: bs.partial,
+        earlyDone: bs.earlyDone,
+        rounds: bs.history.length,
+        history: bs.history,
+        enrichedInput: bs.enrichedInput,
+      },
+      null,
+      2,
+    ),
+    'utf-8',
+  )
+  return { brainstormPath: relMd, enrichedInputPath: relJson }
+}
+
+/**
+ * llm_brainstorm — 需求澄清多轮交互节点。
+ *
+ * 节点内 for-loop (round=1..maxRounds+1) + LangGraph interrupt() 多轮挂起。
+ * 每轮一行 brainstorm_waiters 表记录；replay 时 getBrainstormWaiterByRound 命中已有行 →
+ * 跳过 LLM 调用；interrupt() 在 replay 时返回 resume value 而非抛 — 跟 skill_with_approval 同模式。
+ *
+ * 退出路径：
+ *   - LLM decision='ready' → readyForSpec=true（正常）
+ *   - LLM decision='fail' / failedQualityRounds≥2 / round>maxRounds / budget exceeded → readyForSpec=true,partial=true
+ *   - skillExecutor 连续 2 轮抛异常 → partial fallback
+ *
+ * 详见 docs/superpowers/specs/2026-05-13-brainstorm-real-impl-design.md
  */
 function buildLlmBrainstormNode(
   node: PipelineNode,
@@ -2596,44 +2711,220 @@ function buildLlmBrainstormNode(
 
     const nodeId = (node as PipelineNode).id ?? stageName
 
-    // === TOKEN BUDGET GATE ===
-    {
-      const cfg = await loadQiConfig()
+    if (!ctxBase.skillExecutor) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: 'llm_brainstorm: skillExecutor not configured',
+        error: 'no_skill_executor',
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const rawParams = ((node as unknown as { params?: Record<string, unknown> }).params ?? {})
+    const varCtx = buildVariableContext(state, ctxBase, triggerParams, node, index)
+    let params: Record<string, unknown>
+    try {
+      params = renderParamTemplates(rawParams, varCtx)
+    } catch (err) {
+      const exec: StageExecutionResult = {
+        status: 'failed',
+        output: `llm_brainstorm param resolve failed: ${String(err)}`,
+        error: String(err),
+      }
+      return {
+        currentStageIndex: index,
+        stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
+      }
+    }
+
+    const requirementId = Number(params.requirementId)
+    const skill = String(params.skill ?? 'quick-impl-artifact-author')
+    const role = String(params.role ?? 'brainstorm-host')
+    const maxRounds = Number(params.maxRounds ?? 5)
+    const timeoutMs = Number(params.timeoutMs ?? 86400000)
+    const llmCallTimeoutMs = Number(params.llmCallTimeoutMs ?? 300000)
+    const inputsParam = (params.inputs as Record<string, unknown> | undefined) ?? {}
+    const rawInput = String(inputsParam.rawInput ?? params.rawInput ?? '')
+    const worktreePath = String(params.worktreePath ?? '')
+    const branch = String(params.branch ?? '')
+    const baseBranch = String(params.baseBranch ?? '')
+
+    const cfg = await loadQiConfig()
+
+    // 重建 state 到所有 answered waiter 之后的形态（按 round 升序累积）
+    const prior = await listBrainstormWaitersForRun(ctxBase.runId, nodeId)
+    let bs: BrainstormState = initBrainstormState()
+    for (const w of prior) {
+      if (w.status === 'answered') {
+        bs = rebuildAfterWaiter(bs, w)
+      } else {
+        break  // pending / expired：停在该 round
+      }
+    }
+    // 起始 round：第一个未 answered 行的 round；若全部 answered，则下一 round
+    let startRound = 1
+    if (prior.length > 0) {
+      const lastAnswered = [...prior].reverse().find(w => w.status === 'answered')
+      const firstUnanswered = prior.find(w => w.status !== 'answered')
+      startRound = firstUnanswered ? firstUnanswered.round : (lastAnswered ? lastAnswered.round + 1 : 1)
+    }
+
+    for (let round = startRound; round <= maxRounds + 1; round++) {
+      // 1. budget gate（每轮入口）
       const usedTokens = await getCumulativeTokenUsage(ctxBase.runId)
       const budgetCheck = checkTokenBudget({ usedTokens, budget: cfg.tokenBudgetPerRequirement })
       if (!budgetCheck.ok) {
-        const exec: StageExecutionResult = {
-          status: 'success',
-          output: `${nodeId} skipped: token budget exceeded (${usedTokens}/${cfg.tokenBudgetPerRequirement}); spec_author proceeds with rawInput`,
-        }
-        return {
-          currentStageIndex: index,
-          stageResults: finishedResult({ ...node, name: stageName } as StageDefinition, startedAt, startedMs, exec),
-          stepOutputs: {
-            [nodeId]: {
-              status: 'success' as const,
-              output: {
-                rounds: 0,
-                readyForSpec: true,
-                partial: true,
-                earlyDone: false,
-                tokenBudgetExceeded: true,
-                enrichedInputPath: null,
-                brainstormPath: null,
-              },
-            },
-          },
-        }
+        bs.partial = true
+        bs.readyForSpec = true
+        break
       }
-    }
-    // === END TOKEN BUDGET GATE ===
 
-    // Skeleton: brainstorm-host role.md is not present in this worktree (.claude/ is gitignored).
-    // Return partial=true immediately so spec_author runs with rawInput.
-    // Full multi-round interrupt + LLM invocation: T30 E2E with mock skillExecutor.
+      // 2. ready / cap 检查
+      if (bs.readyForSpec) break
+      if (round > maxRounds) {
+        bs.readyForSpec = true
+        bs.partial = true
+        break
+      }
+
+      // 3. existing pending waiter (replay path)
+      const existing = await getBrainstormWaiterByRound(ctxBase.runId, nodeId, round)
+      if (existing && existing.status === 'pending') {
+        const interruptValue: QiBrainstormInterruptValue = {
+          type: QI_BRAINSTORM_INTERRUPT,
+          waiterId: existing.id,
+          runId: ctxBase.runId,
+          nodeId,
+          requirementId,
+          round,
+          maxRounds,
+          questionMd: existing.questionMd,
+          options: existing.options,
+          expiresAt: existing.expiresAt.toISOString(),
+          timeoutMs,
+        }
+        interrupt(interruptValue)
+        // resume 后 LangGraph 重入此节点，下次迭代从 listBrainstormWaitersForRun 重建 → 此 existing 已 answered
+        const answered = await getBrainstormWaiterById(existing.id)
+        if (answered) bs = rebuildAfterWaiter(bs, answered)
+        continue
+      }
+
+      if (existing && existing.status === 'answered') {
+        // replay 已经走完这一轮，rebuild 上面已经 cover
+        continue
+      }
+
+      // 4. 新轮：跑 LLM（硬 timeout）
+      let parsed
+      try {
+        const llmResult = await runSkill(
+          {
+            requirementId,
+            nodeId,
+            skill,
+            role,
+            worktreePath,
+            branch,
+            baseBranch,
+            artifactPath: `docs/brainstorm/qi-${requirementId}.json`,
+            inputs: {
+              rawInput,
+              history: bs.history,
+              enrichedInput: bs.enrichedInput,
+              round,
+              maxRounds,
+            } as unknown as SkillContextInputs,
+            timeoutMs: llmCallTimeoutMs,
+            skipOutputParse: true,
+          },
+          ctxBase.skillExecutor,
+          ctxBase.mcpServerPath,
+        )
+        const rawOutput = llmResult.rawOutput
+        parsed = parseBrainstormLlmJson(rawOutput)
+      } catch (err) {
+        const reason = err instanceof BrainstormLlmParseError ? `parse: ${err.reason}` : String(err)
+        bs.failedQualityRounds += 1
+        if (bs.failedQualityRounds >= 2) {
+          bs.partial = true
+          bs.readyForSpec = true
+        }
+        console.error(`[llm_brainstorm] round=${round} LLM failed (count=${bs.failedQualityRounds}): ${reason}`)
+        continue
+      }
+
+      if (parsed.decision === 'ready' || parsed.decision === 'fail') {
+        bs = advanceBrainstormState(bs, { llmOutput: parsed, userAnswer: null, source: 'web' })
+        continue
+      }
+
+      // decision === 'ask': 校验 5-section
+      const pf = parseFiveSectionMarkdown(parsed.question ?? '', { round })
+      if (!pf.valid) {
+        bs.failedQualityRounds += 1
+        if (bs.failedQualityRounds >= 2) {
+          bs.partial = true
+          bs.readyForSpec = true
+        }
+        console.warn(`[llm_brainstorm] round=${round} 5-section invalid: missing=${pf.missingSections.join(',')} violations=${pf.violations.join(',')}`)
+        continue
+      }
+
+      // 5. 写 waiter + interrupt
+      const expiresAt = new Date(Date.now() + timeoutMs).toISOString()
+      const newWaiter: BrainstormWaiter = await createBrainstormWaiter({
+        requirementId,
+        pipelineRunId: ctxBase.runId,
+        threadId: String(ctxBase.runId),
+        nodeId,
+        round,
+        questionMd: parsed.question!,
+        options: pf.options,
+        enrichedInput: bs.enrichedInput,
+        history: bs.history,
+        failedQualityRounds: bs.failedQualityRounds,
+        readyForSpec: bs.readyForSpec,
+        expiresAt,
+      })
+
+      const interruptValue: QiBrainstormInterruptValue = {
+        type: QI_BRAINSTORM_INTERRUPT,
+        waiterId: newWaiter.id,
+        runId: ctxBase.runId,
+        nodeId,
+        requirementId,
+        round,
+        maxRounds,
+        questionMd: parsed.question!,
+        options: pf.options,
+        expiresAt,
+        timeoutMs,
+      }
+      interrupt(interruptValue)
+      // resume: 重新查 waiter 拿到 answered 数据
+      const answered = await getBrainstormWaiterById(newWaiter.id)
+      if (answered) bs = rebuildAfterWaiter(bs, answered)
+    }
+
+    // 写 artifacts（即使 partial 也写）
+    let brainstormPath: string | null = null
+    let enrichedInputPath: string | null = null
+    try {
+      const out = await writeBrainstormArtifacts(worktreePath, requirementId, bs)
+      brainstormPath = out.brainstormPath
+      enrichedInputPath = out.enrichedInputPath
+    } catch (err) {
+      console.error(`[llm_brainstorm] writeBrainstormArtifacts failed:`, err)
+      // non-fatal: 节点仍然 success，spec_author 走 rawInput fallback
+    }
+
     const exec: StageExecutionResult = {
       status: 'success',
-      output: `${nodeId} skeleton (brainstorm-host role.md not in worktree; deferred to main-repo sync); spec_author proceeds with rawInput`,
+      output: `${nodeId} completed: ${bs.history.length} rounds (partial=${bs.partial}, earlyDone=${bs.earlyDone})`,
     }
     return {
       currentStageIndex: index,
@@ -2642,13 +2933,12 @@ function buildLlmBrainstormNode(
         [nodeId]: {
           status: 'success' as const,
           output: {
-            rounds: 0,
-            readyForSpec: true,
-            partial: true,
-            earlyDone: false,
-            enrichedInputPath: null,
-            brainstormPath: null,
-            skeletonMode: true,
+            rounds: bs.history.length,
+            readyForSpec: bs.readyForSpec,
+            partial: bs.partial,
+            earlyDone: bs.earlyDone,
+            enrichedInputPath,
+            brainstormPath,
           },
         },
       },

@@ -26,14 +26,23 @@ import {
   WEBHOOK_INTERRUPT,
   QI_APPROVAL_INTERRUPT,
   QI_IM_INPUT_INTERRUPT,
+  QI_BRAINSTORM_INTERRUPT,
   type StageHooks,
   type StageContextBase,
   type ApprovalInterruptValue,
   type WebhookInterruptValue,
   type QiApprovalInterruptValue,
   type QiImInputInterruptValue,
+  type QiBrainstormInterruptValue,
+  type QiBrainstormResume,
   type QiApprovalResume,
 } from './graph-builder.js'
+import {
+  markBrainstormExpired,
+  reapExpiredBrainstormWaiters,
+  type BrainstormWaiter,
+} from '../db/repositories/brainstorm-waiters.js'
+import { forceSetRequirementStatus } from '../db/repositories/requirements.js'
 import {
   getQiApprovalInfo,
   removeQiApprovalWaiter,
@@ -126,6 +135,19 @@ const resolvedInterrupts = new Set<string>()
 // Separate from interruptTimers because QI interrupts don't carry stageIndex
 // and the timeout path is claim-then-resume-via-waiter, not resumeRun(Command).
 const qiApprovalTimers = new Map<number, NodeJS.Timeout>()
+
+// QI brainstorm timers — indexed by brainstorm_waiters.id (separate PK space
+// from requirement_approval_waiters). On timeout we mark the waiter expired
+// and abort the requirement (graph thread is not resumed).
+const qiBrainstormTimers = new Map<number, NodeJS.Timeout>()
+
+function clearBrainstormTimer(waiterId: number): void {
+  const t = qiBrainstormTimers.get(waiterId)
+  if (t) {
+    clearTimeout(t)
+    qiBrainstormTimers.delete(waiterId)
+  }
+}
 
 const interruptKey = (runId: number, stageIndex: number) => `${runId}:${stageIndex}`
 
@@ -519,6 +541,71 @@ export async function resumeFromQiApproval(
   return true
 }
 
+/**
+ * Resume from brainstorm answer (Web POST endpoint funnels here).
+ * waiterId → DB row → pipeline_run_id → graph stream Command({ resume: <userAnswer> }).
+ *
+ * Caller (admin endpoint) has already UPDATE'd the waiter row status='answered'
+ * and re-fetched it. We only schedule cancellation + drive the graph.
+ */
+export async function resumeFromBrainstorm(
+  answeredWaiter: BrainstormWaiter,
+): Promise<boolean> {
+  clearBrainstormTimer(answeredWaiter.id)
+  const resume: QiBrainstormResume = {
+    chosenOption: answeredWaiter.chosenOption ?? undefined,
+    freeText: answeredWaiter.freeText ?? undefined,
+    source: answeredWaiter.source ?? 'web',
+  }
+  void resumeRun(answeredWaiter.pipelineRunId, new Command({ resume })).catch(err =>
+    console.error(`[graph-runner] resumeFromBrainstorm run ${answeredWaiter.pipelineRunId} error:`, err),
+  )
+  return true
+}
+
+/**
+ * Schedule 24h brainstorm timeout. On fire:
+ *   1) markBrainstormExpired (UPDATE WHERE status='pending' RETURNING) — if 0 rows
+ *      (already answered or already expired), bail out silently.
+ *   2) forceSetRequirementStatus(req_id, 'aborted', 'brainstorm_timeout').
+ *   3) Graph thread stays suspended; downstream nodes will never run for this req.
+ *
+ * Process restart loses scheduled timers — reapExpiredBrainstormWaitersOnStartup()
+ * scans the table at boot to bridge.
+ */
+export function scheduleBrainstormTimeout(waiterId: number, timeoutMs: number): void {
+  clearBrainstormTimer(waiterId)
+  const timer = setTimeout(() => {
+    qiBrainstormTimers.delete(waiterId)
+    void (async () => {
+      const expired = await markBrainstormExpired(waiterId)
+      if (!expired) return  // already answered / already expired — no-op
+      await forceSetRequirementStatus(expired.requirementId, 'aborted', 'brainstorm_timeout')
+    })().catch(err => {
+      console.error(`[graph-runner] brainstorm timeout fire failed for waiter ${waiterId}:`, err)
+    })
+  }, timeoutMs)
+  if (typeof timer.unref === 'function') timer.unref()
+  qiBrainstormTimers.set(waiterId, timer)
+}
+
+/**
+ * Process startup: scan brainstorm_waiters table for expired pending rows and
+ * mark them expired + abort their requirements. Bridges scheduled timers lost
+ * across server restarts.
+ */
+export async function reapExpiredBrainstormWaitersOnStartup(): Promise<number> {
+  const expired = await reapExpiredBrainstormWaiters()
+  for (const w of expired) {
+    try {
+      await forceSetRequirementStatus(w.requirementId, 'aborted', 'brainstorm_timeout')
+    } catch (err) {
+      console.error(`[graph-runner] startup reap: abort req ${w.requirementId} failed:`, err)
+    }
+  }
+  return expired.length
+}
+
 // --- Core streaming loop ----------------------------------------------------
 
 type InitialInput = { runId: number }
@@ -722,6 +809,15 @@ async function dispatchInterrupt(ctx: RunContext, value: unknown): Promise<void>
         console.error(`[graph-runner] sendQiApprovalCard (im_input) failed for waiterId=${p.waiterId}:`, err)
       })
     }
+    return
+  }
+
+  if (v.type === QI_BRAINSTORM_INTERRUPT) {
+    const p = value as QiBrainstormInterruptValue
+    // 1. schedule 24h timeout (process-local; reaper bridges restart)
+    scheduleBrainstormTimeout(p.waiterId, p.timeoutMs)
+    // 2. front-end picks this up via GET /admin/requirements/:id/brainstorm/state polling.
+    //    No IM card this iteration (Web-only scope).
     return
   }
 }

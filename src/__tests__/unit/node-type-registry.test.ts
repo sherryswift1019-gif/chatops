@@ -67,6 +67,8 @@ describe('node-type barrel', () => {
       'llm_review',
       // Pipeline Stage Types Sub-plan A: 人工 binary 批准（interrupt-bound）
       'human_gate',
+      // Quick-Impl spec_brainstorm 多轮 LLM 澄清（interrupt-bound by graph-builder）
+      'llm_brainstorm',
     ]))
   })
 })

@@ -1,10 +1,29 @@
 import { useState } from 'react'
-import { Card, Radio, Input, Button, Space, Alert, Typography } from 'antd'
-import { submitBrainstormAnswer } from '../../api/brainstorm'
+import {
+  Card,
+  Radio,
+  Input,
+  Button,
+  Space,
+  Alert,
+  Typography,
+  Tag,
+  Collapse,
+  Empty,
+} from 'antd'
+import ReactMarkdown from 'react-markdown'
+import { submitBrainstormAnswer, type BrainstormState } from '../../api/brainstorm'
 
-const { Paragraph } = Typography
+const { Paragraph, Text } = Typography
 
-export function BrainstormTab({ requirementId }: { requirementId: number }) {
+interface Props {
+  requirementId: number
+  state: BrainstormState | null
+  loading: boolean
+  onAnswered: () => void
+}
+
+export function BrainstormTab({ requirementId, state, loading, onAnswered }: Props) {
   const [chosenOption, setChosenOption] = useState<string | undefined>()
   const [freeText, setFreeText] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -13,79 +32,188 @@ export function BrainstormTab({ requirementId }: { requirementId: number }) {
     msg: string
   } | null>(null)
 
+  if (loading && !state) {
+    return <Card><Paragraph>加载中...</Paragraph></Card>
+  }
+  if (!state) {
+    return <Card><Empty description="无法加载 brainstorm 状态" /></Card>
+  }
+
+  const { active, history } = state
+
   const canSubmit = !!chosenOption || freeText.trim().length > 0
+  const submitDisabled = !active || !canSubmit
 
   const handleSubmit = async () => {
+    if (!active) return
     setSubmitting(true)
     setFeedback(null)
     try {
       const res = await submitBrainstormAnswer(requirementId, {
+        waiterId: active.waiterId,
         chosenOption,
         freeText: freeText.trim() || undefined,
       })
       if (res.ok) {
-        setFeedback({ kind: 'success', msg: '已提交' })
+        setFeedback({
+          kind: 'success',
+          msg: `第 ${res.round} 轮已提交，等待 LLM 生成下一轮...`,
+        })
         setChosenOption(undefined)
         setFreeText('')
+        onAnswered()
+      } else if (res.error === 'already_answered') {
+        setFeedback({
+          kind: 'warning',
+          msg: '该轮已被另一通道（IM / 并发提交）答复，正在刷新...',
+        })
+        onAnswered()
       } else if (res.error === 'no_active_brainstorm_waiter') {
         setFeedback({
           kind: 'info',
-          msg: 'Brainstorm 当前未启用（节点处于 skeleton 模式）。等多轮交互完整路径上线后可在此提交答复。',
+          msg: 'brainstorm 阶段已结束，无需回答。',
         })
+        onAnswered()
       } else {
-        setFeedback({ kind: 'error', msg: res.message ?? res.error ?? '提交失败' })
+        setFeedback({
+          kind: 'error',
+          msg: res.message ?? res.error ?? '提交失败',
+        })
       }
     } finally {
       setSubmitting(false)
     }
   }
 
+  // 三态：尚未进入 / 进行中 / 已完成
+  if (!active && history.length === 0) {
+    return (
+      <Card title="Brainstorm 多轮澄清" bordered={false}>
+        <Empty description="尚未进入 brainstorm 阶段" />
+      </Card>
+    )
+  }
+
   return (
-    <Card title="Brainstorm 多轮澄清" bordered={false}>
-      <Paragraph type="secondary">
-        当 LLM 需要你确认多轮澄清问题时，在此选择选项或自由文本提交。
-        当前 brainstorm 多轮交互节点处于 skeleton 模式（forward-compatible），
-        提交会返回 no_active_waiter，等完整路径上线后无缝接通。
-      </Paragraph>
-
-      <Space direction="vertical" style={{ width: '100%', marginTop: 16 }} size="middle">
-        <div>
-          <Paragraph strong>选项</Paragraph>
-          <Radio.Group
-            value={chosenOption}
-            onChange={(e) => setChosenOption(e.target.value)}
+    <Card
+      title={
+        <Space>
+          <span>Brainstorm 多轮澄清</span>
+          {active ? (
+            <Tag color="orange">进行中 · 第 {active.round}/{active.maxRounds} 轮</Tag>
+          ) : (
+            <Tag color="green">已结束 · 共 {history.length} 轮</Tag>
+          )}
+        </Space>
+      }
+      bordered={false}
+    >
+      {active ? (
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div
+            style={{
+              padding: 16,
+              background: '#FAFBFC',
+              borderRadius: 6,
+              border: '1px solid #EEF0F4',
+            }}
           >
-            <Space wrap>
-              {['A', 'B', 'C', 'D'].map((k) => (
-                <Radio key={k} value={k}>{k}</Radio>
-              ))}
-            </Space>
-          </Radio.Group>
-        </div>
+            <ReactMarkdown>{active.questionMd}</ReactMarkdown>
+          </div>
 
-        <div>
-          <Paragraph strong>自由文本（可选）</Paragraph>
-          <Input.TextArea
-            rows={3}
-            placeholder="或自由描述，例如：A 但默认勾选 / 都不对，我想要 XX / 输入 /done 结束"
-            value={freeText}
-            onChange={(e) => setFreeText(e.target.value)}
-          />
-        </div>
+          {active.options.length > 0 && (
+            <div>
+              <Paragraph strong>选项</Paragraph>
+              <Radio.Group
+                value={chosenOption}
+                onChange={(e) => setChosenOption(e.target.value)}
+              >
+                <Space direction="vertical">
+                  {active.options.map((o) => (
+                    <Radio key={o.id} value={o.id}>
+                      <Text strong>{o.id}.</Text> {o.label}
+                    </Radio>
+                  ))}
+                </Space>
+              </Radio.Group>
+            </div>
+          )}
 
-        <Button
-          type="primary"
-          onClick={handleSubmit}
-          disabled={!canSubmit}
-          loading={submitting}
-        >
-          提交答复
-        </Button>
+          <div>
+            <Paragraph strong>自由文本（可选）</Paragraph>
+            <Input.TextArea
+              rows={3}
+              placeholder='例如："A 但默认勾选" / "都不对，我想要 XX" / "/done" 提前结束'
+              value={freeText}
+              onChange={(e) => setFreeText(e.target.value)}
+              maxLength={4096}
+              showCount
+            />
+          </div>
 
-        {feedback && (
+          <Button
+            type="primary"
+            onClick={handleSubmit}
+            disabled={submitDisabled}
+            loading={submitting}
+          >
+            提交答复
+          </Button>
+
+          {feedback && (
+            <Alert type={feedback.kind} message={feedback.msg} showIcon />
+          )}
+        </Space>
+      ) : (
+        feedback && (
           <Alert type={feedback.kind} message={feedback.msg} showIcon />
-        )}
-      </Space>
+        )
+      )}
+
+      {history.length > 0 && (
+        <Collapse
+          ghost
+          style={{ marginTop: 24 }}
+          items={[
+            {
+              key: 'history',
+              label: `历轮对话（${history.length} 轮）`,
+              children: (
+                <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                  {history.map((turn) => (
+                    <div
+                      key={turn.round}
+                      style={{
+                        padding: 12,
+                        background: '#FAFBFC',
+                        borderRadius: 6,
+                        border: '1px solid #EEF0F4',
+                      }}
+                    >
+                      <div style={{ marginBottom: 8 }}>
+                        <Tag color="blue">Round {turn.round}</Tag>
+                        <Tag>{turn.source ?? '?'}</Tag>
+                        <Text type="secondary" style={{ fontSize: 12 }}>
+                          {turn.answeredAt ?? ''}
+                        </Text>
+                      </div>
+                      <Paragraph strong style={{ marginBottom: 4 }}>问题：</Paragraph>
+                      <div style={{ marginBottom: 8 }}>
+                        <ReactMarkdown>{turn.questionMd}</ReactMarkdown>
+                      </div>
+                      <Paragraph>
+                        <Text strong>答复：</Text>{' '}
+                        {turn.chosenOption ? <Tag color="green">{turn.chosenOption}</Tag> : null}
+                        {turn.freeText ?? ''}
+                      </Paragraph>
+                    </div>
+                  ))}
+                </Space>
+              ),
+            },
+          ]}
+        />
+      )}
     </Card>
   )
 }

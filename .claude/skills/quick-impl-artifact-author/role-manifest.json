@@ -12,7 +12,7 @@
   },
   "brainstorm-host": {
     "standards": ["qi-spec-quality.md"],
-    "inputs": ["rawInput", "previousTurns", "round"]
+    "inputs": ["rawInput", "history", "enrichedInput", "round", "maxRounds"]
   },
   "plan-decomposer": {
     "standards": [

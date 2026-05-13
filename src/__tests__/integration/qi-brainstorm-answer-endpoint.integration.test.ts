@@ -25,34 +25,34 @@ describe('POST /admin/requirements/:id/brainstorm/answer', () => {
     expect(body.error).toBe('invalid_body')
   })
 
-  it('returns 400 when no active brainstorm waiter for the requirement', async () => {
+  it('returns 404 when no active brainstorm waiter for the requirement', async () => {
     const app = await buildApp()
     const res = await app.inject({
       method: 'POST', url: '/admin/requirements/1/brainstorm/answer',
       payload: { chosenOption: 'A' },
     })
-    expect(res.statusCode).toBe(400)
+    expect(res.statusCode).toBe(404)
     const body = JSON.parse(res.payload)
     expect(body.error).toBe('no_active_brainstorm_waiter')
   })
 
-  it('accepts freeText alone', async () => {
+  it('accepts freeText alone (parses body)', async () => {
     const app = await buildApp()
     const res = await app.inject({
       method: 'POST', url: '/admin/requirements/1/brainstorm/answer',
       payload: { freeText: '都不对，我想要 XX' },
     })
-    expect(res.statusCode).toBe(400)  // still no waiter, but body parsing OK
+    expect(res.statusCode).toBe(404)  // body OK, no waiter
     expect(JSON.parse(res.payload).error).toBe('no_active_brainstorm_waiter')
   })
 
-  it('accepts both chosenOption and freeText combined', async () => {
+  it('accepts both chosenOption and freeText combined (parses body)', async () => {
     const app = await buildApp()
     const res = await app.inject({
       method: 'POST', url: '/admin/requirements/1/brainstorm/answer',
       payload: { chosenOption: 'A', freeText: '但默认勾选' },
     })
-    expect(res.statusCode).toBe(400)
+    expect(res.statusCode).toBe(404)
     expect(JSON.parse(res.payload).error).toBe('no_active_brainstorm_waiter')
   })
 })

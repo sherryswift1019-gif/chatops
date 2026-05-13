@@ -1,4 +1,4 @@
-import { Tabs } from 'antd'
+import { Tabs, Badge } from 'antd'
 import { useSearchParams } from 'react-router-dom'
 import type { RequirementDetailDTO } from '../../api/requirements'
 import { NodesTab } from './NodesTab'
@@ -6,17 +6,30 @@ import { SpecTab } from './SpecTab'
 import { PlanTab } from './PlanTab'
 import { ApprovalsTab } from './ApprovalsTab'
 import { BrainstormTab } from './BrainstormTab'
+import type { BrainstormState } from '../../api/brainstorm'
 
 const VALID_TABS = new Set(['nodes', 'spec', 'plan', 'approvals', 'brainstorm'])
 
 interface Props {
   detail: RequirementDetailDTO
   onRetried: () => void
+  brainstormState: BrainstormState | null
+  brainstormLoading: boolean
+  onBrainstormAnswered: () => void
+  /** 由父组件控制的当前 tab，用于 BrainstormAlert 跳转 */
+  forceTab?: string
 }
 
-export function DetailTabs({ detail, onRetried }: Props) {
+export function DetailTabs({
+  detail,
+  onRetried,
+  brainstormState,
+  brainstormLoading,
+  onBrainstormAnswered,
+  forceTab,
+}: Props) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const tabFromUrl = searchParams.get('tab') ?? 'nodes'
+  const tabFromUrl = forceTab ?? searchParams.get('tab') ?? 'nodes'
   const activeTab = VALID_TABS.has(tabFromUrl) ? tabFromUrl : 'nodes'
 
   const handleTabChange = (key: string) => {
@@ -24,6 +37,8 @@ export function DetailTabs({ detail, onRetried }: Props) {
     next.set('tab', key)
     setSearchParams(next, { replace: true })
   }
+
+  const hasActiveBrainstorm = !!brainstormState?.active
 
   return (
     <div style={{ background: '#FFFFFF', borderRadius: 8, padding: 16, border: '1px solid #EEF0F4' }}>
@@ -53,8 +68,15 @@ export function DetailTabs({ detail, onRetried }: Props) {
           },
           {
             key: 'brainstorm',
-            label: 'Brainstorm',
-            children: <BrainstormTab requirementId={detail.id} />,
+            label: hasActiveBrainstorm ? <Badge dot offset={[6, 0]}>Brainstorm</Badge> : 'Brainstorm',
+            children: (
+              <BrainstormTab
+                requirementId={detail.id}
+                state={brainstormState}
+                loading={brainstormLoading}
+                onAnswered={onBrainstormAnswered}
+              />
+            ),
           },
         ]}
       />

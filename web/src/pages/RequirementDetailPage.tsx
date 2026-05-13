@@ -10,6 +10,8 @@ import { usePolling } from './requirement-detail/usePolling'
 import { DetailSidebar } from './requirement-detail/DetailSidebar'
 import { DetailTabs } from './requirement-detail/DetailTabs'
 import { DetailHeader } from './requirement-detail/DetailHeader'
+import { BrainstormAlert } from './requirement-detail/BrainstormAlert'
+import { useBrainstormState } from './requirement-detail/useBrainstormState'
 import { DecideModal } from '../components/DecideModal'
 
 function isValidId(s: string | undefined): s is string {
@@ -45,6 +47,25 @@ export default function RequirementDetailPage() {
       intervalMs: 5000,
     },
   )
+
+  // Brainstorm 状态 — 独立 hook，跟 requirement polling 并行
+  const {
+    state: brainstormState,
+    loading: brainstormLoading,
+    refetch: refetchBrainstorm,
+    triggerFastPoll,
+  } = useBrainstormState(id, validId && !decideOpen)
+
+  const handleBrainstormAnswered = useCallback(() => {
+    triggerFastPoll(20000)
+    void refetchBrainstorm()
+  }, [refetchBrainstorm, triggerFastPoll])
+
+  const jumpToBrainstormTab = useCallback(() => {
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', 'brainstorm')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   // 4. URL ?openWaiter=M 直达决策
   useEffect(() => {
@@ -102,6 +123,13 @@ export default function RequirementDetailPage() {
         onActed={() => void refetch()}
       />
 
+      <div style={{ padding: '0 16px' }}>
+        <BrainstormAlert
+          active={brainstormState?.active ?? null}
+          onJump={jumpToBrainstormTab}
+        />
+      </div>
+
       {/* 左右栏 */}
       <div style={{ display: 'flex', gap: 16, padding: 16 }}>
         <DetailSidebar
@@ -109,7 +137,13 @@ export default function RequirementDetailPage() {
           onDecide={(w) => setDecideWaiter(w)}
         />
         <div style={{ flex: 1, minWidth: 0 }}>
-          <DetailTabs detail={detail} onRetried={() => void refetch()} />
+          <DetailTabs
+            detail={detail}
+            onRetried={() => void refetch()}
+            brainstormState={brainstormState}
+            brainstormLoading={brainstormLoading}
+            onBrainstormAnswered={handleBrainstormAnswered}
+          />
         </div>
       </div>
 

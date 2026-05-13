@@ -286,6 +286,9 @@ const SCHEMA_FILES = [
   // v1015: retry_counters JSONB COMMENT documentation (ai_review_rounds + last_ai_review_notes)。
   // 纯 COMMENT ON COLUMN，无 DDL/DML 副作用，无 seed 污染，安全加入。
   'schema-v1015.sql',
+  // v1016: brainstorm_waiters 表 — multi-round LLM brainstorm 持久化。
+  // 纯 DDL（CREATE TABLE IF NOT EXISTS + INDEX），无 seed 数据，安全加入。
+  'schema-v1016.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {

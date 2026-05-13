@@ -1,5 +1,7 @@
 import { exec } from 'child_process'
 import { promisify } from 'util'
+import { promises as fsp } from 'fs'
+import path from 'path'
 import { registerNodeType } from './registry.js'
 import type { ExecutionContext, NodeExecutionResult } from './types.js'
 import {
@@ -126,6 +128,20 @@ registerNodeType({
     } catch (err) {
       console.warn(
         `[init_qi_branch] ensureBareRepo failed for ${gitlabProject} (non-fatal, qi_e2e_runner 入口会重试): ${(err as Error).message}`,
+      )
+    }
+
+    // Sync .claude/skills/quick-impl-artifact-author/ into worktree (brainstorm-host / spec-author / etc.
+    // role.md). Worktree's .gitignore ignores .claude/, so this never enters git.
+    // Non-fatal: brainstorm node has partial fallback if role.md missing.
+    try {
+      const srcRoot = path.join(process.cwd(), '.claude', 'skills', 'quick-impl-artifact-author')
+      const dstRoot = path.join(wt.path, '.claude', 'skills', 'quick-impl-artifact-author')
+      await fsp.mkdir(path.dirname(dstRoot), { recursive: true })
+      await fsp.cp(srcRoot, dstRoot, { recursive: true, force: true })
+    } catch (err) {
+      console.warn(
+        `[init_qi_branch] sync .claude/skills failed (non-fatal, brainstorm-host role.md may be missing): ${err instanceof Error ? err.message : String(err)}`,
       )
     }
 

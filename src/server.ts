@@ -264,6 +264,15 @@ async function main(): Promise<void> {
   // 启动 MR 状态对账调度器（webhook 漏发兜底，默认 5min）
   startMrReconciler()
 
+  // brainstorm 24h 超时 reaper（兜底进程重启丢失的 setTimeout schedule）
+  try {
+    const { reapExpiredBrainstormWaitersOnStartup } = await import('./pipeline/graph-runner.js')
+    const n = await reapExpiredBrainstormWaitersOnStartup()
+    if (n > 0) app.log.info(`[brainstorm-reaper] startup expired ${n} stale waiter(s)`)
+  } catch (err) {
+    app.log.warn({ err }, '[brainstorm-reaper] startup reap failed (non-fatal)')
+  }
+
   // Quick-Impl：创建/更新流水线模板，启动排队工作器 + Worktree 清理
   try {
     await bootstrapQuickImpl()

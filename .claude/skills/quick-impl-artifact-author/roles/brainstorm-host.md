@@ -65,6 +65,7 @@
 
 ```json
 {
+  "summary": "Round N brainstorm — <本轮主题简短描述>",
   "decision": "ask | ready | fail",
   "round": 2,
   "question": "（5 段 markdown 字符串，decision=ask 时必填）",
@@ -73,6 +74,8 @@
   "notes": []
 }
 ```
+
+注：`summary` 字段为 skill 底座契约必填（zod SkillOutputSchema 校验）；其它字段供 brainstorm 节点状态机消费。
 
 参考完整 enrichedInput schema：[src/quick-impl/enriched-input-schema.ts](../../../src/quick-impl/enriched-input-schema.ts)。
 

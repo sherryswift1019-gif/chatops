@@ -706,6 +706,12 @@ export interface RunSkillOptions {
   signal?: AbortSignal
   /** 子 agent 跑时注入的额外 env（除了 QI_REQUIREMENT_ID） */
   extraEnv?: Record<string, string>
+  /**
+   * 跳过 SkillOutputSchema 校验。某些 role（如 brainstorm-host）输出 schema
+   * 与通用 SkillOutputSchema 不兼容（decision 字段语义不同），需要 caller
+   * 自己解析 rawOutput。这种情况下 RunSkillResult.output 是空对象占位。
+   */
+  skipOutputParse?: boolean
 }
 
 export interface RunSkillResult {
@@ -802,19 +808,22 @@ export async function runSkill(
     throw new Error(`[skill-runner] executor error: ${execResult.errorMessage}`)
   }
 
-  // 5. 解析 JSON
+  // 5. 解析 JSON（可跳过：见 RunSkillOptions.skipOutputParse）
   let output: SkillOutput
-  try {
-    output = parseSkillOutput(execResult.rawOutput)
-  } catch (err) {
-    if (err instanceof SkillOutputParseError) {
-      // 把原始输出附在错误上抛出，调用方负责落日志
-      err.message =
-        `[skill-runner] ${err.message}\n` +
-        `--- raw output (last 500 chars) ---\n` +
-        execResult.rawOutput.slice(-500)
+  if (opts.skipOutputParse) {
+    output = {} as SkillOutput  // 占位，caller 用 rawOutput 自己解析
+  } else {
+    try {
+      output = parseSkillOutput(execResult.rawOutput)
+    } catch (err) {
+      if (err instanceof SkillOutputParseError) {
+        err.message =
+          `[skill-runner] ${err.message}\n` +
+          `--- raw output (last 500 chars) ---\n` +
+          execResult.rawOutput.slice(-500)
+      }
+      throw err
     }
-    throw err
   }
 
   return {
