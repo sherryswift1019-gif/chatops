@@ -70,3 +70,64 @@ export function parseFiveSectionMarkdown(
     violations,
   }
 }
+
+const BRAINSTORM_MAX_ROUNDS = 5
+
+export type BrainstormLlmOutput = {
+  decision: 'ask' | 'ready' | 'fail'
+  round: number
+  question?: string
+  enrichedInputDelta?: Record<string, unknown>
+}
+
+export type AdvanceArgs = {
+  llmOutput: BrainstormLlmOutput
+  userAnswer: { chosenOption?: string; freeText?: string } | null
+  source: 'web' | 'im'
+}
+
+export function advanceBrainstormState(state: BrainstormState, args: AdvanceArgs): BrainstormState {
+  const next: BrainstormState = {
+    ...state,
+    history: [...state.history],
+    enrichedInput: { ...state.enrichedInput, ...(args.llmOutput.enrichedInputDelta ?? {}) },
+  }
+
+  if (args.llmOutput.decision === 'ready') {
+    next.readyForSpec = true
+    return next
+  }
+  if (args.llmOutput.decision === 'fail') {
+    next.readyForSpec = true
+    next.partial = true
+    return next
+  }
+
+  // decision === 'ask': validate markdown
+  if (args.llmOutput.question) {
+    const parsed = parseFiveSectionMarkdown(args.llmOutput.question, { round: state.round })
+    if (!parsed.valid) {
+      next.failedQualityRounds += 1
+      return next  // do not advance round; T22 handles consecutive 2x fail → readyForSpec
+    }
+  }
+
+  // user answer present → archive turn, advance round
+  if (args.userAnswer) {
+    next.history.push({
+      round: state.round,
+      question: args.llmOutput.question ?? '',
+      answer: args.userAnswer.freeText ?? args.userAnswer.chosenOption ?? '',
+      source: args.source,
+      answeredAt: new Date().toISOString(),
+    })
+    next.round = state.round + 1
+  }
+
+  if (next.round > BRAINSTORM_MAX_ROUNDS) {
+    next.readyForSpec = true
+    next.partial = true
+  }
+
+  return next
+}
