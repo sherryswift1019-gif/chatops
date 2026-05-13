@@ -280,6 +280,9 @@ const SCHEMA_FILES = [
   // v1013: pipeline_run_state 表 — 累计 token 用量，供 budget gate 查询。
   // 纯 DDL（CREATE TABLE IF NOT EXISTS + INDEX），无 seed 数据，安全加入。
   'schema-v1013.sql',
+  // v1014: 注册 llm_brainstorm 节点类型（spec_brainstorm 节点，T19 spec stage upgrade）。
+  // 纯 ON CONFLICT INSERT/UPDATE pipeline_node_types，无 seed 污染，安全加入。
+  'schema-v1014.sql',
 ]
 
 export async function resetTestDb(): Promise<void> {
