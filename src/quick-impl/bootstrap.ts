@@ -29,8 +29,10 @@ import type { PipelineGraph, PipelineNode, PipelineEdge } from '../pipeline/type
  * v16 → v17: 在 init_branch → spec_author 之间插入 spec_brainstorm (llm_brainstorm)，
  *   收集需求澄清问题（最多 5 轮）；skeleton mode 下 brainstorm-host role.md 不在 worktree，
  *   节点立即返回 partial=true，spec_author 继续用 rawInput 生成 spec。
+ * v17 → v18: spec_commit_push.params 加 mergeStrategy='preserve-rounds' + baseBranch，
+ *   approved 后以 git merge --no-ff 保留所有 round commits，commit author 不被 squash 丢失。
  */
-export const QUICK_IMPL_TEMPLATE_VERSION = 17
+export const QUICK_IMPL_TEMPLATE_VERSION = 18
 export const QUICK_IMPL_PIPELINE_NAME = 'quick-impl'
 
 // ─── Node definitions ────────────────────────────────────────────────────────
@@ -160,8 +162,10 @@ export function buildQuickImplGraph(): PipelineGraph {
       params: {
         worktreePath: '{{steps.init_branch.output.worktreePath}}',
         branch: '{{steps.init_branch.output.branch}}',
+        baseBranch: '{{triggerParams.baseBranch}}',
         artifactPaths: ['docs/specs/qi-{{triggerParams.requirementId}}.md'],
         commitMessage: 'docs(qi-{{triggerParams.requirementId}}): spec — {{triggerParams.title}}',
+        mergeStrategy: 'preserve-rounds',
       },
     } as any),
 
